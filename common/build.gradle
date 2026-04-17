@@ -2,7 +2,13 @@ architectury {
     common rootProject.enabled_platforms.split(',')
 }
 
+repositories {
+    maven { url "https://jitpack.io" }
+}
+
+
 dependencies {
     modImplementation "net.fabricmc:fabric-loader:$rootProject.fabric_loader_version"
     modImplementation "dev.architectury:architectury:$rootProject.architectury_api_version"
+    modCompileOnly "com.github.WaterMediaTeam:watermedia:2.1.37"
 }
