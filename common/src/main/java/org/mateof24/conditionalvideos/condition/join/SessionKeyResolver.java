@@ -1,15 +1,15 @@
-package org.mateof24.conditionalvideos;
+package org.mateof24.conditionalvideos.condition.join;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ServerData;
 
 import java.nio.file.Path;
 
-final class SessionKeyResolver {
+public final class SessionKeyResolver {
     private SessionKeyResolver() {
     }
 
-    static String resolveSessionKey(Minecraft minecraft) {
+    public static String resolveSessionKey(Minecraft minecraft) {
         ServerData currentServer = minecraft.getCurrentServer();
         if (currentServer != null && currentServer.ip != null && !currentServer.ip.isBlank()) {
             return "server:" + currentServer.ip.toLowerCase();

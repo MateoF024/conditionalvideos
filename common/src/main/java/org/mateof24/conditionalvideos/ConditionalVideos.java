@@ -1,5 +1,6 @@
 package org.mateof24.conditionalvideos;
 
+import org.mateof24.conditionalvideos.runtime.ClientRuntime;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

@@ -1,14 +1,19 @@
-package org.mateof24.conditionalvideos;
+package org.mateof24.conditionalvideos.condition.join;
 
 import net.minecraft.client.Minecraft;
+import org.mateof24.conditionalvideos.*;
+import org.mateof24.conditionalvideos.ConditionalVideos;
+import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
+import org.mateof24.conditionalvideos.video.VideoPlaybackScreen;
+import org.mateof24.conditionalvideos.video.path.VideoPathResolver;
 
 import java.nio.file.Path;
 
-final class JoinVideoHandler {
+public final class JoinVideoHandler {
     private JoinVideoHandler() {
     }
 
-    static void onJoinedSession(Minecraft minecraft) {
+    public static void onJoinedSession(Minecraft minecraft) {
         ConditionalVideosConfig config = ConditionalVideosConfig.load();
         ConditionalVideosConfig.FirstJoinConfig firstJoin = config.firstJoin();
 

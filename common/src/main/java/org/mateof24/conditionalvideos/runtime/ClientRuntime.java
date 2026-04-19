@@ -1,11 +1,12 @@
-package org.mateof24.conditionalvideos;
+package org.mateof24.conditionalvideos.runtime;
 
 import net.minecraft.client.Minecraft;
+import org.mateof24.conditionalvideos.condition.join.JoinVideoHandler;
 
-final class ClientRuntime {
+public final class ClientRuntime {
     private boolean wasInSession;
 
-    void onClientTick() {
+    public void onClientTick() {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.level == null || minecraft.player == null) {
             wasInSession = false;
