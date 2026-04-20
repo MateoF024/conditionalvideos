@@ -7,6 +7,8 @@ import net.minecraft.client.Minecraft;
 import org.mateof24.conditionalvideos.ConditionalVideos;
 
 import java.io.IOException;
+import java.util.HashMap;
+import java.util.Map;
 import java.io.Reader;
 import java.io.Writer;
 import java.nio.charset.StandardCharsets;
@@ -22,6 +24,10 @@ public final class ConditionalVideosConfig {
 
     private ConditionConfig firstJoin = new ConditionConfig("", true, false, true, "#000000", "", "bottomLeft", "", "bottomLeft");
     private ConditionConfig playerDeath = new ConditionConfig("", true, true, true, "#000000", "", "bottomLeft", "", "bottomLeft");
+    private Map<String, ConditionConfig> entityKilled = new HashMap<>();
+    private Map<String, ConditionConfig> deathByEntity = new HashMap<>();
+    private Map<String, ConditionConfig> advancementCompleted = new HashMap<>();
+    private Map<String, ConditionConfig> dimensionChanged = new HashMap<>();
     private Set<String> consumedConditionSessions = new HashSet<>();
     private Set<String> seenSessions = new HashSet<>(); // Legacy field kept for migration.
 
@@ -68,6 +74,22 @@ public final class ConditionalVideosConfig {
 
     public ConditionConfig playerDeath() {
         return playerDeath;
+    }
+
+    public Map<String, ConditionConfig> deathByEntity() {
+        return deathByEntity;
+    }
+
+    public Map<String, ConditionConfig> entityKilled() {
+        return entityKilled;
+    }
+
+    public Map<String, ConditionConfig> advancementCompleted() {
+        return advancementCompleted;
+    }
+
+    public Map<String, ConditionConfig> dimensionChanged() {
+        return dimensionChanged;
     }
 
     public boolean hasConsumedConditionSession(String conditionId, String sessionKey) {
@@ -118,6 +140,18 @@ public final class ConditionalVideosConfig {
         }
         if (playerDeath == null) {
             playerDeath = new ConditionConfig("", true, true, true, "#000000", "", "bottomLeft", "", "bottomLeft");
+        }
+        if (deathByEntity == null) {
+            deathByEntity = new HashMap<>();
+        }
+        if (entityKilled == null) {
+            entityKilled = new HashMap<>();
+        }
+        if (advancementCompleted == null) {
+            advancementCompleted = new HashMap<>();
+        }
+        if (dimensionChanged == null) {
+            dimensionChanged = new HashMap<>();
         }
         if (consumedConditionSessions == null) {
             consumedConditionSessions = new HashSet<>();
