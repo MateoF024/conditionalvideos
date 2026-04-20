@@ -10,12 +10,14 @@ import org.mateof24.conditionalvideos.video.path.VideoPathResolver;
 import java.nio.file.Path;
 
 public final class JoinVideoHandler {
+    private static final String CONDITION_ID = "firstJoin";
+
     private JoinVideoHandler() {
     }
 
     public static void onJoinedSession(Minecraft minecraft) {
         ConditionalVideosConfig config = ConditionalVideosConfig.load();
-        ConditionalVideosConfig.FirstJoinConfig firstJoin = config.firstJoin();
+        ConditionalVideosConfig.ConditionConfig firstJoin = config.firstJoin();
 
         if (firstJoin == null || firstJoin.video().isBlank()) {
             ConditionalVideos.LOGGER.debug("No first join video configured. Skipping playback.");
@@ -26,7 +28,7 @@ public final class JoinVideoHandler {
         String sessionKey = null;
         if (shouldTrackSession) {
             sessionKey = SessionKeyResolver.resolveSessionKey(minecraft);
-            if (config.hasSeenSession(sessionKey)) {
+            if (config.hasConsumedConditionSession(CONDITION_ID, sessionKey)) {
                 ConditionalVideos.LOGGER.debug("First join condition already consumed for session {}.", sessionKey);
                 return;
             }
@@ -38,11 +40,17 @@ public final class JoinVideoHandler {
             }
 
             if (shouldTrackSession && sessionKey != null) {
-                config.markSessionSeen(sessionKey);
+                config.markConditionSessionConsumed(CONDITION_ID, sessionKey);
                 config.save();
             }
 
-            minecraft.setScreen(new VideoPlaybackScreen(resolvedPath, firstJoin.skippable()));
+            int backgroundColor = config.resolveBackgroundColor(firstJoin, 0xFF000000);
+            minecraft.setScreen(new VideoPlaybackScreen(
+                    resolvedPath,
+                    firstJoin.skippable(),
+                    firstJoin.enableBackground(),
+                    backgroundColor
+            ));
         }
     }
-    }
+}

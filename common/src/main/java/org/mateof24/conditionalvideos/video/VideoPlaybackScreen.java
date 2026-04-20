@@ -17,11 +17,15 @@ public final class VideoPlaybackScreen extends Screen {
     private int elapsedTicks;
     private final boolean skippable;
     private boolean worldAudioPaused;
+    private final boolean enableBackground;
+    private final int backgroundColor;
 
-    public VideoPlaybackScreen(Path videoPath, boolean skippable) {
+    public VideoPlaybackScreen(Path videoPath, boolean skippable, boolean enableBackground, int backgroundColor) {
         super(Component.literal("Conditional Video"));
         this.backend = new WaterMediaVideoBackend(videoPath);
         this.skippable = skippable;
+        this.enableBackground = enableBackground;
+        this.backgroundColor = backgroundColor;
     }
 
     @Override
@@ -38,7 +42,9 @@ public final class VideoPlaybackScreen extends Screen {
 
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
-        guiGraphics.fill(0, 0, width, height, 0xFF000000);
+        if (enableBackground) {
+            guiGraphics.fill(0, 0, width, height, backgroundColor);
+        }
         backend.render(width, height);
 
         int alpha = calculateHintAlpha();
