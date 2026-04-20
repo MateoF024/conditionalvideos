@@ -19,31 +19,36 @@ public final class ClientRuntime {
     private ResourceLocation lastDimension;
     private ResourceLocation pendingDimensionVideoTarget;
     private int pendingDimensionVideoTicks;
-    private Set<String> completedAdvancements = new HashSet<>();
-    private Map<String, Integer> killedEntityCounts = new HashMap<>();
+    private Set<String> completedAdvancements = new LinkedHashSet<>();
     private Set<String> trackedKilledEntities = new LinkedHashSet<>();
+    private Map<String, Integer> killedEntityCounts = new HashMap<>();
 
     public void onClientTick() {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.level == null || minecraft.player == null) {
+            if (wasInSession) {
+                AdvancementVideoHandler.onSessionEnded();
+                KillEntityVideoHandler.onSessionEnded();
+            }
             wasInSession = false;
             wasAlive = false;
             lastDimension = null;
             pendingDimensionVideoTarget = null;
             pendingDimensionVideoTicks = 0;
-            completedAdvancements = new HashSet<>();
-            killedEntityCounts = new HashMap<>();
+            completedAdvancements = new LinkedHashSet<>();
             trackedKilledEntities = new LinkedHashSet<>();
+            killedEntityCounts = new HashMap<>();
             return;
         }
 
         if (!wasInSession) {
             wasInSession = true;
             JoinVideoHandler.onJoinedSession(minecraft);
-            completedAdvancements = AdvancementVideoHandler.snapshotCompletedAdvancements(minecraft);
+            AdvancementVideoHandler.onSessionStarted(minecraft);
+            KillEntityVideoHandler.onSessionStarted(minecraft);
             lastDimension = minecraft.level.dimension().location();
-            trackedKilledEntities = new LinkedHashSet<>(ConditionalVideosConfig.load().entityKilled().keySet());
-            killedEntityCounts = KillEntityVideoHandler.snapshotKilledCounts(minecraft, trackedKilledEntities);
+            completedAdvancements = AdvancementVideoHandler.snapshotCompletedAdvancements(minecraft);
+            refreshTrackedKilledEntities(minecraft);
         }
 
         boolean isAlive = minecraft.player.isAlive();
@@ -63,12 +68,14 @@ public final class ClientRuntime {
         Set<String> nowCompleted = AdvancementVideoHandler.snapshotCompletedAdvancements(minecraft);
         for (String advancementId : nowCompleted) {
             if (!completedAdvancements.contains(advancementId)) {
-                AdvancementVideoHandler.onAdvancementCompleted(minecraft, advancementId);
-                break;
+                if (AdvancementVideoHandler.onAdvancementCompleted(minecraft, advancementId)) {
+                    break;
+                }
             }
         }
         completedAdvancements = nowCompleted;
 
+        refreshTrackedKilledEntities(minecraft);
         Map<String, Integer> nowKilledCounts = KillEntityVideoHandler.snapshotKilledCounts(minecraft, trackedKilledEntities);
         for (Map.Entry<String, Integer> entry : nowKilledCounts.entrySet()) {
             int previous = killedEntityCounts.getOrDefault(entry.getKey(), 0);
@@ -98,4 +105,15 @@ public final class ClientRuntime {
         pendingDimensionVideoTarget = null;
         pendingDimensionVideoTicks = 0;
     }
+
+    private void refreshTrackedKilledEntities(Minecraft minecraft) {
+        Set<String> configuredEntities = new LinkedHashSet<>(ConditionalVideosConfig.load().entityKilled().keySet());
+        if (configuredEntities.equals(trackedKilledEntities)) {
+            return;
+        }
+
+        trackedKilledEntities = configuredEntities;
+        killedEntityCounts = KillEntityVideoHandler.snapshotKilledCounts(minecraft, trackedKilledEntities);
+    }
+
 }

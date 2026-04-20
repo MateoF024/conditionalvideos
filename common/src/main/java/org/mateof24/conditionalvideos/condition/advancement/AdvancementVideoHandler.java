@@ -13,6 +13,8 @@ import java.util.Set;
 
 public final class AdvancementVideoHandler {
     private static final String CONDITION_ID_PREFIX = "advancementCompleted:";
+    private static final Set<String> knownCompletedAdvancements = new HashSet<>();
+    private static boolean sessionActive;
 
     private AdvancementVideoHandler() {
     }
@@ -44,11 +46,40 @@ public final class AdvancementVideoHandler {
         return completed;
     }
 
-    public static void onAdvancementCompleted(Minecraft minecraft, String advancementId) {
+    public static void onSessionStarted(Minecraft minecraft) {
+        knownCompletedAdvancements.clear();
+        knownCompletedAdvancements.addAll(snapshotCompletedAdvancements(minecraft));
+        sessionActive = true;
+    }
+
+    public static void onSessionEnded() {
+        sessionActive = false;
+        knownCompletedAdvancements.clear();
+    }
+
+    public static void onAdvancementsPacketApplied(Minecraft minecraft) {
+        if (!sessionActive) {
+            return;
+        }
+
+        Set<String> currentCompleted = snapshotCompletedAdvancements(minecraft);
+        for (String advancementId : currentCompleted) {
+            if (!knownCompletedAdvancements.contains(advancementId)) {
+                if (onAdvancementCompleted(minecraft, advancementId)) {
+                    break;
+                }
+            }
+        }
+
+        knownCompletedAdvancements.clear();
+        knownCompletedAdvancements.addAll(currentCompleted);
+    }
+
+    public static boolean onAdvancementCompleted(Minecraft minecraft, String advancementId) {
         ConditionalVideosConfig config = ConditionalVideosConfig.load();
         ConditionalVideosConfig.ConditionConfig advancementConfig = config.advancementCompleted().get(advancementId);
 
-        ConditionVideoPlayer.play(
+        return ConditionVideoPlayer.play(
                 minecraft,
                 config,
                 advancementConfig,
@@ -80,7 +111,7 @@ public final class AdvancementVideoHandler {
             try {
                 field.setAccessible(true);
                 Object value = field.get(advancements);
-                if (value instanceof Map<?, ?> map) {
+                if (value instanceof Map<?, ?> map && looksLikeProgressMap(map)) {
                     return map;
                 }
             } catch (ReflectiveOperationException ignored) {
@@ -88,6 +119,25 @@ public final class AdvancementVideoHandler {
             }
         }
         return null;
+    }
+
+    private static boolean looksLikeProgressMap(Map<?, ?> map) {
+        if (map.isEmpty()) {
+            return false;
+        }
+
+        for (Object entryValue : map.values()) {
+            if (entryValue == null) {
+                continue;
+            }
+            try {
+                entryValue.getClass().getMethod("isDone");
+                return true;
+            } catch (NoSuchMethodException ignored) {
+                return false;
+            }
+        }
+        return false;
     }
 
     private static boolean isCompleted(Object progress) {

@@ -6,9 +6,10 @@ license = "All Rights Reserved"
 modId = "conditionalvideos"
 version = "${version}"
 displayName = "Conditional Videos"
+logoFile="icon.png"
 authors = "MateoF24"
 description = '''
-
+Client-side mod that plays configurable videos for gameplay events such as first join, deaths, kills, advancements, and dimension changes.
 '''
 
 [[dependencies.conditionalvideos]]
@@ -29,5 +30,12 @@ side = "BOTH"
 modId = "architectury"
 mandatory = true
 versionRange = "[9.2.14,)"
+ordering = "AFTER"
+side = "BOTH"
+
+[[dependencies.conditionalvideos]]
+modId = "watermedia"
+mandatory = true
+versionRange = "*"
 ordering = "AFTER"
 side = "BOTH"

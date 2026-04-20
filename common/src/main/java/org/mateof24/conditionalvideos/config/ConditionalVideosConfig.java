@@ -20,7 +20,6 @@ import java.util.Set;
 public final class ConditionalVideosConfig {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final String FILE_NAME = "conditionalvideos.json";
-    private static final String FIRST_JOIN_CONDITION_ID = "firstJoin";
 
     private ConditionConfig firstJoin = new ConditionConfig("", true, false, true, "#000000", "", "bottomLeft", "", "bottomLeft");
     private ConditionConfig playerDeath = new ConditionConfig("", true, true, true, "#000000", "", "bottomLeft", "", "bottomLeft");
@@ -29,8 +28,6 @@ public final class ConditionalVideosConfig {
     private Map<String, ConditionConfig> advancementCompleted = new HashMap<>();
     private Map<String, ConditionConfig> dimensionChanged = new HashMap<>();
     private Set<String> consumedConditionSessions = new HashSet<>();
-    private Set<String> seenSessions = new HashSet<>(); // Legacy field kept for migration.
-
 
     public static ConditionalVideosConfig load() {
         Path file = configPath();
@@ -46,7 +43,6 @@ public final class ConditionalVideosConfig {
                 config = new ConditionalVideosConfig();
             }
             config.ensureDefaults();
-            config.migrateLegacySessionTracking();
             return config;
         } catch (IOException | JsonSyntaxException exception) {
             ConditionalVideos.LOGGER.error("Failed to read config file '{}'. Recreating with defaults.", file, exception);
@@ -156,20 +152,6 @@ public final class ConditionalVideosConfig {
         if (consumedConditionSessions == null) {
             consumedConditionSessions = new HashSet<>();
         }
-        if (seenSessions == null) {
-            seenSessions = new HashSet<>();
-        }
-    }
-
-    private void migrateLegacySessionTracking() {
-        if (seenSessions.isEmpty()) {
-            return;
-        }
-
-        for (String session : seenSessions) {
-            consumedConditionSessions.add(conditionSessionKey(FIRST_JOIN_CONDITION_ID, session));
-        }
-        seenSessions.clear();
     }
 
     private static Path configPath() {
