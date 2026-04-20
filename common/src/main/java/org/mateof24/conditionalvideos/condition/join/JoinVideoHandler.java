@@ -46,7 +46,11 @@ public final class JoinVideoHandler {
                     resolvedPath,
                     firstJoin.skippable(),
                     firstJoin.enableBackground(),
-                    backgroundColor
+                    backgroundColor,
+                    firstJoin.videoTitle(),
+                    firstJoin.videoTitlePosition(),
+                    firstJoin.videoDescription(),
+                    firstJoin.videoDescriptionPosition()
             ));
     }
 }

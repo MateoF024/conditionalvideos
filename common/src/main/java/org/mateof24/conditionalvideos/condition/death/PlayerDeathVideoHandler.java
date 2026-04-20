@@ -46,7 +46,11 @@ public final class PlayerDeathVideoHandler {
                 resolvedPath,
                 playerDeath.skippable(),
                 playerDeath.enableBackground(),
-                backgroundColor
+                backgroundColor,
+                playerDeath.videoTitle(),
+                playerDeath.videoTitlePosition(),
+                playerDeath.videoDescription(),
+                playerDeath.videoDescriptionPosition()
         ));
     }
 }

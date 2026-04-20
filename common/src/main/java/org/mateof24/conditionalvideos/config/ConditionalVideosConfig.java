@@ -20,8 +20,8 @@ public final class ConditionalVideosConfig {
     private static final String FILE_NAME = "conditionalvideos.json";
     private static final String FIRST_JOIN_CONDITION_ID = "firstJoin";
 
-    private ConditionConfig firstJoin = new ConditionConfig("", true, false, true, "#000000");
-    private ConditionConfig playerDeath = new ConditionConfig("", true, true, true, "#000000");
+    private ConditionConfig firstJoin = new ConditionConfig("", true, false, true, "#000000", "", "bottomLeft", "", "bottomLeft");
+    private ConditionConfig playerDeath = new ConditionConfig("", true, true, true, "#000000", "", "bottomLeft", "", "bottomLeft");
     private Set<String> consumedConditionSessions = new HashSet<>();
     private Set<String> seenSessions = new HashSet<>(); // Legacy field kept for migration.
 
@@ -114,10 +114,10 @@ public final class ConditionalVideosConfig {
 
     private void ensureDefaults() {
         if (firstJoin == null) {
-            firstJoin = new ConditionConfig("", true, false, true, "#000000");
+            firstJoin = new ConditionConfig("", true, false, true, "#000000", "", "bottomLeft", "", "bottomLeft");
         }
         if (playerDeath == null) {
-            playerDeath = new ConditionConfig("", true, true, true, "#000000");
+            playerDeath = new ConditionConfig("", true, true, true, "#000000", "", "bottomLeft", "", "bottomLeft");
         }
         if (consumedConditionSessions == null) {
             consumedConditionSessions = new HashSet<>();
@@ -147,7 +147,11 @@ public final class ConditionalVideosConfig {
             boolean skippable,
             boolean repeatableInSameSession,
             boolean enableBackground,
-            String colorBackground
+            String colorBackground,
+            String videoTitle,
+            String videoTitlePosition,
+            String videoDescription,
+            String videoDescriptionPosition
     ) {
     }
 }
