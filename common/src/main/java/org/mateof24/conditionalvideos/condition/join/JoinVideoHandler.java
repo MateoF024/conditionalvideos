@@ -22,21 +22,27 @@ public final class JoinVideoHandler {
             return;
         }
 
-        String sessionKey = SessionKeyResolver.resolveSessionKey(minecraft);
-        if (config.hasSeenSession(sessionKey)) {
-            ConditionalVideos.LOGGER.debug("First join condition already consumed for session {}.", sessionKey);
-            return;
+        boolean shouldTrackSession = config.shouldTrackSessionFor(firstJoin);
+        String sessionKey = null;
+        if (shouldTrackSession) {
+            sessionKey = SessionKeyResolver.resolveSessionKey(minecraft);
+            if (config.hasSeenSession(sessionKey)) {
+                ConditionalVideos.LOGGER.debug("First join condition already consumed for session {}.", sessionKey);
+                return;
+            }
+
+            Path resolvedPath = VideoPathResolver.resolve(minecraft.gameDirectory.toPath(), firstJoin.video());
+            if (resolvedPath == null) {
+                ConditionalVideos.LOGGER.warn("Configured first join video '{}' is invalid or not found. Ignoring.", firstJoin.video());
+                return;
+            }
+
+            if (shouldTrackSession && sessionKey != null) {
+                config.markSessionSeen(sessionKey);
+                config.save();
+            }
+
+            minecraft.setScreen(new VideoPlaybackScreen(resolvedPath, firstJoin.skippable()));
         }
-
-        Path resolvedPath = VideoPathResolver.resolve(minecraft.gameDirectory.toPath(), firstJoin.video());
-        if (resolvedPath == null) {
-            ConditionalVideos.LOGGER.warn("Configured first join video '{}' is invalid or not found. Ignoring.", firstJoin.video());
-            return;
-        }
-
-        config.markSessionSeen(sessionKey);
-        config.save();
-
-        minecraft.setScreen(new VideoPlaybackScreen(resolvedPath));
     }
-}
+    }

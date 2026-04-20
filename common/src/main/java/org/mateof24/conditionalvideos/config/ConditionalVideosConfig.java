@@ -19,7 +19,7 @@ public final class ConditionalVideosConfig {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final String FILE_NAME = "conditionalvideos.json";
 
-    private FirstJoinConfig firstJoin = new FirstJoinConfig("", true);
+    private FirstJoinConfig firstJoin = new FirstJoinConfig("", true, false);
     private Set<String> seenSessions = new HashSet<>();
 
     public static ConditionalVideosConfig load() {
@@ -36,7 +36,7 @@ public final class ConditionalVideosConfig {
                 config = new ConditionalVideosConfig();
             }
             if (config.firstJoin == null) {
-                config.firstJoin = new FirstJoinConfig("", true);
+                config.firstJoin = new FirstJoinConfig("", true, false);
             }
             if (config.seenSessions == null) {
                 config.seenSessions = new HashSet<>();
@@ -74,10 +74,14 @@ public final class ConditionalVideosConfig {
         seenSessions.add(key);
     }
 
+    public boolean shouldTrackSessionFor(FirstJoinConfig firstJoinConfig) {
+        return firstJoinConfig != null && !firstJoinConfig.repeatableInSameSession();
+    }
+
     private static Path configPath() {
         return Minecraft.getInstance().gameDirectory.toPath().resolve("config").resolve(FILE_NAME);
     }
 
-    public record FirstJoinConfig(String video, boolean skippable) {
+    public record FirstJoinConfig(String video, boolean skippable, boolean repeatableInSameSession) {
     }
 }

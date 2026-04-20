@@ -15,15 +15,19 @@ public final class VideoPlaybackScreen extends Screen {
 
     private final WaterMediaVideoBackend backend;
     private int elapsedTicks;
+    private final boolean skippable;
+    private boolean worldAudioPaused;
 
-    public VideoPlaybackScreen(Path videoPath) {
+    public VideoPlaybackScreen(Path videoPath, boolean skippable) {
         super(Component.literal("Conditional Video"));
         this.backend = new WaterMediaVideoBackend(videoPath);
+        this.skippable = skippable;
     }
 
     @Override
     protected void init() {
         backend.init();
+        pauseWorldAudio();
         elapsedTicks = 0;
     }
 
@@ -66,7 +70,7 @@ public final class VideoPlaybackScreen extends Screen {
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
-        if (keyCode == 256) {
+        if (skippable && keyCode == 256) {
             onClose();
             return true;
         }
@@ -76,6 +80,7 @@ public final class VideoPlaybackScreen extends Screen {
     @Override
     public void onClose() {
         backend.close();
+        resumeWorldAudio();
         if (minecraft != null) {
             minecraft.setScreen(null);
         }
@@ -85,4 +90,23 @@ public final class VideoPlaybackScreen extends Screen {
     public boolean isPauseScreen() {
         return false;
     }
+
+    private void pauseWorldAudio() {
+        if (minecraft == null || worldAudioPaused) {
+            return;
+        }
+
+        minecraft.getSoundManager().pause();
+        worldAudioPaused = true;
+    }
+
+    private void resumeWorldAudio() {
+        if (minecraft == null || !worldAudioPaused) {
+            return;
+        }
+
+        minecraft.getSoundManager().resume();
+        worldAudioPaused = false;
+    }
+
 }
