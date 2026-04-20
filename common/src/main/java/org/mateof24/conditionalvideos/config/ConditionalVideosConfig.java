@@ -78,10 +78,6 @@ public final class ConditionalVideosConfig {
         consumedConditionSessions.add(conditionSessionKey(conditionId, sessionKey));
     }
 
-    public boolean shouldTrackSessionFor(ConditionConfig conditionConfig) {
-        return conditionConfig != null && !conditionConfig.repeatableInSameSession();
-    }
-
     public int resolveBackgroundColor(ConditionConfig conditionConfig, int fallbackColor) {
         if (conditionConfig == null || !conditionConfig.enableBackground()) {
             return fallbackColor;
