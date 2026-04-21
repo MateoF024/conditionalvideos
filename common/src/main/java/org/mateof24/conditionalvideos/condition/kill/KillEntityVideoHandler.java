@@ -1,182 +1,83 @@
 package org.mateof24.conditionalvideos.condition.kill;
 
 import net.minecraft.client.Minecraft;
-import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.resources.ResourceLocation;
-import net.minecraft.stats.Stat;
-import net.minecraft.stats.Stats;
-import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.LivingEntity;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
 import org.mateof24.conditionalvideos.condition.shared.ConditionVideoPlayer;
 
-import java.lang.reflect.Method;
-import java.util.HashMap;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
 
 public final class KillEntityVideoHandler {
     private static final String CONDITION_ID_PREFIX = "entityKilled:";
-    private static final Map<String, Integer> knownKilledCounts = new HashMap<>();
+    private static final int TRACK_TIMEOUT_TICKS = 100;
+    private static final Map<Integer, TrackedAttack> trackedAttacks = new LinkedHashMap<>();
     private static boolean sessionActive;
 
     private KillEntityVideoHandler() {
     }
 
-    public static void onSessionStarted(Minecraft minecraft) {
-        Set<String> trackedEntities = ConditionalVideosConfig.load().entityKilled().keySet();
-        knownKilledCounts.clear();
-        knownKilledCounts.putAll(snapshotKilledCounts(minecraft, trackedEntities));
+    public static void onSessionStarted() {
+        trackedAttacks.clear();
         sessionActive = true;
     }
 
     public static void onSessionEnded() {
         sessionActive = false;
-        knownKilledCounts.clear();
+        trackedAttacks.clear();
     }
 
-    public static void onAwardStatsPacketApplied(Minecraft minecraft, Object packet) {
-        if (!sessionActive || packet == null) {
+    public static void onPlayerAttackedEntity(int entityId, String entityTypeId) {
+        if (!sessionActive) {
+            return;
+        }
+        if (!ConditionalVideosConfig.load().entityKilled().containsKey(entityTypeId)) {
+            return;
+        }
+        trackedAttacks.put(entityId, new TrackedAttack(entityTypeId));
+    }
+
+    public static void onClientTick(Minecraft minecraft) {
+        if (!sessionActive || minecraft.level == null) {
+            trackedAttacks.clear();
             return;
         }
 
-        ConditionalVideosConfig config = ConditionalVideosConfig.load();
-        Map<String, ConditionalVideosConfig.ConditionConfig> configuredKills = config.entityKilled();
-        if (configuredKills.isEmpty()) {
-            return;
-        }
+        Iterator<Map.Entry<Integer, TrackedAttack>> it = trackedAttacks.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<Integer, TrackedAttack> entry = it.next();
+            TrackedAttack tracked = entry.getValue();
+            tracked.ticks++;
 
-        Object statsMapObject = resolveStatsMap(packet);
-        if (!(statsMapObject instanceof Iterable<?> iterable)) {
-            return;
-        }
-
-        for (Object entryObject : iterable) {
-            String entityId = resolveKilledEntityId(entryObject);
-            if (entityId.isBlank() || !configuredKills.containsKey(entityId)) {
+            if (tracked.ticks > TRACK_TIMEOUT_TICKS) {
+                it.remove();
                 continue;
             }
 
-            Integer updatedCount = resolveUpdatedCount(entryObject);
-            if (updatedCount == null) {
-                continue;
-            }
-
-            int previous = knownKilledCounts.getOrDefault(entityId, 0);
-            knownKilledCounts.put(entityId, updatedCount);
-            if (updatedCount > previous) {
-                onEntityKilled(minecraft, entityId);
+            Entity entity = minecraft.level.getEntity(entry.getKey());
+            if (entity == null || (entity instanceof LivingEntity living && !living.isAlive())) {
+                it.remove();
+                onEntityKilled(minecraft, tracked.entityTypeId);
                 break;
             }
         }
     }
 
-    public static Map<String, Integer> snapshotKilledCounts(Minecraft minecraft, Iterable<String> entityIds) {
-        Map<String, Integer> snapshot = new HashMap<>();
-        if (minecraft.player == null) {
-            return snapshot;
-        }
-
-        for (String entityId : entityIds) {
-            snapshot.put(entityId, resolveKilledCount(minecraft, entityId));
-        }
-        return snapshot;
-    }
-
-    public static void onEntityKilled(Minecraft minecraft, String entityId) {
+    private static void onEntityKilled(Minecraft minecraft, String entityId) {
         ConditionalVideosConfig config = ConditionalVideosConfig.load();
         ConditionalVideosConfig.ConditionConfig killConfig = config.entityKilled().get(entityId);
-
-        ConditionVideoPlayer.play(
-                minecraft,
-                config,
-                killConfig,
-                CONDITION_ID_PREFIX + entityId,
-                "entity killed ('" + entityId + "')"
-        );
+        ConditionVideoPlayer.play(minecraft, config, killConfig, CONDITION_ID_PREFIX + entityId, "entity killed ('" + entityId + "')");
     }
 
-    public static int resolveKilledCount(Minecraft minecraft, String entityId) {
-        if (minecraft.player == null || entityId == null || entityId.isBlank()) {
-            return 0;
-        }
+    private static final class TrackedAttack {
+        final String entityTypeId;
+        int ticks;
 
-        ResourceLocation key = ResourceLocation.tryParse(entityId);
-        if (key == null) {
-            return 0;
-        }
-
-        Optional<EntityType<?>> entityTypeOptional = BuiltInRegistries.ENTITY_TYPE.getOptional(key);
-        if (entityTypeOptional.isEmpty()) {
-            return 0;
-        }
-
-        Stat<EntityType<?>> stat = Stats.ENTITY_KILLED.get(entityTypeOptional.get());
-        return minecraft.player.getStats().getValue(stat);
-    }
-
-    private static Object resolveStatsMap(Object packet) {
-        try {
-            Method method = packet.getClass().getMethod("getStats");
-            Object statsMap = method.invoke(packet);
-            try {
-                Method object2IntEntrySet = statsMap.getClass().getMethod("object2IntEntrySet");
-                return object2IntEntrySet.invoke(statsMap);
-            } catch (ReflectiveOperationException ignored) {
-                try {
-                    Method entrySet = statsMap.getClass().getMethod("entrySet");
-                    return entrySet.invoke(statsMap);
-                } catch (ReflectiveOperationException ignoredAgain) {
-                    return null;
-                }
-            }
-        } catch (ReflectiveOperationException exception) {
-            return null;
-        }
-    }
-
-    private static String resolveKilledEntityId(Object entryObject) {
-        if (entryObject == null) {
-            return "";
-        }
-
-        Object statObject = invokeNoArgs(entryObject, "getKey");
-        if (statObject == null) {
-            return "";
-        }
-
-        Object statValue = invokeNoArgs(statObject, "getValue");
-        if (!(statValue instanceof EntityType<?> entityType)) {
-            return "";
-        }
-
-        ResourceLocation key = BuiltInRegistries.ENTITY_TYPE.getKey(entityType);
-        return key == null ? "" : key.toString();
-    }
-
-    private static Integer resolveUpdatedCount(Object entryObject) {
-        Object countObject = invokeNoArgs(entryObject, "getIntValue");
-        if (countObject instanceof Integer value) {
-            return value;
-        }
-
-        countObject = invokeNoArgs(entryObject, "getValue");
-        if (countObject instanceof Integer value) {
-            return value;
-        }
-        return null;
-    }
-
-    private static Object invokeNoArgs(Object target, String methodName) {
-        if (target == null) {
-            return null;
-        }
-
-        try {
-            Method method = target.getClass().getMethod(methodName);
-            return method.invoke(target);
-        } catch (ReflectiveOperationException exception) {
-            return null;
+        TrackedAttack(String entityTypeId) {
+            this.entityTypeId = entityTypeId;
+            this.ticks = 0;
         }
     }
 }

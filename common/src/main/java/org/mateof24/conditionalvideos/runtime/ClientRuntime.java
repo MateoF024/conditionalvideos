@@ -7,7 +7,6 @@ import net.minecraft.resources.ResourceLocation;
 import org.mateof24.conditionalvideos.condition.advancement.AdvancementVideoHandler;
 import org.mateof24.conditionalvideos.condition.dimension.DimensionChangeVideoHandler;
 import org.mateof24.conditionalvideos.condition.kill.KillEntityVideoHandler;
-import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
 
 import java.util.*;
 
@@ -20,14 +19,11 @@ public final class ClientRuntime {
     private ResourceLocation pendingDimensionVideoTarget;
     private int pendingDimensionVideoTicks;
     private Set<String> completedAdvancements = new LinkedHashSet<>();
-    private Set<String> trackedKilledEntities = new LinkedHashSet<>();
-    private Map<String, Integer> killedEntityCounts = new HashMap<>();
 
     public void onClientTick() {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.level == null || minecraft.player == null) {
             if (wasInSession) {
-                AdvancementVideoHandler.onSessionEnded();
                 KillEntityVideoHandler.onSessionEnded();
             }
             wasInSession = false;
@@ -36,19 +32,15 @@ public final class ClientRuntime {
             pendingDimensionVideoTarget = null;
             pendingDimensionVideoTicks = 0;
             completedAdvancements = new LinkedHashSet<>();
-            trackedKilledEntities = new LinkedHashSet<>();
-            killedEntityCounts = new HashMap<>();
             return;
         }
 
         if (!wasInSession) {
             wasInSession = true;
             JoinVideoHandler.onJoinedSession(minecraft);
-            AdvancementVideoHandler.onSessionStarted(minecraft);
-            KillEntityVideoHandler.onSessionStarted(minecraft);
+            KillEntityVideoHandler.onSessionStarted();
             lastDimension = minecraft.level.dimension().location();
             completedAdvancements = AdvancementVideoHandler.snapshotCompletedAdvancements(minecraft);
-            refreshTrackedKilledEntities(minecraft);
         }
 
         boolean isAlive = minecraft.player.isAlive();
@@ -75,16 +67,7 @@ public final class ClientRuntime {
         }
         completedAdvancements = nowCompleted;
 
-        refreshTrackedKilledEntities(minecraft);
-        Map<String, Integer> nowKilledCounts = KillEntityVideoHandler.snapshotKilledCounts(minecraft, trackedKilledEntities);
-        for (Map.Entry<String, Integer> entry : nowKilledCounts.entrySet()) {
-            int previous = killedEntityCounts.getOrDefault(entry.getKey(), 0);
-            if (entry.getValue() > previous) {
-                KillEntityVideoHandler.onEntityKilled(minecraft, entry.getKey());
-                break;
-            }
-        }
-        killedEntityCounts = nowKilledCounts;
+        KillEntityVideoHandler.onClientTick(minecraft);
     }
 
     private void tryPlayPendingDimensionVideo(Minecraft minecraft, ResourceLocation currentDimension) {
@@ -105,15 +88,4 @@ public final class ClientRuntime {
         pendingDimensionVideoTarget = null;
         pendingDimensionVideoTicks = 0;
     }
-
-    private void refreshTrackedKilledEntities(Minecraft minecraft) {
-        Set<String> configuredEntities = new LinkedHashSet<>(ConditionalVideosConfig.load().entityKilled().keySet());
-        if (configuredEntities.equals(trackedKilledEntities)) {
-            return;
-        }
-
-        trackedKilledEntities = configuredEntities;
-        killedEntityCounts = KillEntityVideoHandler.snapshotKilledCounts(minecraft, trackedKilledEntities);
-    }
-
 }

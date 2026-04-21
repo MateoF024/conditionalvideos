@@ -36,6 +36,6 @@ side = "BOTH"
 [[dependencies.conditionalvideos]]
 modId = "watermedia"
 mandatory = true
-versionRange = "*"
+versionRange = "[2.1.37,)"
 ordering = "AFTER"
 side = "BOTH"

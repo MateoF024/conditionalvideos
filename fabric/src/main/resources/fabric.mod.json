@@ -30,6 +30,6 @@
     "java": ">=17",
     "architectury": ">=9.2.14",
     "fabric-api": "*",
-    "watermedia": "*"
+    "watermedia": "=2.1.37"
   }
 }

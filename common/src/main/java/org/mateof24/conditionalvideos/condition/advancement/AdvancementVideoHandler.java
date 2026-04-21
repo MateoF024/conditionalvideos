@@ -13,8 +13,6 @@ import java.util.Set;
 
 public final class AdvancementVideoHandler {
     private static final String CONDITION_ID_PREFIX = "advancementCompleted:";
-    private static final Set<String> knownCompletedAdvancements = new HashSet<>();
-    private static boolean sessionActive;
 
     private AdvancementVideoHandler() {
     }
@@ -44,35 +42,6 @@ public final class AdvancementVideoHandler {
             }
         }
         return completed;
-    }
-
-    public static void onSessionStarted(Minecraft minecraft) {
-        knownCompletedAdvancements.clear();
-        knownCompletedAdvancements.addAll(snapshotCompletedAdvancements(minecraft));
-        sessionActive = true;
-    }
-
-    public static void onSessionEnded() {
-        sessionActive = false;
-        knownCompletedAdvancements.clear();
-    }
-
-    public static void onAdvancementsPacketApplied(Minecraft minecraft) {
-        if (!sessionActive) {
-            return;
-        }
-
-        Set<String> currentCompleted = snapshotCompletedAdvancements(minecraft);
-        for (String advancementId : currentCompleted) {
-            if (!knownCompletedAdvancements.contains(advancementId)) {
-                if (onAdvancementCompleted(minecraft, advancementId)) {
-                    break;
-                }
-            }
-        }
-
-        knownCompletedAdvancements.clear();
-        knownCompletedAdvancements.addAll(currentCompleted);
     }
 
     public static boolean onAdvancementCompleted(Minecraft minecraft, String advancementId) {
@@ -115,7 +84,6 @@ public final class AdvancementVideoHandler {
                     return map;
                 }
             } catch (ReflectiveOperationException ignored) {
-                // Continue with the next field.
             }
         }
         return null;
@@ -159,12 +127,16 @@ public final class AdvancementVideoHandler {
             return "";
         }
 
-        try {
-            Method getId = advancement.getClass().getMethod("getId");
-            Object id = getId.invoke(advancement);
-            return id == null ? "" : id.toString();
-        } catch (ReflectiveOperationException exception) {
-            return "";
+        for (String methodName : new String[]{"getId", "id"}) {
+            try {
+                Method method = advancement.getClass().getMethod(methodName);
+                Object id = method.invoke(advancement);
+                if (id != null && !id.toString().isBlank()) {
+                    return id.toString();
+                }
+            } catch (ReflectiveOperationException ignored) {
+            }
         }
+        return "";
     }
 }
