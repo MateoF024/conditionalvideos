@@ -5,7 +5,8 @@
   "minVersion": "0.8",
   "client": [
     "ClientPacketListenerMixin",
-    "PlayerAttackMixin"
+    "PlayerAttackMixin",
+    "SoundManagerMixin"
   ],
   "mixins": [
   ],

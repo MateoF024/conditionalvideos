@@ -2,16 +2,12 @@ package org.mateof24.conditionalvideos.video;
 
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
-import net.minecraft.sounds.SoundSource;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.FormattedCharSequence;
 import org.mateof24.conditionalvideos.video.backend.WaterMediaVideoBackend;
 
-import java.lang.reflect.Method;
-import java.util.EnumMap;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.Objects;
 
 public final class VideoPlaybackScreen extends Screen {
     private static final Component SKIP_HINT = Component.translatable("screen.conditionalvideos.skip_hint");
@@ -26,9 +22,7 @@ public final class VideoPlaybackScreen extends Screen {
     private final WaterMediaVideoBackend backend;
     private int elapsedTicks;
     private final boolean skippable;
-    private boolean worldAudioPaused;
     private boolean backendInitialized;
-    private final EnumMap<SoundSource, Float> previousVolumes = new EnumMap<>(SoundSource.class);
     private final boolean enableBackground;
     private final int backgroundColor;
     private final Component videoTitle;
@@ -67,19 +61,19 @@ public final class VideoPlaybackScreen extends Screen {
             backend.init();
             backendInitialized = true;
         }
-        pauseWorldAudio();
+        VideoAudioState.setVideoPlaying(true);
+        if (minecraft != null) {
+            minecraft.getSoundManager().stop();
+        }
         elapsedTicks = 0;
         if (backend.hasFinished()) {
             onClose();
-            return;
         }
-        enforceAudioMute();
     }
 
     @Override
     public void tick() {
         elapsedTicks++;
-        enforceAudioMute();
         if (backend.hasFinished()) {
             onClose();
         }
@@ -211,8 +205,6 @@ public final class VideoPlaybackScreen extends Screen {
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
-        // Prevent fullscreen toggles while VLC/WATERMeDIA is active. Recreating/resizing the
-        // output target during playback can crash the process on some setups.
         if (keyCode == 300) {
             return true;
         }
@@ -230,7 +222,7 @@ public final class VideoPlaybackScreen extends Screen {
         }
         closed = true;
         backend.close();
-        resumeWorldAudio();
+        VideoAudioState.setVideoPlaying(false);
         onClosed.run();
         if (minecraft != null) {
             minecraft.setScreen(null);
@@ -241,180 +233,6 @@ public final class VideoPlaybackScreen extends Screen {
     public boolean isPauseScreen() {
         return false;
     }
-
-    private void pauseWorldAudio() {
-        if (minecraft == null || worldAudioPaused) {
-            return;
-        }
-
-        previousVolumes.clear();
-        for (SoundSource source : SoundSource.values()) {
-            previousVolumes.put(source, minecraft.options.getSoundSourceVolume(source));
-            setSoundSourceVolume(source, 0.0F);
-            applyVolumeToSoundManager(source, 0.0F);
-        }
-        invokeNoArgMethod(minecraft.getSoundManager(), "pause");
-        invokeNoArgMethod(minecraft.getSoundManager(), "pauseAll");
-        minecraft.getSoundManager().stop();
-        worldAudioPaused = true;
-    }
-
-    private void resumeWorldAudio() {
-        if (minecraft == null || !worldAudioPaused) {
-            return;
-        }
-
-        for (SoundSource source : SoundSource.values()) {
-            Float value = previousVolumes.get(source);
-            float resolved = value == null ? 1.0F : value;
-            setSoundSourceVolume(source, resolved);
-            applyVolumeToSoundManager(source, resolved);
-        }
-        invokeNoArgMethod(minecraft.getSoundManager(), "resume");
-        invokeNoArgMethod(minecraft.getSoundManager(), "resumeAll");
-        previousVolumes.clear();
-        worldAudioPaused = false;
-    }
-
-    private void enforceAudioMute() {
-        if (minecraft == null || !worldAudioPaused) {
-            return;
-        }
-        for (SoundSource source : SoundSource.values()) {
-            if (minecraft.options.getSoundSourceVolume(source) > 0.0F) {
-                setSoundSourceVolume(source, 0.0F);
-            }
-            applyVolumeToSoundManager(source, 0.0F);
-        }
-    }
-
-    private void applyVolumeToSoundManager(SoundSource source, float value) {
-        if (minecraft == null) {
-            return;
-        }
-        Object soundManager = minecraft.getSoundManager();
-        invokeSoundManagerSetter(soundManager, "updateSourceVolume", source, value);
-        invokeSoundManagerSetter(soundManager, "setSoundCategoryVolume", source, value);
-        invokeSoundManagerSetter(soundManager, "setSoundSourceVolume", source, value);
-    }
-
-    private void invokeSoundManagerSetter(Object target, String methodName, SoundSource source, float value) {
-        try {
-            for (Method method : target.getClass().getMethods()) {
-                if (!Objects.equals(method.getName(), methodName) || method.getParameterCount() != 2) {
-                    continue;
-                }
-                Class<?>[] params = method.getParameterTypes();
-                if (params[0] != SoundSource.class) {
-                    continue;
-                }
-                if (params[1] == float.class || params[1] == Float.class) {
-                    method.invoke(target, source, value);
-                    return;
-                }
-                if (params[1] == double.class || params[1] == Double.class) {
-                    method.invoke(target, source, (double) value);
-                    return;
-                }
-            }
-        } catch (Exception ignored) {
-        }
-    }
-
-    private void stopAndPauseAllGameAudio() {
-        if (minecraft == null) {
-            return;
-        }
-        minecraft.getSoundManager().stop();
-        invokeNoArgMethod(minecraft.getSoundManager(), "pause");
-        invokeNoArgMethod(minecraft.getSoundManager(), "pauseAll");
-    }
-
-    private void setSoundSourceVolume(SoundSource source, float value) {
-        if (minecraft == null) {
-            return;
-        }
-
-        Object options = minecraft.options;
-        if (invokeSetter(options, "setSoundCategoryVolume", source, value)
-                || invokeSetter(options, "setSoundCategoryVolume", source, (double) value)
-                || invokeSetter(options, "setSoundSourceVolume", source, value)
-                || invokeSetter(options, "setSoundSourceVolume", source, (double) value)) {
-            return;
-        }
-
-        try {
-            Method getOptionMethod = options.getClass().getMethod("getSoundSourceOptionInstance", SoundSource.class);
-            Object optionInstance = getOptionMethod.invoke(options, source);
-            if (optionInstance == null) {
-                return;
-            }
-
-            for (Method method : optionInstance.getClass().getMethods()) {
-                if (!"set".equals(method.getName()) || method.getParameterCount() != 1) {
-                    continue;
-                }
-                Class<?> paramType = method.getParameterTypes()[0];
-                if (paramType == double.class || paramType == Double.class) {
-                    method.invoke(optionInstance, (double) value);
-                    return;
-                }
-                if (paramType == float.class || paramType == Float.class) {
-                    method.invoke(optionInstance, value);
-                    return;
-                }
-            }
-        } catch (Exception ignored) {
-        }
-    }
-
-    private boolean invokeSetter(Object target, String methodName, SoundSource source, Object value) {
-        try {
-            for (Method method : target.getClass().getMethods()) {
-                if (!methodName.equals(method.getName()) || method.getParameterCount() != 2) {
-                    continue;
-                }
-                Class<?>[] params = method.getParameterTypes();
-                if (params[0] != SoundSource.class) {
-                    continue;
-                }
-
-                if (isCompatibleNumberParam(params[1], value)) {
-                    Number number = (Number) value;
-                    if (params[1] == double.class || params[1] == Double.class) {
-                        method.invoke(target, source, number.doubleValue());
-                    } else if (params[1] == float.class || params[1] == Float.class) {
-                        method.invoke(target, source, number.floatValue());
-                    } else {
-                        method.invoke(target, source, value);
-                    }
-                    return true;
-                }
-            }
-        } catch (Exception ignored) {
-        }
-        return false;
-    }
-
-    private boolean isCompatibleNumberParam(Class<?> paramType, Object value) {
-        if (!(value instanceof Number)) {
-            return false;
-        }
-        return paramType == float.class
-                || paramType == Float.class
-                || paramType == double.class
-                || paramType == Double.class
-                || Number.class.isAssignableFrom(paramType);
-    }
-
-    private void invokeNoArgMethod(Object target, String methodName) {
-        try {
-            Method method = target.getClass().getMethod(methodName);
-            method.invoke(target);
-        } catch (Exception ignored) {
-        }
-    }
-
 
     private enum TextAnchor {
         TOP_LEFT,

@@ -19,14 +19,15 @@
 </p>
 
 <p align="center">
-  Client-side cinematic triggers for Minecraft. Configure a condition, assign a video, and play it exactly when it matters.
+  Server-aware cinematic triggers for Minecraft. Configure conditions once and let clients play synced videos exactly when it matters.
 </p>
 
 ---
 
 ## ✨ Overview
 
-ConditionalVideos is a client-side mod that plays custom videos when specific in-game events are detected.
+ConditionalVideos plays custom videos when specific in-game events are detected.
+It is **not strictly client-side**: it runs on both client and dedicated server, with different responsibilities in each environment.
 
 It is designed for curated gameplay experiences such as servers, story maps, quest packs, and roleplay setups where cinematic feedback improves immersion.
 
@@ -37,9 +38,50 @@ It is designed for curated gameplay experiences such as servers, story maps, que
 - **Minecraft Version:** 1.20.1
 - **Loaders:** Fabric, Forge
 - **Java:** 17+
-- **Config File:** `config/conditionalvideos.json`
+- **Client Config File:** `config/conditionalvideos.json`
+- **Dedicated Server Config File:** `config/conditionalvideos-server.json`
 - **Required Fabric API**
 - **Required** [**WATERMeDIA: Multimedia API**](https://modrinth.com/mod/watermedia)
+
+---
+
+## 🧭 Client vs Server (Important)
+
+
+### Client Instance
+
+- Creates and uses:
+  - `config/conditionalvideos.json`
+- In **singleplayer**:
+  - Uses local client config directly.
+  - Local `video` paths are resolved from the local game directory (or absolute path).
+- In **multiplayer**:
+  - Acts as a **passive receiver** for server data.
+  - Receives synced server config at runtime (it does **not** use your local client rules for server gameplay).
+  - Downloads server-provided videos to cache and reuses them on reconnect.
+  - Cache location pattern:
+    - `config/conditionalvideos/<server-id>/<condition-type>/<file>`
+- On disconnect:
+  - Synced runtime state is cleared and re-requested next time you join.
+
+### Dedicated Server Instance
+
+- Creates and uses:
+  - `config/conditionalvideos-server.json`
+- Owns the **authoritative config** for connected clients.
+- On player join:
+  - Sends synced config to clients.
+  - Publishes a manifest of configured videos.
+  - Serves missing/outdated files to clients in chunks.
+- If you replace a video file on server or change path/config:
+  - Clients detect hash mismatch and re-download updated files automatically.
+
+### What this means in practice
+
+- Clients still need the mod installed to receive/play synced videos from the server.
+- You can install video assets only on the server and clients will receive needed files automatically.
+- Local client config stays useful for singleplayer testing, but does not override dedicated-server behavior in multiplayer.
+- For multiplayer content pipelines, treat `conditionalvideos-server.json` as the source of truth.
 
 ---
 
@@ -91,6 +133,22 @@ Each condition entry shares the same structure:
 
 ---
 
+## 📁 Path Rules by Environment
+
+### Singleplayer / Client-only local playback
+- `video` can be:
+  - Relative path (resolved from game directory)
+  - Absolute path
+
+### Dedicated server playback for connected clients
+- Server resolves `video` from server filesystem.
+- Client does **not** need that same path to exist locally.
+- Client receives file content from server and plays cached copy instead.
+
+> Recommendation: keep all server video assets in a dedicated folder (for example `videos/`) and reference them with relative paths in `conditionalvideos-server.json`.
+
+---
+
 ## Session Tracking Field
 
 The config includes one internal tracking field managed by the mod:
@@ -103,7 +161,7 @@ The config includes one internal tracking field managed by the mod:
 
 ---
 
-## 🗂️ Full `config/conditionalvideos.json` Example
+## 🗂️ Full `config/conditionalvideos.json` or `config/conditionalvideos-server.json` Example
 
 ```json
 {
