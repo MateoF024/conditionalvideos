@@ -1,6 +1,11 @@
 package org.mateof24.conditionalvideos.config;
 
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ServerData;
+
+import java.nio.file.Path;
+import java.util.HashMap;
+import java.util.Map;
 
 public final class ActiveConfigResolver {
     public enum RemoteConfigState {
@@ -11,6 +16,7 @@ public final class ActiveConfigResolver {
 
     private static ConditionalVideosConfig remoteConfig;
     private static RemoteConfigState remoteConfigState = RemoteConfigState.UNKNOWN;
+    private static final Map<String, Path> remoteVideoPaths = new HashMap<>();
 
     private ActiveConfigResolver() {
     }
@@ -32,7 +38,7 @@ public final class ActiveConfigResolver {
     }
 
     public static boolean isMultiplayerSession(Minecraft minecraft) {
-        return minecraft.getCurrentServer() != null;
+        return minecraft.level != null && !minecraft.hasSingleplayerServer();
     }
 
     public static void setRemoteConfig(ConditionalVideosConfig config) {
@@ -43,6 +49,7 @@ public final class ActiveConfigResolver {
     public static void resetRemoteSessionState() {
         remoteConfig = null;
         remoteConfigState = RemoteConfigState.UNKNOWN;
+        remoteVideoPaths.clear();
     }
 
     public static RemoteConfigState remoteConfigState() {
@@ -53,5 +60,25 @@ public final class ActiveConfigResolver {
         if (remoteConfigState == RemoteConfigState.UNKNOWN) {
             remoteConfigState = RemoteConfigState.UNAVAILABLE;
         }
+    }
+
+    public static void setRemoteVideoPath(String configuredPath, Path localPath) {
+        remoteVideoPaths.put(configuredPath, localPath);
+    }
+
+    public static Path resolveRemoteVideoPath(String configuredPath) {
+        return remoteVideoPaths.get(configuredPath);
+    }
+
+    public static String resolveCurrentServerId(Minecraft minecraft) {
+        ServerData server = minecraft.getCurrentServer();
+        if (server == null) {
+            return "unknown-server";
+        }
+        String source = server.ip != null && !server.ip.isBlank() ? server.ip : server.name;
+        if (source == null || source.isBlank()) {
+            source = "unknown-server";
+        }
+        return source.replaceAll("[^a-zA-Z0-9._-]", "_");
     }
 }

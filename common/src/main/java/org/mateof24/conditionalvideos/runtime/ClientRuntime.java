@@ -15,6 +15,7 @@ import java.util.*;
 public final class ClientRuntime {
     private static final int DIMENSION_VIDEO_DELAY_TICKS = 20;
     private static final int MULTIPLAYER_HANDSHAKE_TIMEOUT_TICKS = 100;
+    private static final int JOIN_VIDEO_RETRY_TIMEOUT_TICKS = 200;
 
     private boolean wasInSession;
     private boolean wasAlive;
@@ -30,6 +31,7 @@ public final class ClientRuntime {
         if (minecraft.level == null || minecraft.player == null) {
             if (wasInSession) {
                 KillEntityVideoHandler.onSessionEnded();
+                ConfigSyncNetworking.onClientDisconnected();
             }
             wasInSession = false;
             wasAlive = false;
@@ -49,6 +51,9 @@ public final class ClientRuntime {
             completedAdvancements = AdvancementVideoHandler.snapshotCompletedAdvancements(minecraft);
             joinVideoHandled = false;
             multiplayerHandshakeTicks = 0;
+            if (ActiveConfigResolver.isMultiplayerSession(minecraft)) {
+                ConfigSyncNetworking.requestServerSync(false);
+            }
         }
 
         if (!joinVideoHandled) {
@@ -57,12 +62,21 @@ public final class ClientRuntime {
                 joinVideoHandled = true;
             } else {
                 if (ActiveConfigResolver.remoteConfigState() == ActiveConfigResolver.RemoteConfigState.AVAILABLE) {
-                    JoinVideoHandler.onJoinedSession(minecraft);
-                    joinVideoHandled = true;
+                    if (JoinVideoHandler.onJoinedSession(minecraft)) {
+                        joinVideoHandled = true;
+                    } else {
+                        multiplayerHandshakeTicks++;
+                        if (multiplayerHandshakeTicks >= JOIN_VIDEO_RETRY_TIMEOUT_TICKS) {
+                            joinVideoHandled = true;
+                        }
+                    }
                 } else if (ActiveConfigResolver.remoteConfigState() == ActiveConfigResolver.RemoteConfigState.UNAVAILABLE) {
                     joinVideoHandled = true;
                 } else {
                     multiplayerHandshakeTicks++;
+                    if (multiplayerHandshakeTicks % 40 == 0) {
+                        ConfigSyncNetworking.requestServerSync(true);
+                    }
                     if (multiplayerHandshakeTicks >= MULTIPLAYER_HANDSHAKE_TIMEOUT_TICKS) {
                         ActiveConfigResolver.markRemoteUnavailable();
                         joinVideoHandled = true;

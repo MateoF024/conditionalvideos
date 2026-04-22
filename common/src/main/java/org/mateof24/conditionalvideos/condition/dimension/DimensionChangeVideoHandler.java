@@ -22,7 +22,8 @@ public final class DimensionChangeVideoHandler {
                 config,
                 dimensionConfig,
                 CONDITION_ID_PREFIX + dimensionId,
-                "dimension changed ('" + dimensionId + "')"
+                "dimension changed ('" + dimensionId + "')",
+                null
         );
     }
 }

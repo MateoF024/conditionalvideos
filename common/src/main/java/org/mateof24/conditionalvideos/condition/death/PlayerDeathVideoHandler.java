@@ -37,13 +37,14 @@ public final class PlayerDeathVideoHandler {
                     config,
                     entityConfig,
                     ENTITY_CONDITION_ID_PREFIX + killerEntityId,
-                    "death by entity ('" + killerEntityId + "')"
+                    "death by entity ('" + killerEntityId + "')",
+                    null
             )) {
                 return;
             }
         }
 
-        ConditionVideoPlayer.play(minecraft, config, config.playerDeath(), CONDITION_ID, "player death");
+        ConditionVideoPlayer.play(minecraft, config, config.playerDeath(), CONDITION_ID, "player death", null);
 
     }
     private static String resolveKillerEntityId(Minecraft minecraft) {

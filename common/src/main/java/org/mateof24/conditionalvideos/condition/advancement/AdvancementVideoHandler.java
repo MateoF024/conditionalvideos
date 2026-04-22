@@ -54,7 +54,8 @@ public final class AdvancementVideoHandler {
                 config,
                 advancementConfig,
                 CONDITION_ID_PREFIX + advancementId,
-                "advancement completed ('" + advancementId + "')"
+                "advancement completed ('" + advancementId + "')",
+                null
         );
     }
 

@@ -18,7 +18,8 @@ public final class ConditionVideoPlayer {
                                ConditionalVideosConfig config,
                                ConditionalVideosConfig.ConditionConfig conditionConfig,
                                String conditionId,
-                               String logName) {
+                               String logName,
+                               Runnable onCloseCallback) {
         if (conditionConfig == null || conditionConfig.video().isBlank()) {
             ConditionalVideos.LOGGER.debug("No {} video configured. Skipping playback.", logName);
             return false;
@@ -36,7 +37,10 @@ public final class ConditionVideoPlayer {
             }
         }
 
-        Path resolvedPath = VideoPathResolver.resolve(minecraft.gameDirectory.toPath(), conditionConfig.video());
+        Path resolvedPath = ActiveConfigResolver.resolveRemoteVideoPath(conditionConfig.video());
+        if (resolvedPath == null) {
+            resolvedPath = VideoPathResolver.resolve(minecraft.gameDirectory.toPath(), conditionConfig.video());
+        }
         if (resolvedPath == null) {
             ConditionalVideos.LOGGER.warn("Configured {} video '{}' is invalid or not found. Ignoring.", logName, conditionConfig.video());
             return false;
@@ -51,7 +55,8 @@ public final class ConditionVideoPlayer {
                 conditionConfig.videoTitle(),
                 conditionConfig.videoTitlePosition(),
                 conditionConfig.videoDescription(),
-                conditionConfig.videoDescriptionPosition()
+                conditionConfig.videoDescriptionPosition(),
+                onCloseCallback
         ));
         return true;
     }

@@ -69,7 +69,7 @@ public final class KillEntityVideoHandler {
     private static void onEntityKilled(Minecraft minecraft, String entityId) {
         ConditionalVideosConfig config = ActiveConfigResolver.resolve(minecraft);
         ConditionalVideosConfig.ConditionConfig killConfig = config.entityKilled().get(entityId);
-        ConditionVideoPlayer.play(minecraft, config, killConfig, CONDITION_ID_PREFIX + entityId, "entity killed ('" + entityId + "')");
+        ConditionVideoPlayer.play(minecraft, config, killConfig, CONDITION_ID_PREFIX + entityId, "entity killed ('" + entityId + "')", null);
     }
 
     private static final class TrackedAttack {

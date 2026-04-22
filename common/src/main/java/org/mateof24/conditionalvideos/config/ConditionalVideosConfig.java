@@ -38,6 +38,14 @@ public final class ConditionalVideosConfig {
         return load(gameDirectory.resolve("config").resolve(SERVER_FILE_NAME));
     }
 
+    public static Path clientConfigPath(Path gameDirectory) {
+        return gameDirectory.resolve("config").resolve(CLIENT_FILE_NAME);
+    }
+
+    public static Path serverConfigPath(Path gameDirectory) {
+        return gameDirectory.resolve("config").resolve(SERVER_FILE_NAME);
+    }
+
     public static ConditionalVideosConfig load(Path file) {
         if (!Files.isRegularFile(file)) {
             ConditionalVideosConfig config = new ConditionalVideosConfig();
@@ -65,7 +73,7 @@ public final class ConditionalVideosConfig {
     }
 
     public void saveServer(Path gameDirectory) {
-        save(gameDirectory.resolve("config").resolve(SERVER_FILE_NAME));
+        save(serverConfigPath(gameDirectory));
     }
 
     public void save(Path file) {

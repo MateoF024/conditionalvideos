@@ -11,6 +11,7 @@ import java.lang.reflect.Method;
 import java.util.EnumMap;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Objects;
 
 public final class VideoPlaybackScreen extends Screen {
     private static final Component SKIP_HINT = Component.translatable("screen.conditionalvideos.skip_hint");
@@ -26,6 +27,7 @@ public final class VideoPlaybackScreen extends Screen {
     private int elapsedTicks;
     private final boolean skippable;
     private boolean worldAudioPaused;
+    private boolean backendInitialized;
     private final EnumMap<SoundSource, Float> previousVolumes = new EnumMap<>(SoundSource.class);
     private final boolean enableBackground;
     private final int backgroundColor;
@@ -33,6 +35,8 @@ public final class VideoPlaybackScreen extends Screen {
     private final TextAnchor videoTitleAnchor;
     private final Component videoDescription;
     private final TextAnchor videoDescriptionAnchor;
+    private final Runnable onClosed;
+    private boolean closed;
 
     public VideoPlaybackScreen(
             Path videoPath,
@@ -42,7 +46,8 @@ public final class VideoPlaybackScreen extends Screen {
             String videoTitle,
             String videoTitlePosition,
             String videoDescription,
-            String videoDescriptionPosition
+            String videoDescriptionPosition,
+            Runnable onClosed
     ) {
         super(Component.literal("Conditional Video"));
         this.backend = new WaterMediaVideoBackend(videoPath);
@@ -53,11 +58,15 @@ public final class VideoPlaybackScreen extends Screen {
         this.videoTitleAnchor = TextAnchor.fromConfig(videoTitlePosition);
         this.videoDescription = LegacyFormatParser.parse(videoDescription);
         this.videoDescriptionAnchor = TextAnchor.fromConfig(videoDescriptionPosition);
+        this.onClosed = onClosed == null ? () -> { } : onClosed;
     }
 
     @Override
     protected void init() {
-        backend.init();
+        if (!backendInitialized) {
+            backend.init();
+            backendInitialized = true;
+        }
         pauseWorldAudio();
         elapsedTicks = 0;
         if (backend.hasFinished()) {
@@ -70,6 +79,10 @@ public final class VideoPlaybackScreen extends Screen {
     @Override
     public void tick() {
         elapsedTicks++;
+        enforceAudioMute();
+        if (backend.hasFinished()) {
+            onClose();
+        }
     }
 
     @Override
@@ -198,6 +211,11 @@ public final class VideoPlaybackScreen extends Screen {
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        // Prevent fullscreen toggles while VLC/WATERMeDIA is active. Recreating/resizing the
+        // output target during playback can crash the process on some setups.
+        if (keyCode == 300) {
+            return true;
+        }
         if (skippable && keyCode == 256) {
             onClose();
             return true;
@@ -207,8 +225,13 @@ public final class VideoPlaybackScreen extends Screen {
 
     @Override
     public void onClose() {
+        if (closed) {
+            return;
+        }
+        closed = true;
         backend.close();
         resumeWorldAudio();
+        onClosed.run();
         if (minecraft != null) {
             minecraft.setScreen(null);
         }
@@ -228,7 +251,10 @@ public final class VideoPlaybackScreen extends Screen {
         for (SoundSource source : SoundSource.values()) {
             previousVolumes.put(source, minecraft.options.getSoundSourceVolume(source));
             setSoundSourceVolume(source, 0.0F);
+            applyVolumeToSoundManager(source, 0.0F);
         }
+        invokeNoArgMethod(minecraft.getSoundManager(), "pause");
+        invokeNoArgMethod(minecraft.getSoundManager(), "pauseAll");
         minecraft.getSoundManager().stop();
         worldAudioPaused = true;
     }
@@ -240,8 +266,12 @@ public final class VideoPlaybackScreen extends Screen {
 
         for (SoundSource source : SoundSource.values()) {
             Float value = previousVolumes.get(source);
-            setSoundSourceVolume(source, value == null ? 1.0F : value);
+            float resolved = value == null ? 1.0F : value;
+            setSoundSourceVolume(source, resolved);
+            applyVolumeToSoundManager(source, resolved);
         }
+        invokeNoArgMethod(minecraft.getSoundManager(), "resume");
+        invokeNoArgMethod(minecraft.getSoundManager(), "resumeAll");
         previousVolumes.clear();
         worldAudioPaused = false;
     }
@@ -254,8 +284,50 @@ public final class VideoPlaybackScreen extends Screen {
             if (minecraft.options.getSoundSourceVolume(source) > 0.0F) {
                 setSoundSourceVolume(source, 0.0F);
             }
+            applyVolumeToSoundManager(source, 0.0F);
+        }
+    }
+
+    private void applyVolumeToSoundManager(SoundSource source, float value) {
+        if (minecraft == null) {
+            return;
+        }
+        Object soundManager = minecraft.getSoundManager();
+        invokeSoundManagerSetter(soundManager, "updateSourceVolume", source, value);
+        invokeSoundManagerSetter(soundManager, "setSoundCategoryVolume", source, value);
+        invokeSoundManagerSetter(soundManager, "setSoundSourceVolume", source, value);
+    }
+
+    private void invokeSoundManagerSetter(Object target, String methodName, SoundSource source, float value) {
+        try {
+            for (Method method : target.getClass().getMethods()) {
+                if (!Objects.equals(method.getName(), methodName) || method.getParameterCount() != 2) {
+                    continue;
+                }
+                Class<?>[] params = method.getParameterTypes();
+                if (params[0] != SoundSource.class) {
+                    continue;
+                }
+                if (params[1] == float.class || params[1] == Float.class) {
+                    method.invoke(target, source, value);
+                    return;
+                }
+                if (params[1] == double.class || params[1] == Double.class) {
+                    method.invoke(target, source, (double) value);
+                    return;
+                }
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void stopAndPauseAllGameAudio() {
+        if (minecraft == null) {
+            return;
         }
         minecraft.getSoundManager().stop();
+        invokeNoArgMethod(minecraft.getSoundManager(), "pause");
+        invokeNoArgMethod(minecraft.getSoundManager(), "pauseAll");
     }
 
     private void setSoundSourceVolume(SoundSource source, float value) {
@@ -335,6 +407,14 @@ public final class VideoPlaybackScreen extends Screen {
                 || Number.class.isAssignableFrom(paramType);
     }
 
+    private void invokeNoArgMethod(Object target, String methodName) {
+        try {
+            Method method = target.getClass().getMethod(methodName);
+            method.invoke(target);
+        } catch (Exception ignored) {
+        }
+    }
+
 
     private enum TextAnchor {
         TOP_LEFT,
@@ -369,6 +449,4 @@ public final class VideoPlaybackScreen extends Screen {
             return Math.max(TEXT_BOX_MARGIN, bottomLimit - boxHeight);
         }
     }
-
-
 }

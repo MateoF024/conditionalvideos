@@ -4,6 +4,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.network.protocol.game.ClientboundPlayerCombatKillPacket;
 import org.mateof24.conditionalvideos.condition.death.PlayerDeathVideoHandler;
+import org.mateof24.conditionalvideos.network.ConfigSyncNetworking;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
