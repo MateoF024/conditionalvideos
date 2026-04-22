@@ -7,11 +7,14 @@ import net.minecraft.resources.ResourceLocation;
 import org.mateof24.conditionalvideos.condition.advancement.AdvancementVideoHandler;
 import org.mateof24.conditionalvideos.condition.dimension.DimensionChangeVideoHandler;
 import org.mateof24.conditionalvideos.condition.kill.KillEntityVideoHandler;
+import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
+import org.mateof24.conditionalvideos.network.ConfigSyncNetworking;
 
 import java.util.*;
 
 public final class ClientRuntime {
     private static final int DIMENSION_VIDEO_DELAY_TICKS = 20;
+    private static final int MULTIPLAYER_HANDSHAKE_TIMEOUT_TICKS = 100;
 
     private boolean wasInSession;
     private boolean wasAlive;
@@ -19,6 +22,8 @@ public final class ClientRuntime {
     private ResourceLocation pendingDimensionVideoTarget;
     private int pendingDimensionVideoTicks;
     private Set<String> completedAdvancements = new LinkedHashSet<>();
+    private boolean joinVideoHandled;
+    private int multiplayerHandshakeTicks;
 
     public void onClientTick() {
         Minecraft minecraft = Minecraft.getInstance();
@@ -32,15 +37,38 @@ public final class ClientRuntime {
             pendingDimensionVideoTarget = null;
             pendingDimensionVideoTicks = 0;
             completedAdvancements = new LinkedHashSet<>();
+            joinVideoHandled = false;
+            multiplayerHandshakeTicks = 0;
             return;
         }
 
         if (!wasInSession) {
             wasInSession = true;
-            JoinVideoHandler.onJoinedSession(minecraft);
             KillEntityVideoHandler.onSessionStarted();
             lastDimension = minecraft.level.dimension().location();
             completedAdvancements = AdvancementVideoHandler.snapshotCompletedAdvancements(minecraft);
+            joinVideoHandled = false;
+            multiplayerHandshakeTicks = 0;
+        }
+
+        if (!joinVideoHandled) {
+            if (!ActiveConfigResolver.isMultiplayerSession(minecraft)) {
+                JoinVideoHandler.onJoinedSession(minecraft);
+                joinVideoHandled = true;
+            } else {
+                if (ActiveConfigResolver.remoteConfigState() == ActiveConfigResolver.RemoteConfigState.AVAILABLE) {
+                    JoinVideoHandler.onJoinedSession(minecraft);
+                    joinVideoHandled = true;
+                } else if (ActiveConfigResolver.remoteConfigState() == ActiveConfigResolver.RemoteConfigState.UNAVAILABLE) {
+                    joinVideoHandled = true;
+                } else {
+                    multiplayerHandshakeTicks++;
+                    if (multiplayerHandshakeTicks >= MULTIPLAYER_HANDSHAKE_TIMEOUT_TICKS) {
+                        ActiveConfigResolver.markRemoteUnavailable();
+                        joinVideoHandled = true;
+                    }
+                }
+            }
         }
 
         boolean isAlive = minecraft.player.isAlive();

@@ -3,6 +3,7 @@ package org.mateof24.conditionalvideos.condition.dimension;
 import net.minecraft.client.Minecraft;
 import net.minecraft.resources.ResourceLocation;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
+import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
 import org.mateof24.conditionalvideos.condition.shared.ConditionVideoPlayer;
 
 public final class DimensionChangeVideoHandler {
@@ -12,7 +13,7 @@ public final class DimensionChangeVideoHandler {
     }
 
     public static void onDimensionChanged(Minecraft minecraft, ResourceLocation toDimension) {
-        ConditionalVideosConfig config = ConditionalVideosConfig.load();
+        ConditionalVideosConfig config = ActiveConfigResolver.resolve(minecraft);
         String dimensionId = toDimension.toString();
         ConditionalVideosConfig.ConditionConfig dimensionConfig = config.dimensionChanged().get(dimensionId);
 

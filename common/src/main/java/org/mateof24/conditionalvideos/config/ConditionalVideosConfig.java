@@ -19,7 +19,8 @@ import java.util.Set;
 
 public final class ConditionalVideosConfig {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-    private static final String FILE_NAME = "conditionalvideos.json";
+    private static final String CLIENT_FILE_NAME = "conditionalvideos.json";
+    private static final String SERVER_FILE_NAME = "conditionalvideos-server.json";
 
     private ConditionConfig firstJoin = new ConditionConfig("", true, false, true, "#000000", "", "bottomLeft", "", "bottomLeft");
     private ConditionConfig playerDeath = new ConditionConfig("", true, true, true, "#000000", "", "bottomLeft", "", "bottomLeft");
@@ -30,10 +31,17 @@ public final class ConditionalVideosConfig {
     private Set<String> consumedConditionSessions = new HashSet<>();
 
     public static ConditionalVideosConfig load() {
-        Path file = configPath();
+        return load(configPath(CLIENT_FILE_NAME));
+    }
+
+    public static ConditionalVideosConfig loadServer(Path gameDirectory) {
+        return load(gameDirectory.resolve("config").resolve(SERVER_FILE_NAME));
+    }
+
+    public static ConditionalVideosConfig load(Path file) {
         if (!Files.isRegularFile(file)) {
             ConditionalVideosConfig config = new ConditionalVideosConfig();
-            config.save();
+            config.save(file);
             return config;
         }
 
@@ -47,13 +55,20 @@ public final class ConditionalVideosConfig {
         } catch (IOException | JsonSyntaxException exception) {
             ConditionalVideos.LOGGER.error("Failed to read config file '{}'. Recreating with defaults.", file, exception);
             ConditionalVideosConfig fallback = new ConditionalVideosConfig();
-            fallback.save();
+            fallback.save(file);
             return fallback;
         }
     }
 
     public void save() {
-        Path file = configPath();
+        save(configPath(CLIENT_FILE_NAME));
+    }
+
+    public void saveServer(Path gameDirectory) {
+        save(gameDirectory.resolve("config").resolve(SERVER_FILE_NAME));
+    }
+
+    public void save(Path file) {
         try {
             Files.createDirectories(file.getParent());
             try (Writer writer = Files.newBufferedWriter(file, StandardCharsets.UTF_8)) {
@@ -154,8 +169,26 @@ public final class ConditionalVideosConfig {
         }
     }
 
-    private static Path configPath() {
-        return Minecraft.getInstance().gameDirectory.toPath().resolve("config").resolve(FILE_NAME);
+        public String toJson() {
+            return GSON.toJson(this);
+        }
+
+        public static ConditionalVideosConfig fromJson(String rawJson) {
+            try {
+                ConditionalVideosConfig parsed = GSON.fromJson(rawJson, ConditionalVideosConfig.class);
+                if (parsed == null) {
+                    parsed = new ConditionalVideosConfig();
+                }
+                parsed.ensureDefaults();
+                return parsed;
+            } catch (JsonSyntaxException exception) {
+                ConditionalVideos.LOGGER.warn("Failed to parse synced config JSON. Falling back to defaults.");
+                return new ConditionalVideosConfig();
+            }
+        }
+
+        private static Path configPath(String fileName) {
+            return Minecraft.getInstance().gameDirectory.toPath().resolve("config").resolve(fileName);
     }
 
     public record ConditionConfig(

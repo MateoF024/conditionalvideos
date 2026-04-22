@@ -5,6 +5,7 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
 import org.mateof24.conditionalvideos.condition.shared.ConditionVideoPlayer;
+import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
 
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -33,7 +34,7 @@ public final class KillEntityVideoHandler {
         if (!sessionActive) {
             return;
         }
-        if (!ConditionalVideosConfig.load().entityKilled().containsKey(entityTypeId)) {
+        if (!ActiveConfigResolver.resolve(Minecraft.getInstance()).entityKilled().containsKey(entityTypeId)) {
             return;
         }
         trackedAttacks.put(entityId, new TrackedAttack(entityTypeId));
@@ -66,7 +67,7 @@ public final class KillEntityVideoHandler {
     }
 
     private static void onEntityKilled(Minecraft minecraft, String entityId) {
-        ConditionalVideosConfig config = ConditionalVideosConfig.load();
+        ConditionalVideosConfig config = ActiveConfigResolver.resolve(minecraft);
         ConditionalVideosConfig.ConditionConfig killConfig = config.entityKilled().get(entityId);
         ConditionVideoPlayer.play(minecraft, config, killConfig, CONDITION_ID_PREFIX + entityId, "entity killed ('" + entityId + "')");
     }

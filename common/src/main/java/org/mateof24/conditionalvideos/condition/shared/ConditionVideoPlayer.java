@@ -6,6 +6,7 @@ import org.mateof24.conditionalvideos.condition.join.SessionKeyResolver;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
 import org.mateof24.conditionalvideos.video.VideoPlaybackScreen;
 import org.mateof24.conditionalvideos.video.path.VideoPathResolver;
+import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
 
 import java.nio.file.Path;
 
@@ -30,7 +31,9 @@ public final class ConditionVideoPlayer {
                 return false;
             }
             config.markConditionSessionConsumed(conditionId, sessionKey);
-            config.save();
+            if (ActiveConfigResolver.shouldPersistLocalChanges(minecraft)) {
+                config.save();
+            }
         }
 
         Path resolvedPath = VideoPathResolver.resolve(minecraft.gameDirectory.toPath(), conditionConfig.video());

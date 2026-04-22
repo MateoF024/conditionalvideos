@@ -24,6 +24,11 @@ public final class WaterMediaVideoBackend {
     private Method releaseMethod;
     private Method videoWidthMethod;
     private Method videoHeightMethod;
+    private Method endedMethod;
+    private Method playingMethod;
+    private int finishedChecks;
+    private boolean renderedAnyFrame;
+
 
     public WaterMediaVideoBackend(Path videoPath) {
         this.videoPath = videoPath;
@@ -50,8 +55,12 @@ public final class WaterMediaVideoBackend {
                     "videoWidth", "getVideoWidth", "width", "getWidth");
             videoHeightMethod = resolveDimensionMethod(playerClass,
                     "videoHeight", "getVideoHeight", "height", "getHeight");
+            endedMethod = resolveBooleanMethod(playerClass, "isEnded", "ended", "isStopped", "stopped");
+            playingMethod = resolveBooleanMethod(playerClass, "isPlaying", "playing");
 
             startMethod.invoke(player, videoPath.toUri());
+            finishedChecks = 0;
+            renderedAnyFrame = false;
             ConditionalVideos.LOGGER.info("Playing first-join video with WATERMeDIA: {}", videoPath);
         } catch (Exception exception) {
             ConditionalVideos.LOGGER.warn("Failed to initialize WATERMeDIA playback backend: {}", exception.getMessage());
@@ -60,6 +69,10 @@ public final class WaterMediaVideoBackend {
             releaseMethod = null;
             videoWidthMethod = null;
             videoHeightMethod = null;
+            endedMethod = null;
+            playingMethod = null;
+            finishedChecks = 0;
+            renderedAnyFrame = false;
         }
     }
 
@@ -68,6 +81,7 @@ public final class WaterMediaVideoBackend {
         if (textureId <= 0) {
             return;
         }
+        renderedAnyFrame = true;
 
         RenderBounds renderBounds = calculateRenderBounds(width, height);
 
@@ -147,6 +161,20 @@ public final class WaterMediaVideoBackend {
         return null;
     }
 
+    private Method resolveBooleanMethod(Class<?> playerClass, String... methodNames) {
+        for (String methodName : methodNames) {
+            try {
+                Method method = playerClass.getMethod(methodName);
+                if (method.getReturnType() == boolean.class || method.getReturnType() == Boolean.class) {
+                    return method;
+                }
+            } catch (NoSuchMethodException ignored) {
+                // Try next candidate.
+            }
+        }
+        return null;
+    }
+
     private int getTextureId() {
         if (player == null || textureMethod == null) {
             return -1;
@@ -171,6 +199,46 @@ public final class WaterMediaVideoBackend {
             ConditionalVideos.LOGGER.warn("Failed to release WATERMeDIA player: {}", exception.getMessage());
         }
     }
+
+    public boolean hasFinished() {
+        finishedChecks++;
+
+        if (player == null) {
+            return true;
+        }
+
+        try {
+            if (endedMethod != null) {
+                Object ended = endedMethod.invoke(player);
+                if (ended instanceof Boolean endedBool && endedBool) {
+                    return true;
+                }
+            }
+
+            if (playingMethod != null) {
+                Object playing = playingMethod.invoke(player);
+                if (playing instanceof Boolean playingBool) {
+                    if (playingBool) {
+                        return false;
+                    }
+
+                    // Avoid closing too early while VLC/WATERMeDIA is still warming up.
+                    if (renderedAnyFrame && finishedChecks > 40) {
+                        return true;
+                    }
+
+                    // If nothing ever rendered and playback stayed false for a long period,
+                    // treat it as finished/failed to avoid a stuck screen.
+                    return !renderedAnyFrame && finishedChecks > 200;
+                }
+            }
+        } catch (Exception ignored) {
+            return false;
+        }
+
+        return false;
+    }
+
 
     private record RenderBounds(int left, int top, int right, int bottom) {
     }

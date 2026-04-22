@@ -2,6 +2,7 @@ package org.mateof24.conditionalvideos.condition.advancement;
 
 import net.minecraft.client.Minecraft;
 import org.mateof24.conditionalvideos.ConditionalVideos;
+import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
 import org.mateof24.conditionalvideos.condition.shared.ConditionVideoPlayer;
 
@@ -45,7 +46,7 @@ public final class AdvancementVideoHandler {
     }
 
     public static boolean onAdvancementCompleted(Minecraft minecraft, String advancementId) {
-        ConditionalVideosConfig config = ConditionalVideosConfig.load();
+        ConditionalVideosConfig config = ActiveConfigResolver.resolve(minecraft);
         ConditionalVideosConfig.ConditionConfig advancementConfig = config.advancementCompleted().get(advancementId);
 
         return ConditionVideoPlayer.play(

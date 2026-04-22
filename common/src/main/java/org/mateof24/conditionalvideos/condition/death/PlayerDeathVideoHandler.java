@@ -8,6 +8,7 @@ import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
+import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
 import org.mateof24.conditionalvideos.condition.shared.ConditionVideoPlayer;
 
 
@@ -27,7 +28,7 @@ public final class PlayerDeathVideoHandler {
         }
         lastHandledAtMillis = now;
 
-        ConditionalVideosConfig config = ConditionalVideosConfig.load();
+        ConditionalVideosConfig config = ActiveConfigResolver.resolve(minecraft);
         String killerEntityId = resolveKillerEntityId(minecraft);
         if (!killerEntityId.isBlank()) {
             ConditionalVideosConfig.ConditionConfig entityConfig = config.deathByEntity().get(killerEntityId);

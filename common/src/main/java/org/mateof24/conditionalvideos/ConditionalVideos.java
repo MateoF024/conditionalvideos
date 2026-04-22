@@ -1,6 +1,7 @@
 package org.mateof24.conditionalvideos;
 
 import org.mateof24.conditionalvideos.runtime.ClientRuntime;
+import org.mateof24.conditionalvideos.network.ConfigSyncNetworking;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -14,6 +15,7 @@ public final class ConditionalVideos {
     }
 
     public static void init() {
+        ConfigSyncNetworking.init();
         LOGGER.info("Initializing ConditionalVideos core.");
     }
 
