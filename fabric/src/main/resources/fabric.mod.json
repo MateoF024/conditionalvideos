@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "id": "conditionalvideos",
+  "version": "${version}",
+  "name": "ConditionalVideos",
+  "description": "",
+  "authors": [
+    "MateoF24"
+  ],
+  "contact": {
+    "homepage": "https://github.com/MateoF024/Better-Flashlights"
+  },
+  "license": "All-Rights-Reserved",
+  "icon": "assets/conditionalvideos/icon.png",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "org.mateof24.conditionalvideos.fabric.ConditionalVideosFabric"
+    ],
+    "client": [
+      "org.mateof24.conditionalvideos.fabric.client.ConditionalVideosFabricClient"
+    ]
+  },
+  "mixins": [
+    "conditionalvideos.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.19.2",
+    "minecraft": "~1.21.1",
+    "java": ">=21",
+    "architectury": ">=13.0.8",
+    "fabric-api": "*"
+  },
+  "suggests": {
+    "another-mod": "*"
+  }
+}
