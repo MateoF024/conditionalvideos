@@ -86,8 +86,12 @@ public final class ClientRuntime {
         }
 
         boolean isAlive = minecraft.player.isAlive();
-        if (wasAlive && !isAlive) {
+        boolean died = wasAlive && !isAlive;
+        if (died) {
             PlayerDeathVideoHandler.onPlayerDied(minecraft);
+            PlayerDeathVideoHandler.cancelPendingDeath();
+        } else {
+            PlayerDeathVideoHandler.tickPendingDeath(minecraft);
         }
         wasAlive = isAlive;
 

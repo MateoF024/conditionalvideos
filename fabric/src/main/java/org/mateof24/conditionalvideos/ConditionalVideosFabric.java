@@ -1,6 +1,5 @@
-package org.mateof24.conditionalvideos.fabric;
+package org.mateof24.conditionalvideos;
 
-import org.mateof24.conditionalvideos.ConditionalVideos;
 import net.fabricmc.api.ModInitializer;
 
 public final class ConditionalVideosFabric implements ModInitializer {

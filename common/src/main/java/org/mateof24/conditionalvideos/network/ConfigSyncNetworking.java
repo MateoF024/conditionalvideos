@@ -1,10 +1,6 @@
 package org.mateof24.conditionalvideos.network;
 
 import dev.architectury.event.events.common.PlayerEvent;
-import dev.architectury.networking.NetworkManager;
-import dev.architectury.platform.Platform;
-import dev.architectury.utils.Env;
-import io.netty.buffer.Unpooled;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
@@ -20,105 +16,96 @@ import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.util.*;
 
-
 public final class ConfigSyncNetworking {
     private static final ResourceLocation SERVER_CONFIG_PACKET =
-            new ResourceLocation(ConditionalVideos.MOD_ID, "server_config_sync");
+            ResourceLocation.fromNamespaceAndPath(ConditionalVideos.MOD_ID, "server_config_sync");
     private static final ResourceLocation SERVER_VIDEO_MANIFEST_PACKET =
-            new ResourceLocation(ConditionalVideos.MOD_ID, "server_video_manifest");
+            ResourceLocation.fromNamespaceAndPath(ConditionalVideos.MOD_ID, "server_video_manifest");
     private static final ResourceLocation CLIENT_VIDEO_REQUEST_PACKET =
-            new ResourceLocation(ConditionalVideos.MOD_ID, "client_video_request");
+            ResourceLocation.fromNamespaceAndPath(ConditionalVideos.MOD_ID, "client_video_request");
     private static final ResourceLocation CLIENT_SYNC_REQUEST_PACKET =
-            new ResourceLocation(ConditionalVideos.MOD_ID, "client_sync_request");
+            ResourceLocation.fromNamespaceAndPath(ConditionalVideos.MOD_ID, "client_sync_request");
     private static final ResourceLocation CLIENT_JOIN_VIDEO_STATE_PACKET =
-            new ResourceLocation(ConditionalVideos.MOD_ID, "client_join_video_state");
+            ResourceLocation.fromNamespaceAndPath(ConditionalVideos.MOD_ID, "client_join_video_state");
     private static final ResourceLocation SERVER_VIDEO_START_PACKET =
-            new ResourceLocation(ConditionalVideos.MOD_ID, "server_video_start");
+            ResourceLocation.fromNamespaceAndPath(ConditionalVideos.MOD_ID, "server_video_start");
     private static final ResourceLocation SERVER_VIDEO_CHUNK_PACKET =
-            new ResourceLocation(ConditionalVideos.MOD_ID, "server_video_chunk");
+            ResourceLocation.fromNamespaceAndPath(ConditionalVideos.MOD_ID, "server_video_chunk");
 
     private static final int FILE_CHUNK_SIZE = 32 * 1024;
-
     private static final Map<String, DownloadState> CLIENT_DOWNLOADS = new HashMap<>();
     private static boolean clientSyncRequested;
     private static final Map<UUID, GameType> PLAYER_PRE_VIDEO_GAME_MODES = new HashMap<>();
+    private static Map<ResourceLocation, NetworkHelper.S2CPacketHandler> s2cHandlers;
 
     private ConfigSyncNetworking() {
     }
 
     public static void init() {
-        if (Platform.getEnvironment() == Env.CLIENT) {
-            NetworkManager.registerReceiver(NetworkManager.s2c(), SERVER_CONFIG_PACKET, (buffer, context) -> {
-                String json = buffer.readUtf(262144);
-                context.queue(() -> ActiveConfigResolver.setRemoteConfig(ConditionalVideosConfig.fromJson(json)));
-            });
+        s2cHandlers = new LinkedHashMap<>();
 
-            NetworkManager.registerReceiver(NetworkManager.s2c(), SERVER_VIDEO_MANIFEST_PACKET, (buffer, context) -> {
-                int entries = buffer.readVarInt();
-                List<VideoManifestEntry> manifest = new ArrayList<>();
-                for (int i = 0; i < entries; i++) {
-                    manifest.add(new VideoManifestEntry(
-                            buffer.readUtf(),
-                            buffer.readUtf(),
-                            buffer.readUtf(),
-                            buffer.readVarLong(),
-                            buffer.readUtf()
-                    ));
-                }
-                context.queue(() -> onClientManifest(manifest));
-            });
-
-            NetworkManager.registerReceiver(NetworkManager.s2c(), SERVER_VIDEO_START_PACKET, (buffer, context) -> {
-                String configuredPath = buffer.readUtf();
-                String conditionType = buffer.readUtf();
-                String hash = buffer.readUtf();
-                String extension = buffer.readUtf();
-                int expectedChunks = buffer.readVarInt();
-                context.queue(() -> onClientVideoStart(configuredPath, conditionType, hash, extension, expectedChunks));
-            });
-
-            NetworkManager.registerReceiver(NetworkManager.s2c(), SERVER_VIDEO_CHUNK_PACKET, (buffer, context) -> {
-                String configuredPath = buffer.readUtf();
-                int chunkIndex = buffer.readVarInt();
-                int chunkLen = buffer.readVarInt();
-                byte[] data = new byte[chunkLen];
-                buffer.readBytes(data);
-                context.queue(() -> onClientVideoChunk(configuredPath, chunkIndex, data));
-            });
-
-        }
-
-        NetworkManager.registerReceiver(NetworkManager.c2s(), CLIENT_VIDEO_REQUEST_PACKET, (buffer, context) -> {
-            String configuredPath = buffer.readUtf();
-            context.queue(() -> {
-                if (!(context.getPlayer() instanceof ServerPlayer player)) {
-                    return;
-                }
-                sendVideoFile(player, configuredPath);
-            });
+        s2cHandlers.put(SERVER_CONFIG_PACKET, data -> {
+            FriendlyByteBuf buf = NetworkHelper.fromBytes(data);
+            String json = buf.readUtf(262144);
+            ActiveConfigResolver.setRemoteConfig(ConditionalVideosConfig.fromJson(json));
         });
 
-        NetworkManager.registerReceiver(NetworkManager.c2s(), CLIENT_SYNC_REQUEST_PACKET, (buffer, context) -> {
-            context.queue(() -> {
-                if (!(context.getPlayer() instanceof ServerPlayer player)) {
-                    return;
-                }
-                sendServerData(player);
-            });
+        s2cHandlers.put(SERVER_VIDEO_MANIFEST_PACKET, data -> {
+            FriendlyByteBuf buf = NetworkHelper.fromBytes(data);
+            int count = buf.readVarInt();
+            List<VideoManifestEntry> manifest = new ArrayList<>();
+            for (int i = 0; i < count; i++) {
+                manifest.add(new VideoManifestEntry(
+                        buf.readUtf(), buf.readUtf(), buf.readUtf(),
+                        buf.readVarLong(), buf.readUtf()));
+            }
+            onClientManifest(manifest);
         });
 
-        NetworkManager.registerReceiver(NetworkManager.c2s(), CLIENT_JOIN_VIDEO_STATE_PACKET, (buffer, context) -> {
-            boolean playing = buffer.readBoolean();
-            context.queue(() -> {
-                if (!(context.getPlayer() instanceof ServerPlayer player)) {
-                    return;
-                }
-                onServerJoinVideoState(player, playing);
-            });
+        s2cHandlers.put(SERVER_VIDEO_START_PACKET, data -> {
+            FriendlyByteBuf buf = NetworkHelper.fromBytes(data);
+            String configuredPath = buf.readUtf();
+            String conditionType = buf.readUtf();
+            String hash = buf.readUtf();
+            String extension = buf.readUtf();
+            int expectedChunks = buf.readVarInt();
+            onClientVideoStart(configuredPath, conditionType, hash, extension, expectedChunks);
         });
 
+        s2cHandlers.put(SERVER_VIDEO_CHUNK_PACKET, data -> {
+            FriendlyByteBuf buf = NetworkHelper.fromBytes(data);
+            String configuredPath = buf.readUtf();
+            int chunkIndex = buf.readVarInt();
+            int chunkLen = buf.readVarInt();
+            byte[] chunkData = new byte[chunkLen];
+            buf.readBytes(chunkData);
+            onClientVideoChunk(configuredPath, chunkIndex, chunkData);
+        });
+
+        Map<ResourceLocation, NetworkHelper.C2SPacketHandler> c2sHandlers = new LinkedHashMap<>();
+
+        c2sHandlers.put(CLIENT_VIDEO_REQUEST_PACKET, (data, player) -> {
+            FriendlyByteBuf buf = NetworkHelper.fromBytes(data);
+            String configuredPath = buf.readUtf();
+            sendVideoFile(player, configuredPath);
+        });
+
+        c2sHandlers.put(CLIENT_SYNC_REQUEST_PACKET, (data, player) -> sendServerData(player));
+
+        c2sHandlers.put(CLIENT_JOIN_VIDEO_STATE_PACKET, (data, player) -> {
+            FriendlyByteBuf buf = NetworkHelper.fromBytes(data);
+            boolean playing = buf.readBoolean();
+            onServerJoinVideoState(player, playing);
+        });
+
+        NetworkHelper.registerPackets(s2cHandlers, c2sHandlers);
         PlayerEvent.PLAYER_JOIN.register(ConfigSyncNetworking::sendServerData);
+    }
 
+    public static void initClient() {
+        if (s2cHandlers != null) {
+            NetworkHelper.registerS2CClientHandlers(s2cHandlers);
+        }
     }
 
     private static void sendServerData(ServerPlayer player) {
@@ -128,33 +115,31 @@ public final class ConfigSyncNetworking {
         }
     }
 
-
     public static void sendServerConfig(ServerPlayer player) {
-        ConditionalVideosConfig serverConfig = ConditionalVideosConfig.loadServer(player.server.getServerDirectory().toPath());
-        FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
-        buffer.writeUtf(serverConfig.toJson());
-        NetworkManager.sendToPlayer(player, SERVER_CONFIG_PACKET, buffer);
+        ConditionalVideosConfig serverConfig = ConditionalVideosConfig.loadServer(player.server.getServerDirectory());
+        byte[] data = NetworkHelper.toBytes(buf -> buf.writeUtf(serverConfig.toJson()));
+        NetworkHelper.sendToPlayer(player, SERVER_CONFIG_PACKET, data);
     }
 
     private static void sendVideoManifest(ServerPlayer player) {
-        ConditionalVideosConfig serverConfig = ConditionalVideosConfig.loadServer(player.server.getServerDirectory().toPath());
-        List<VideoManifestEntry> entries = collectVideoEntries(serverConfig, player.server.getServerDirectory().toPath());
-        FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
-        buffer.writeVarInt(entries.size());
-        for (VideoManifestEntry entry : entries) {
-            buffer.writeUtf(entry.configuredPath());
-            buffer.writeUtf(entry.conditionType());
-            buffer.writeUtf(entry.hash());
-            buffer.writeVarLong(entry.size());
-            buffer.writeUtf(entry.extension());
-        }
-        NetworkManager.sendToPlayer(player, SERVER_VIDEO_MANIFEST_PACKET, buffer);
+        ConditionalVideosConfig serverConfig = ConditionalVideosConfig.loadServer(player.server.getServerDirectory());
+        List<VideoManifestEntry> entries = collectVideoEntries(serverConfig, player.server.getServerDirectory());
+        byte[] data = NetworkHelper.toBytes(buf -> {
+            buf.writeVarInt(entries.size());
+            for (VideoManifestEntry entry : entries) {
+                buf.writeUtf(entry.configuredPath());
+                buf.writeUtf(entry.conditionType());
+                buf.writeUtf(entry.hash());
+                buf.writeVarLong(entry.size());
+                buf.writeUtf(entry.extension());
+            }
+        });
+        NetworkHelper.sendToPlayer(player, SERVER_VIDEO_MANIFEST_PACKET, data);
     }
 
     public static void notifyFirstJoinVideoState(boolean playing) {
-        FriendlyByteBuf request = new FriendlyByteBuf(Unpooled.buffer());
-        request.writeBoolean(playing);
-        NetworkManager.sendToServer(CLIENT_JOIN_VIDEO_STATE_PACKET, request);
+        NetworkHelper.sendToServer(CLIENT_JOIN_VIDEO_STATE_PACKET,
+                NetworkHelper.toBytes(buf -> buf.writeBoolean(playing)));
     }
 
     private static void onServerJoinVideoState(ServerPlayer player, boolean playing) {
@@ -167,7 +152,6 @@ public final class ConfigSyncNetworking {
             }
             return;
         }
-
         GameType previous = PLAYER_PRE_VIDEO_GAME_MODES.remove(uuid);
         if (previous != null && player.gameMode.getGameModeForPlayer() != previous) {
             setServerPlayerGameMode(player, previous);
@@ -179,13 +163,10 @@ public final class ConfigSyncNetworking {
             player.setGameMode(gameType);
             return;
         } catch (Throwable ignored) {
-            // Try reflective fallbacks below.
         }
         try {
             for (java.lang.reflect.Method method : player.getClass().getMethods()) {
-                if (!"setGameMode".equals(method.getName()) || method.getParameterCount() != 1) {
-                    continue;
-                }
+                if (!"setGameMode".equals(method.getName()) || method.getParameterCount() != 1) continue;
                 if (method.getParameterTypes()[0] == GameType.class) {
                     method.invoke(player, gameType);
                     return;
@@ -207,9 +188,7 @@ public final class ConfigSyncNetworking {
     }
 
     private static void addVideoEntry(List<VideoManifestEntry> entries, String conditionType, String configuredPath, Path root) {
-        if (configuredPath == null || configuredPath.isBlank()) {
-            return;
-        }
+        if (configuredPath == null || configuredPath.isBlank()) return;
         Path resolved = resolveConfigPath(root, configuredPath);
         if (resolved == null || !Files.isRegularFile(resolved)) {
             ConditionalVideos.LOGGER.warn("Server config references {} video '{}' but the file is missing or invalid on the server filesystem. Clients will not receive it.", conditionType, configuredPath);
@@ -232,9 +211,7 @@ public final class ConfigSyncNetworking {
 
     private static String fileExtension(String fileName) {
         int dot = fileName.lastIndexOf('.');
-        if (dot <= 0 || dot == fileName.length() - 1) {
-            return ".mp4";
-        }
+        if (dot <= 0 || dot == fileName.length() - 1) return ".mp4";
         return fileName.substring(dot);
     }
 
@@ -255,7 +232,6 @@ public final class ConfigSyncNetworking {
 
         for (VideoManifestEntry entry : manifest) {
             ActiveConfigResolver.addManifestedVideoPath(entry.configuredPath());
-
             Path destination = buildClientVideoPath(baseDir, entry.conditionType(), entry.configuredPath(), entry.extension());
             try {
                 Files.createDirectories(destination.getParent());
@@ -266,7 +242,6 @@ public final class ConfigSyncNetworking {
             } catch (IOException exception) {
                 ConditionalVideos.LOGGER.warn("Failed validating cached video '{}'", destination, exception);
             }
-
             requestVideoFromServer(entry.configuredPath());
         }
     }
@@ -278,9 +253,8 @@ public final class ConfigSyncNetworking {
     }
 
     private static void requestVideoFromServer(String configuredPath) {
-        FriendlyByteBuf request = new FriendlyByteBuf(Unpooled.buffer());
-        request.writeUtf(configuredPath);
-        NetworkManager.sendToServer(CLIENT_VIDEO_REQUEST_PACKET, request);
+        NetworkHelper.sendToServer(CLIENT_VIDEO_REQUEST_PACKET,
+                NetworkHelper.toBytes(buf -> buf.writeUtf(configuredPath)));
     }
 
     private static void onClientVideoStart(String configuredPath, String conditionType, String hash, String extension, int expectedChunks) {
@@ -301,9 +275,7 @@ public final class ConfigSyncNetworking {
 
     private static void onClientVideoChunk(String configuredPath, int chunkIndex, byte[] data) {
         DownloadState state = CLIENT_DOWNLOADS.get(configuredPath);
-        if (state == null) {
-            return;
-        }
+        if (state == null) return;
 
         if (chunkIndex != state.receivedChunks) {
             ConditionalVideos.LOGGER.warn("Unexpected chunk order for '{}': got {}, expected {}", configuredPath, chunkIndex, state.receivedChunks);
@@ -312,10 +284,7 @@ public final class ConfigSyncNetworking {
         }
 
         try {
-            Files.write(state.tempPath, data,
-                    StandardOpenOption.CREATE,
-                    StandardOpenOption.APPEND,
-                    StandardOpenOption.WRITE);
+            Files.write(state.tempPath, data, StandardOpenOption.CREATE, StandardOpenOption.APPEND, StandardOpenOption.WRITE);
         } catch (IOException exception) {
             ConditionalVideos.LOGGER.warn("Failed writing chunk {} for '{}'", chunkIndex, configuredPath, exception);
             CLIENT_DOWNLOADS.remove(configuredPath);
@@ -345,20 +314,15 @@ public final class ConfigSyncNetworking {
     }
 
     private static void sendVideoFile(ServerPlayer player, String configuredPath) {
-        ConditionalVideosConfig serverConfig = ConditionalVideosConfig.loadServer(player.server.getServerDirectory().toPath());
-        List<VideoManifestEntry> entries = collectVideoEntries(serverConfig, player.server.getServerDirectory().toPath());
+        ConditionalVideosConfig serverConfig = ConditionalVideosConfig.loadServer(player.server.getServerDirectory());
+        List<VideoManifestEntry> entries = collectVideoEntries(serverConfig, player.server.getServerDirectory());
         VideoManifestEntry targetEntry = entries.stream()
                 .filter(entry -> entry.configuredPath().equals(configuredPath))
-                .findFirst()
-                .orElse(null);
-        if (targetEntry == null) {
-            return;
-        }
+                .findFirst().orElse(null);
+        if (targetEntry == null) return;
 
-        Path source = resolveConfigPath(player.server.getServerDirectory().toPath(), configuredPath);
-        if (source == null || !Files.isRegularFile(source)) {
-            return;
-        }
+        Path source = resolveConfigPath(player.server.getServerDirectory(), configuredPath);
+        if (source == null || !Files.isRegularFile(source)) return;
 
         byte[] all;
         try {
@@ -369,26 +333,30 @@ public final class ConfigSyncNetworking {
         }
 
         int expectedChunks = (all.length + FILE_CHUNK_SIZE - 1) / FILE_CHUNK_SIZE;
-        FriendlyByteBuf start = new FriendlyByteBuf(Unpooled.buffer());
-        start.writeUtf(configuredPath);
-        start.writeUtf(targetEntry.conditionType());
-        start.writeUtf(targetEntry.hash());
-        start.writeUtf(targetEntry.extension());
-        start.writeVarInt(expectedChunks);
-        NetworkManager.sendToPlayer(player, SERVER_VIDEO_START_PACKET, start);
+        final String conditionType = targetEntry.conditionType();
+        final String hash = targetEntry.hash();
+        final String extension = targetEntry.extension();
+
+        NetworkHelper.sendToPlayer(player, SERVER_VIDEO_START_PACKET, NetworkHelper.toBytes(buf -> {
+            buf.writeUtf(configuredPath);
+            buf.writeUtf(conditionType);
+            buf.writeUtf(hash);
+            buf.writeUtf(extension);
+            buf.writeVarInt(expectedChunks);
+        }));
 
         for (int i = 0; i < expectedChunks; i++) {
-            int startIndex = i * FILE_CHUNK_SIZE;
-            int length = Math.min(FILE_CHUNK_SIZE, all.length - startIndex);
-            FriendlyByteBuf chunk = new FriendlyByteBuf(Unpooled.buffer());
-            chunk.writeUtf(configuredPath);
-            chunk.writeVarInt(i);
-            chunk.writeVarInt(length);
-            chunk.writeBytes(all, startIndex, length);
-            NetworkManager.sendToPlayer(player, SERVER_VIDEO_CHUNK_PACKET, chunk);
+            final int startIndex = i * FILE_CHUNK_SIZE;
+            final int length = Math.min(FILE_CHUNK_SIZE, all.length - startIndex);
+            final int chunkIdx = i;
+            NetworkHelper.sendToPlayer(player, SERVER_VIDEO_CHUNK_PACKET, NetworkHelper.toBytes(buf -> {
+                buf.writeUtf(configuredPath);
+                buf.writeVarInt(chunkIdx);
+                buf.writeVarInt(length);
+                buf.writeBytes(all, startIndex, length);
+            }));
         }
     }
-
 
     public static void onClientDisconnected() {
         ActiveConfigResolver.resetRemoteSessionState();
@@ -397,11 +365,8 @@ public final class ConfigSyncNetworking {
     }
 
     public static void requestServerSync(boolean force) {
-        if (clientSyncRequested && !force) {
-            return;
-        }
-        FriendlyByteBuf request = new FriendlyByteBuf(Unpooled.buffer());
-        NetworkManager.sendToServer(CLIENT_SYNC_REQUEST_PACKET, request);
+        if (clientSyncRequested && !force) return;
+        NetworkHelper.sendToServer(CLIENT_SYNC_REQUEST_PACKET, new byte[0]);
         clientSyncRequested = true;
     }
 

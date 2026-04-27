@@ -17,11 +17,20 @@ public final class PlayerDeathVideoHandler {
     private static final String CONDITION_ID = "playerDeath";
     private static long lastHandledAtMillis = Long.MIN_VALUE;
     private static final String ENTITY_CONDITION_ID_PREFIX = "deathByEntity:";
+    private static volatile String pendingKillerEntityId = null;
+    private static final int DEATH_PLAY_DELAY_TICKS = 8;
+    private static int pendingDeathTicks = -1;
 
     private PlayerDeathVideoHandler() {
     }
 
     public static void onPlayerDied(Minecraft minecraft) {
+        String captured = pendingKillerEntityId;
+        pendingKillerEntityId = null;
+        onPlayerDiedInternal(minecraft, captured);
+    }
+
+    private static void onPlayerDiedInternal(Minecraft minecraft, String capturedKillerEntityId) {
         long now = Util.getMillis();
         if (lastHandledAtMillis >= 0L && now - lastHandledAtMillis < 250L) {
             return;
@@ -29,7 +38,8 @@ public final class PlayerDeathVideoHandler {
         lastHandledAtMillis = now;
 
         ConditionalVideosConfig config = ActiveConfigResolver.resolve(minecraft);
-        String killerEntityId = resolveKillerEntityId(minecraft);
+        String killerEntityId = capturedKillerEntityId != null ? capturedKillerEntityId : resolveKillerEntityId(minecraft);
+
         if (!killerEntityId.isBlank()) {
             ConditionalVideosConfig.ConditionConfig entityConfig = config.deathByEntity().get(killerEntityId);
             if (ConditionVideoPlayer.play(
@@ -45,8 +55,8 @@ public final class PlayerDeathVideoHandler {
         }
 
         ConditionVideoPlayer.play(minecraft, config, config.playerDeath(), CONDITION_ID, "player death", null);
-
     }
+
     private static String resolveKillerEntityId(Minecraft minecraft) {
         if (minecraft.player == null) {
             return "";
@@ -76,5 +86,28 @@ public final class PlayerDeathVideoHandler {
         }
         ResourceLocation key = BuiltInRegistries.ENTITY_TYPE.getKey(killer.getType());
         return key == null ? "" : key.toString();
+    }
+
+    public static void scheduleDeath(Minecraft minecraft) {
+        pendingKillerEntityId = resolveKillerEntityId(minecraft);
+        pendingDeathTicks = DEATH_PLAY_DELAY_TICKS;
+    }
+
+    public static void tickPendingDeath(Minecraft minecraft) {
+        if (pendingDeathTicks < 0) {
+            return;
+        }
+        pendingDeathTicks--;
+        if (pendingDeathTicks <= 0) {
+            pendingDeathTicks = -1;
+            String captured = pendingKillerEntityId;
+            pendingKillerEntityId = null;
+            onPlayerDiedInternal(minecraft, captured);
+        }
+    }
+
+    public static void cancelPendingDeath() {
+        pendingDeathTicks = -1;
+        pendingKillerEntityId = null;
     }
 }

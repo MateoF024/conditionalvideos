@@ -2,23 +2,23 @@
   "schemaVersion": 1,
   "id": "conditionalvideos",
   "version": "${version}",
-  "name": "ConditionalVideos",
-  "description": "",
+  "name": "Conditional Videos",
+  "description": "Client-side mod that plays configurable videos for gameplay events such as first join, deaths, kills, advancements, and dimension changes.",
   "authors": [
     "MateoF24"
   ],
   "contact": {
-    "homepage": "https://github.com/MateoF024/Better-Flashlights"
+    "homepage": "https://github.com/MateoF024/conditionalvideos"
   },
   "license": "All-Rights-Reserved",
   "icon": "assets/conditionalvideos/icon.png",
   "environment": "*",
   "entrypoints": {
     "main": [
-      "org.mateof24.conditionalvideos.fabric.ConditionalVideosFabric"
+      "org.mateof24.conditionalvideos.ConditionalVideosFabric"
     ],
     "client": [
-      "org.mateof24.conditionalvideos.fabric.client.ConditionalVideosFabricClient"
+      "org.mateof24.conditionalvideos.client.ConditionalVideosFabricClient"
     ]
   },
   "mixins": [
@@ -32,6 +32,6 @@
     "fabric-api": "*"
   },
   "suggests": {
-    "another-mod": "*"
+    "watermedia": "~2.1.37"
   }
 }

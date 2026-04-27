@@ -90,14 +90,12 @@ public final class WaterMediaVideoBackend {
         RenderSystem.setShader(GameRenderer::getPositionTexShader);
         RenderSystem._setShaderTexture(0, textureId);
 
-        Tesselator tesselator = Tesselator.getInstance();
-        BufferBuilder builder = tesselator.getBuilder();
-        builder.begin(VertexFormat.Mode.QUADS, DefaultVertexFormat.POSITION_TEX);
-        builder.vertex(renderBounds.left(), renderBounds.bottom(), 0).uv(0f, 1f).endVertex();
-        builder.vertex(renderBounds.right(), renderBounds.bottom(), 0).uv(1f, 1f).endVertex();
-        builder.vertex(renderBounds.right(), renderBounds.top(), 0).uv(1f, 0f).endVertex();
-        builder.vertex(renderBounds.left(), renderBounds.top(), 0).uv(0f, 0f).endVertex();
-        BufferUploader.drawWithShader(builder.end());
+        BufferBuilder builder = Tesselator.getInstance().begin(VertexFormat.Mode.QUADS, DefaultVertexFormat.POSITION_TEX);
+        builder.addVertex(renderBounds.left(), renderBounds.bottom(), 0).setUv(0f, 1f);
+        builder.addVertex(renderBounds.right(), renderBounds.bottom(), 0).setUv(1f, 1f);
+        builder.addVertex(renderBounds.right(), renderBounds.top(), 0).setUv(1f, 0f);
+        builder.addVertex(renderBounds.left(), renderBounds.top(), 0).setUv(0f, 0f);
+        BufferUploader.drawWithShader(builder.buildOrThrow());
     }
 
     private RenderBounds calculateRenderBounds(int screenWidth, int screenHeight) {
