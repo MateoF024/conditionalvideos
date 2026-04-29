@@ -38,6 +38,13 @@ public final class ConfigSyncNetworking {
     private static final Map<UUID, GameType> PLAYER_PRE_VIDEO_GAME_MODES = new HashMap<>();
     private static Map<ResourceLocation, NetworkHelper.S2CPacketHandler> s2cHandlers;
 
+    private static final java.util.concurrent.ExecutorService ASYNC_IO =
+            java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "ConditionalVideos-IO");
+                t.setDaemon(true);
+                return t;
+            });
+
     private ConfigSyncNetworking() {
     }
 
@@ -59,7 +66,7 @@ public final class ConfigSyncNetworking {
                         buf.readUtf(), buf.readUtf(), buf.readUtf(),
                         buf.readVarLong(), buf.readUtf()));
             }
-            onClientManifest(manifest);
+            ASYNC_IO.execute(() -> onClientManifest(manifest));
         });
 
         s2cHandlers.put(SERVER_VIDEO_START_PACKET, data -> {
@@ -87,7 +94,7 @@ public final class ConfigSyncNetworking {
         c2sHandlers.put(CLIENT_VIDEO_REQUEST_PACKET, (data, player) -> {
             FriendlyByteBuf buf = NetworkHelper.fromBytes(data);
             String configuredPath = buf.readUtf();
-            sendVideoFile(player, configuredPath);
+            ASYNC_IO.execute(() -> sendVideoFile(player, configuredPath));
         });
 
         c2sHandlers.put(CLIENT_SYNC_REQUEST_PACKET, (data, player) -> sendServerData(player));
@@ -99,7 +106,6 @@ public final class ConfigSyncNetworking {
         });
 
         NetworkHelper.registerPackets(s2cHandlers, c2sHandlers);
-        PlayerEvent.PLAYER_JOIN.register(ConfigSyncNetworking::sendServerData);
     }
 
     public static void initClient() {
@@ -232,17 +238,36 @@ public final class ConfigSyncNetworking {
 
         for (VideoManifestEntry entry : manifest) {
             ActiveConfigResolver.addManifestedVideoPath(entry.configuredPath());
+
+            if (ActiveConfigResolver.resolveRemoteVideoPath(entry.configuredPath()) != null) {
+                continue;
+            }
+
             Path destination = buildClientVideoPath(baseDir, entry.conditionType(), entry.configuredPath(), entry.extension());
+            boolean needsDownload = true;
+
             try {
                 Files.createDirectories(destination.getParent());
-                if (Files.isRegularFile(destination) && entry.hash().equals(sha256(destination))) {
-                    ActiveConfigResolver.setRemoteVideoPath(entry.configuredPath(), destination);
-                    continue;
+                if (Files.isRegularFile(destination)) {
+                    try {
+                        if (entry.hash().equals(sha256(destination))) {
+                            ActiveConfigResolver.setRemoteVideoPath(entry.configuredPath(), destination);
+                            needsDownload = false;
+                        }
+                    } catch (IOException lockedEx) {
+                        ActiveConfigResolver.setRemoteVideoPath(entry.configuredPath(), destination);
+                        needsDownload = false;
+                    }
                 }
             } catch (IOException exception) {
                 ConditionalVideos.LOGGER.warn("Failed validating cached video '{}'", destination, exception);
+                needsDownload = false;
             }
-            requestVideoFromServer(entry.configuredPath());
+
+            if (needsDownload) {
+                net.minecraft.client.Minecraft.getInstance().execute(
+                        () -> requestVideoFromServer(entry.configuredPath()));
+            }
         }
     }
 
@@ -293,8 +318,9 @@ public final class ConfigSyncNetworking {
 
         state.receivedChunks++;
         if (state.receivedChunks >= state.expectedChunks) {
-            finalizeDownload(state);
             CLIENT_DOWNLOADS.remove(configuredPath);
+            final DownloadState finalState = state;
+            ASYNC_IO.execute(() -> finalizeDownload(finalState));
         }
     }
 
@@ -306,7 +332,18 @@ public final class ConfigSyncNetworking {
                 Files.deleteIfExists(state.tempPath);
                 return;
             }
-            Files.move(state.tempPath, state.targetPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+
+            try {
+                Files.move(state.tempPath, state.targetPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            } catch (IOException moveEx) {
+                if (Files.isRegularFile(state.targetPath)) {
+                    ConditionalVideos.LOGGER.warn("Could not replace video '{}' (file in use), using existing copy.", state.configuredPath);
+                    Files.deleteIfExists(state.tempPath);
+                } else {
+                    throw moveEx;
+                }
+            }
+
             ActiveConfigResolver.setRemoteVideoPath(state.configuredPath, state.targetPath);
         } catch (IOException exception) {
             ConditionalVideos.LOGGER.warn("Failed finalizing video '{}'", state.configuredPath, exception);

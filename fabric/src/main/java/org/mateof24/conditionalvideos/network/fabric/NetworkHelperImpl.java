@@ -1,11 +1,8 @@
 package org.mateof24.conditionalvideos.network.fabric;
 
-import net.fabricmc.api.EnvType;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
-import net.fabricmc.loader.api.FabricLoader;
-import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 import org.mateof24.conditionalvideos.network.NetworkHelper;
@@ -41,7 +38,11 @@ public final class NetworkHelperImpl {
     }
 
     public static void sendToPlayer(ServerPlayer player, ResourceLocation id, byte[] data) {
-        ServerPlayNetworking.send(player, new NetworkHelper.RawS2C(id, data));
+        if (player.connection == null) return;
+        try {
+            ServerPlayNetworking.send(player, new NetworkHelper.RawS2C(id, data));
+        } catch (Exception ignored) {
+        }
     }
 
     public static void sendToServer(ResourceLocation id, byte[] data) {
