@@ -14,103 +14,119 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public final class AdvancementVideoHandler {
     private static final String CONDITION_ID_PREFIX = "advancementCompleted:";
-    private static final Set<String> seenThisSession = ConcurrentHashMap.newKeySet();
-    private static volatile boolean sessionActive = false;
-    private static volatile boolean listenerRegistered = false;
-    private static volatile boolean suppressingReset = false;
-    private static Set<String> pollingPrevious = new HashSet<>();
+    private static final AdvancementSessionState STATE = new AdvancementSessionState();
 
     private AdvancementVideoHandler() {
     }
 
+    private static final class AdvancementSessionState {
+        private final Set<String> seenThisSession = ConcurrentHashMap.newKeySet();
+        private volatile boolean sessionActive = false;
+        private volatile boolean listenerRegistered = false;
+        private volatile boolean suppressingReset = false;
+        private Set<String> pollingPrevious = new HashSet<>();
+    }
+
     public static void onSessionStarted(Minecraft minecraft) {
-        seenThisSession.clear();
-        pollingPrevious = new HashSet<>();
-        listenerRegistered = false;
-        suppressingReset = false;
-        sessionActive = true;
+        STATE.seenThisSession.clear();
+        STATE.pollingPrevious = new HashSet<>();
+        STATE.listenerRegistered = false;
+        STATE.suppressingReset = false;
+        STATE.sessionActive = true;
         Set<String> existing = snapshotCompletedAdvancements(minecraft);
-        seenThisSession.addAll(existing);
-        pollingPrevious = new HashSet<>(existing);
+        STATE.seenThisSession.addAll(existing);
+        STATE.pollingPrevious = new HashSet<>(existing);
         tryRegisterListener(minecraft);
     }
 
     public static void onSessionEnded() {
-        sessionActive = false;
-        listenerRegistered = false;
-        suppressingReset = false;
-        seenThisSession.clear();
-        pollingPrevious = new HashSet<>();
+        STATE.sessionActive = false;
+        STATE.listenerRegistered = false;
+        STATE.suppressingReset = false;
+        STATE.seenThisSession.clear();
+        STATE.pollingPrevious = new HashSet<>();
     }
 
+    /**
+     * Polling fallback - always runs regardless of listener state.
+     * Shares previousCompleted with the listener to avoid double-triggers.
+     */
     public static void tick(Minecraft minecraft) {
-        if (listenerRegistered || !sessionActive) return;
+        if (!STATE.sessionActive) return;
 
         Set<String> current = snapshotCompletedAdvancements(minecraft);
-        for (String id : current) {
-            if (!seenThisSession.contains(id)) {
-                seenThisSession.add(id);
-                ConditionalVideosConfig config = ActiveConfigResolver.resolve(minecraft);
-                ConditionalVideosConfig.ConditionConfig cfg = config.advancementCompleted().get(id);
-                ConditionVideoPlayer.play(minecraft, config, cfg, CONDITION_ID_PREFIX + id, "advancement completed ('" + id + "')", null);
-                break;
+
+        STATE.seenThisSession.removeIf(id -> !current.contains(id));
+
+        if (!STATE.listenerRegistered) {
+            for (String id : current) {
+                if (!STATE.seenThisSession.contains(id)) {
+                    STATE.seenThisSession.add(id);
+                    ConditionalVideosConfig config = ActiveConfigResolver.resolve(minecraft);
+                    ConditionalVideosConfig.ConditionConfig cfg = config.advancementCompleted().get(id);
+                    ConditionVideoPlayer.play(minecraft, config, cfg, CONDITION_ID_PREFIX + id, "advancement completed ('" + id + "')", null);
+                    break;
+                }
             }
         }
-        seenThisSession.removeIf(id -> !current.contains(id));
-        pollingPrevious = current;
+
+        STATE.pollingPrevious = current;
     }
 
     private static void tryRegisterListener(Minecraft minecraft) {
         if (minecraft.getConnection() == null) return;
         try {
-            Object clientAdvancements = resolveClientAdvancements(minecraft);
+            Object clientAdvancements = getClientAdvancements(minecraft);
             if (clientAdvancements == null) return;
 
-            Class<?> listenerInterface = findListenerInterface(clientAdvancements.getClass());
-            if (listenerInterface == null) {
-                ConditionalVideos.LOGGER.debug("[ConditionalVideos] Listener interface not found in {}", clientAdvancements.getClass().getName());
+            Class<?> iface = findListenerInterface(clientAdvancements.getClass());
+            if (iface == null) {
+                ConditionalVideos.LOGGER.debug("[ConditionalVideos] Listener interface not found, polling only");
                 return;
             }
 
-            Method setListenerMethod = findSetListenerMethod(clientAdvancements.getClass(), listenerInterface);
+            Method setListenerMethod = findSetListenerMethod(clientAdvancements.getClass(), iface);
             if (setListenerMethod == null) {
-                ConditionalVideos.LOGGER.debug("[ConditionalVideos] setListener method not found");
+                ConditionalVideos.LOGGER.debug("[ConditionalVideos] setListener not found, polling only");
                 return;
             }
 
             Object proxy = Proxy.newProxyInstance(
                     clientAdvancements.getClass().getClassLoader(),
-                    new Class[]{listenerInterface},
+                    new Class[]{iface},
                     (proxyObj, method, args) -> {
-                        String mName = method.getName();
-                        if ("equals".equals(mName)) return proxyObj == (args != null ? args[0] : null);
-                        if ("hashCode".equals(mName)) return System.identityHashCode(proxyObj);
-                        if ("toString".equals(mName)) return "CVAdvancementListener";
-
-                        if (args == null || args.length == 0) {
-                            suppressingReset = true;
-                            seenThisSession.clear();
-                            minecraft.execute(() -> {
-                                Set<String> newBaseline = snapshotCompletedAdvancements(minecraft);
-                                seenThisSession.addAll(newBaseline);
-                                suppressingReset = false;
-                            });
-                        } else if (args.length == 2 && !suppressingReset) {
-                            handleProgressUpdate(args[0], args[1], minecraft);
+                        switch (method.getName()) {
+                            case "equals" -> { return proxyObj == (args != null ? args[0] : null); }
+                            case "hashCode" -> { return System.identityHashCode(proxyObj); }
+                            case "toString" -> { return "CVAdvancementListener"; }
                         }
+                        int argc = args == null ? 0 : args.length;
+                        if (argc == 0) {
+                            // onAdvancementsCleared - server reset (e.g. /reload)
+                            STATE.suppressingReset = true;
+                            STATE.seenThisSession.clear();
+                            // The subsequent onUpdateAdvancementProgress calls rebuild the baseline.
+                            // Once the execute queue drains (i.e., after the packet is fully processed),
+                            // we re-enable normal detection.
+                            STATE.seenThisSession.addAll(newBaseline);
+                            STATE.suppressingReset = false;
+                        } else if (args.length == 2) {
+                            handleProgressUpdate(args[0], args[1], minecraft, !STATE.suppressingReset);
+                        }
+                        // argc == 1: onSelectedTabChanged - irrelevant
                         return null;
                     }
             );
 
             setListenerMethod.invoke(clientAdvancements, proxy);
-            listenerRegistered = true;
+            STATE.listenerRegistered = true;
             ConditionalVideos.LOGGER.debug("[ConditionalVideos] Advancement listener registered successfully");
         } catch (Exception e) {
-            ConditionalVideos.LOGGER.debug("[ConditionalVideos] Listener registration failed, using polling fallback: {}", e.getMessage());
+            ConditionalVideos.LOGGER.debug("[ConditionalVideos] Listener registration failed ({}), polling active", e.getMessage());
         }
     }
 
-    private static void handleProgressUpdate(Object holder, Object progress, Minecraft minecraft) {
+    private static void handleProgressUpdate(Object holder, Object progress, Minecraft minecraft, boolean allowPlayback) {
         try {
             Method isDone = progress.getClass().getMethod("isDone");
             Object result = isDone.invoke(progress);
@@ -119,15 +135,17 @@ public final class AdvancementVideoHandler {
             if (id.isBlank()) return;
 
             if (!done) {
-                seenThisSession.remove(id);
+                STATE.seenThisSession.remove(id);
                 return;
             }
 
-            if (seenThisSession.contains(id)) return;
-            seenThisSession.add(id);
+            if (STATE.seenThisSession.contains(id)) return;
+            STATE.seenThisSession.add(id);
+
+            if (!allowPlayback) return;
 
             minecraft.execute(() -> {
-                if (!sessionActive) return;
+                if (!STATE.sessionActive) return;
                 ConditionalVideosConfig config = ActiveConfigResolver.resolve(minecraft);
                 ConditionalVideosConfig.ConditionConfig cfg = config.advancementCompleted().get(id);
                 ConditionVideoPlayer.play(minecraft, config, cfg, CONDITION_ID_PREFIX + id, "advancement completed ('" + id + "')", null);
@@ -137,120 +155,109 @@ public final class AdvancementVideoHandler {
         }
     }
 
+    private static void doTrigger(Minecraft minecraft, String id) {
+        ConditionalVideosConfig config = ActiveConfigResolver.resolve(minecraft);
+        ConditionalVideosConfig.ConditionConfig cfg = config.advancementCompleted().get(id);
+        ConditionVideoPlayer.play(minecraft, config, cfg, CONDITION_ID_PREFIX + id, "advancement completed ('" + id + "')", null);
+    }
+
+    // --- Reflection helpers ---
+
+    private static Object getClientAdvancements(Minecraft minecraft) {
+        if (minecraft.getConnection() == null) return null;
+        try {
+            return minecraft.getConnection().getClass().getMethod("getAdvancements").invoke(minecraft.getConnection());
+        } catch (Exception e) {
+            ConditionalVideos.LOGGER.debug("[ConditionalVideos] getAdvancements() failed: {}", e.getMessage());
+            return null;
+        }
+    }
+
     private static Class<?> findListenerInterface(Class<?> cls) {
-        Class<?> clazz = cls;
-        while (clazz != null && clazz != Object.class) {
+        for (Class<?> clazz = cls; clazz != null && clazz != Object.class; clazz = clazz.getSuperclass()) {
             for (Class<?> inner : clazz.getDeclaredClasses()) {
                 if (!inner.isInterface()) continue;
-                Method[] methods = inner.getMethods();
-                boolean has2Param = false;
-                boolean hasVoidOrNullable = false;
-                for (Method m : methods) {
-                    try {
-                        Object.class.getMethod(m.getName(), m.getParameterTypes());
-                        continue;
-                    } catch (NoSuchMethodException ignored) {
-                    }
+                boolean has2Param = false, hasOtherParam = false;
+                for (Method m : inner.getMethods()) {
+                    try { Object.class.getMethod(m.getName(), m.getParameterTypes()); continue; }
+                    catch (NoSuchMethodException ignored) {}
                     if (m.getParameterCount() == 2) has2Param = true;
-                    if (m.getParameterCount() <= 1) hasVoidOrNullable = true;
+                    else hasOtherParam = true;
                 }
-                if (has2Param && hasVoidOrNullable) return inner;
+                if (has2Param && hasOtherParam) return inner;
             }
-            clazz = clazz.getSuperclass();
         }
         return null;
     }
 
-    private static Method findSetListenerMethod(Class<?> cls, Class<?> listenerInterface) {
-        Class<?> clazz = cls;
-        while (clazz != null && clazz != Object.class) {
+    private static Method findSetListenerMethod(Class<?> cls, Class<?> iface) {
+        for (Class<?> clazz = cls; clazz != null && clazz != Object.class; clazz = clazz.getSuperclass()) {
             for (Method m : clazz.getDeclaredMethods()) {
-                if (m.getParameterCount() == 1 && m.getParameterTypes()[0] == listenerInterface) {
+                if (m.getParameterCount() == 1 && m.getParameterTypes()[0] == iface) {
                     m.setAccessible(true);
                     return m;
                 }
             }
-            clazz = clazz.getSuperclass();
         }
         return null;
     }
 
     static Set<String> snapshotCompletedAdvancements(Minecraft minecraft) {
-        Set<String> completed = new HashSet<>();
-        Object advancements = resolveClientAdvancements(minecraft);
-        if (advancements == null) return completed;
-        Map<?, ?> progressMap = resolveProgressMap(advancements);
-        if (progressMap == null) return completed;
-        for (Map.Entry<?, ?> entry : progressMap.entrySet()) {
-            if (!isCompleted(entry.getValue())) continue;
-            String id = resolveAdvancementId(entry.getKey());
-            if (!id.isBlank()) completed.add(id);
-        }
-        return completed;
-    }
-
-    private static Object resolveClientAdvancements(Minecraft minecraft) {
-        if (minecraft.getConnection() == null) return null;
-        try {
-            Method m = minecraft.getConnection().getClass().getMethod("getAdvancements");
-            return m.invoke(minecraft.getConnection());
-        } catch (ReflectiveOperationException e) {
-            ConditionalVideos.LOGGER.debug("[ConditionalVideos] Unable to resolve client advancements.", e);
-            return null;
-        }
-    }
-
-    private static Map<?, ?> resolveProgressMap(Object advancements) {
-        Class<?> clazz = advancements.getClass();
-        while (clazz != null && clazz != Object.class) {
-            for (Field field : clazz.getDeclaredFields()) {
-                if (!Map.class.isAssignableFrom(field.getType())) continue;
-                try {
-                    field.setAccessible(true);
-                    Object value = field.get(advancements);
-                    if (value instanceof Map<?, ?> map && looksLikeProgressMap(map)) return map;
-                } catch (ReflectiveOperationException ignored) {
-                }
+        Set<String> result = new HashSet<>();
+        Object adv = getClientAdvancements(minecraft);
+        if (adv == null) return result;
+        Map<?, ?> map = findProgressMap(adv);
+        if (map == null) return result;
+        for (Map.Entry<?, ?> e : map.entrySet()) {
+            if (checkDone(e.getValue())) {
+                String id = resolveId(e.getKey());
+                if (!id.isBlank()) result.add(id);
             }
-            clazz = clazz.getSuperclass();
+        }
+        return result;
+    }
+
+    private static Map<?, ?> findProgressMap(Object advancements) {
+        for (Class<?> clazz = advancements.getClass(); clazz != null && clazz != Object.class; clazz = clazz.getSuperclass()) {
+            for (Field f : clazz.getDeclaredFields()) {
+                if (!Map.class.isAssignableFrom(f.getType())) continue;
+                try {
+                    f.setAccessible(true);
+                    Object v = f.get(advancements);
+                    if (v instanceof Map<?, ?> m && isProgressMap(m)) return m;
+                } catch (Exception ignored) {}
+            }
         }
         return null;
     }
 
-    private static boolean looksLikeProgressMap(Map<?, ?> map) {
+    private static boolean isProgressMap(Map<?, ?> map) {
         if (map.isEmpty()) return false;
         for (Object v : map.values()) {
             if (v == null) continue;
-            try {
-                v.getClass().getMethod("isDone");
-                return true;
-            } catch (NoSuchMethodException ignored) {
-                return false;
-            }
+            try { v.getClass().getMethod("isDone"); return true; }
+            catch (NoSuchMethodException e) { return false; }
         }
         return false;
     }
 
-    private static boolean isCompleted(Object progress) {
+    private static boolean checkDone(Object progress) {
         if (progress == null) return false;
         try {
-            Method m = progress.getClass().getMethod("isDone");
-            Object r = m.invoke(progress);
-            return r instanceof Boolean b && b;
-        } catch (ReflectiveOperationException ignored) {
-            return false;
-        }
+            return Boolean.TRUE.equals(progress.getClass().getMethod("isDone").invoke(progress));
+        } catch (Exception e) { return false; }
     }
 
-    private static String resolveAdvancementId(Object advancement) {
-        if (advancement == null) return "";
+    private static String resolveId(Object holder) {
+        if (holder == null) return "";
         for (String name : new String[]{"getId", "id"}) {
             try {
-                Method m = advancement.getClass().getMethod(name);
-                Object id = m.invoke(advancement);
-                if (id != null && !id.toString().isBlank()) return id.toString();
-            } catch (ReflectiveOperationException ignored) {
-            }
+                Object result = holder.getClass().getMethod(name).invoke(holder);
+                if (result != null) {
+                    String s = result.toString();
+                    if (!s.isBlank()) return s;
+                }
+            } catch (Exception ignored) {}
         }
         return "";
     }
