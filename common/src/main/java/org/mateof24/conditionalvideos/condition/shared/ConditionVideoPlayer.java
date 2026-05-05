@@ -1,9 +1,11 @@
 package org.mateof24.conditionalvideos.condition.shared;
 
 import net.minecraft.client.Minecraft;
+import net.minecraft.world.level.GameType;
 import org.mateof24.conditionalvideos.ConditionalVideos;
 import org.mateof24.conditionalvideos.condition.join.SessionKeyResolver;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
+import org.mateof24.conditionalvideos.network.ConfigSyncNetworking;
 import org.mateof24.conditionalvideos.video.VideoPlaybackScreen;
 import org.mateof24.conditionalvideos.video.path.VideoPathResolver;
 import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
@@ -40,12 +42,13 @@ public final class ConditionVideoPlayer {
         }
 
         if (resolvedPath == null) {
-            boolean downloadPending = ActiveConfigResolver.isMultiplayerSession(minecraft)
-                    && ActiveConfigResolver.isVideoPathInManifest(conditionConfig.video());
-            if (!downloadPending) {
-                ConditionalVideos.LOGGER.warn("Configured {} video '{}' is invalid or not found. Ignoring.", logName, conditionConfig.video());
-                return true;
+            if (ActiveConfigResolver.isMultiplayerSession(minecraft)) {
+                if (!ActiveConfigResolver.isManifestPending() && !ActiveConfigResolver.isVideoPathInManifest(conditionConfig.video())) {
+                    ConditionalVideos.LOGGER.debug("Multiplayer {} video not locally available, skipping.", logName);
+                }
+                return false;
             }
+            ConditionalVideos.LOGGER.warn("Configured {} video '{}' is invalid or not found. Ignoring.", logName, conditionConfig.video());
             return false;
         }
 
@@ -56,6 +59,40 @@ public final class ConditionVideoPlayer {
             }
         }
 
+        final Runnable wrappedClose;
+        if (ActiveConfigResolver.isMultiplayerSession(minecraft)) {
+            ConfigSyncNetworking.notifyFirstJoinVideoState(true);
+            wrappedClose = () -> {
+                ConfigSyncNetworking.notifyFirstJoinVideoState(false);
+                if (onCloseCallback != null) onCloseCallback.run();
+            };
+        } else if (minecraft.getSingleplayerServer() != null && minecraft.player != null) {
+            net.minecraft.server.level.ServerPlayer serverPlayer =
+                    minecraft.getSingleplayerServer().getPlayerList().getPlayer(minecraft.player.getUUID());
+            if (serverPlayer != null) {
+                GameType previous = serverPlayer.gameMode.getGameModeForPlayer();
+                if (previous != GameType.SPECTATOR) {
+                    serverPlayer.setGameMode(GameType.SPECTATOR);
+                }
+                final GameType finalPrevious = previous;
+                wrappedClose = () -> {
+                    if (minecraft.getSingleplayerServer() != null && minecraft.player != null) {
+                        net.minecraft.server.level.ServerPlayer sp =
+                                minecraft.getSingleplayerServer().getPlayerList().getPlayer(minecraft.player.getUUID());
+                        if (sp != null) {
+                            sp.setGameMode(finalPrevious);
+                        }
+                    }
+                    if (onCloseCallback != null) onCloseCallback.run();
+                };
+            } else {
+                wrappedClose = onCloseCallback;
+            }
+        } else {
+            wrappedClose = onCloseCallback;
+        }
+
+        ConditionalVideos.LOGGER.info("Playing {} video: {}", logName, resolvedPath);
         int backgroundColor = config.resolveBackgroundColor(conditionConfig, 0xFF000000);
         minecraft.setScreen(new VideoPlaybackScreen(
                 resolvedPath,
@@ -66,7 +103,7 @@ public final class ConditionVideoPlayer {
                 conditionConfig.videoTitlePosition(),
                 conditionConfig.videoDescription(),
                 conditionConfig.videoDescriptionPosition(),
-                onCloseCallback
+                wrappedClose
         ));
         return true;
     }

@@ -61,7 +61,6 @@ public final class WaterMediaVideoBackend {
             startMethod.invoke(player, videoPath.toUri());
             finishedChecks = 0;
             renderedAnyFrame = false;
-            ConditionalVideos.LOGGER.info("Playing first-join video with WATERMeDIA: {}", videoPath);
         } catch (Exception exception) {
             ConditionalVideos.LOGGER.warn("Failed to initialize WATERMeDIA playback backend: {}", exception.getMessage());
             player = null;

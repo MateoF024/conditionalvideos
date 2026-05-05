@@ -8,6 +8,7 @@ import org.mateof24.conditionalvideos.condition.advancement.AdvancementVideoHand
 import org.mateof24.conditionalvideos.condition.dimension.DimensionChangeVideoHandler;
 import org.mateof24.conditionalvideos.condition.kill.KillEntityVideoHandler;
 import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
+import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
 import org.mateof24.conditionalvideos.network.ConfigSyncNetworking;
 
 import java.util.*;
@@ -22,15 +23,18 @@ public final class ClientRuntime {
     private ResourceLocation lastDimension;
     private ResourceLocation pendingDimensionVideoTarget;
     private int pendingDimensionVideoTicks;
-    private Set<String> completedAdvancements = new LinkedHashSet<>();
     private boolean joinVideoHandled;
     private int multiplayerHandshakeTicks;
 
     public void onClientTick() {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.level == null || minecraft.player == null) {
+            if (minecraft.getConnection() != null) {
+                return;
+            }
             if (wasInSession) {
                 KillEntityVideoHandler.onSessionEnded();
+                PlayerDeathVideoHandler.cancelPendingDeath();
                 ConfigSyncNetworking.onClientDisconnected();
             }
             wasInSession = false;
@@ -38,9 +42,10 @@ public final class ClientRuntime {
             lastDimension = null;
             pendingDimensionVideoTarget = null;
             pendingDimensionVideoTicks = 0;
-            completedAdvancements = new LinkedHashSet<>();
             joinVideoHandled = false;
             multiplayerHandshakeTicks = 0;
+            PlayerDeathVideoHandler.cancelPendingDeath();
+            AdvancementVideoHandler.onSessionEnded();
             return;
         }
 
@@ -48,7 +53,7 @@ public final class ClientRuntime {
             wasInSession = true;
             KillEntityVideoHandler.onSessionStarted();
             lastDimension = minecraft.level.dimension().location();
-            completedAdvancements = AdvancementVideoHandler.snapshotCompletedAdvancements(minecraft);
+            AdvancementVideoHandler.onSessionStarted(minecraft);
             joinVideoHandled = false;
             multiplayerHandshakeTicks = 0;
             if (ActiveConfigResolver.isMultiplayerSession(minecraft)) {
@@ -86,13 +91,10 @@ public final class ClientRuntime {
         }
 
         boolean isAlive = minecraft.player.isAlive();
-        boolean died = wasAlive && !isAlive;
-        if (died) {
-            PlayerDeathVideoHandler.onPlayerDied(minecraft);
-            PlayerDeathVideoHandler.cancelPendingDeath();
-        } else {
-            PlayerDeathVideoHandler.tickPendingDeath(minecraft);
+        if (wasAlive && !isAlive) {
+            PlayerDeathVideoHandler.onDeathDetected(minecraft);
         }
+        PlayerDeathVideoHandler.tickPendingDeath(minecraft);
         wasAlive = isAlive;
 
         ResourceLocation currentDimension = minecraft.level.dimension().location();
@@ -103,15 +105,7 @@ public final class ClientRuntime {
         lastDimension = currentDimension;
         tryPlayPendingDimensionVideo(minecraft, currentDimension);
 
-        Set<String> nowCompleted = AdvancementVideoHandler.snapshotCompletedAdvancements(minecraft);
-        for (String advancementId : nowCompleted) {
-            if (!completedAdvancements.contains(advancementId)) {
-                if (AdvancementVideoHandler.onAdvancementCompleted(minecraft, advancementId)) {
-                    break;
-                }
-            }
-        }
-        completedAdvancements = nowCompleted;
+        AdvancementVideoHandler.tick(minecraft);
 
         KillEntityVideoHandler.onClientTick(minecraft);
     }

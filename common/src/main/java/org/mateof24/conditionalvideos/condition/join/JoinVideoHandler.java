@@ -5,7 +5,6 @@ import org.mateof24.conditionalvideos.*;
 import org.mateof24.conditionalvideos.condition.shared.ConditionVideoPlayer;
 import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
-import org.mateof24.conditionalvideos.network.ConfigSyncNetworking;
 
 
 public final class JoinVideoHandler {
@@ -20,19 +19,6 @@ public final class JoinVideoHandler {
         if (firstJoin == null || firstJoin.video().isBlank()) {
             return true;
         }
-
-        boolean started = ConditionVideoPlayer.play(
-                minecraft,
-                config,
-                firstJoin,
-                CONDITION_ID,
-                "first join",
-                () -> ConfigSyncNetworking.notifyFirstJoinVideoState(false)
-        );
-
-        if (started) {
-            ConfigSyncNetworking.notifyFirstJoinVideoState(true);
-        }
-        return started;
+        return ConditionVideoPlayer.play(minecraft, config, firstJoin, CONDITION_ID, "first join", null);
     }
 }

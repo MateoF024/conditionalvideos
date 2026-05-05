@@ -8,8 +8,7 @@
     "PlayerAttackMixin",
     "SoundManagerMixin"
   ],
-  "mixins": [
-  ],
+  "mixins": [],
   "injectors": {
     "defaultRequire": 1
   }

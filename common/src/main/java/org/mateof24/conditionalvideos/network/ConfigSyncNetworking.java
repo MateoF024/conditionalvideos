@@ -66,7 +66,11 @@ public final class ConfigSyncNetworking {
                         buf.readUtf(), buf.readUtf(), buf.readUtf(),
                         buf.readVarLong(), buf.readUtf()));
             }
-            ASYNC_IO.execute(() -> onClientManifest(manifest));
+            ActiveConfigResolver.onManifestReceived();
+            ASYNC_IO.execute(() -> {
+                onClientManifest(manifest);
+                ActiveConfigResolver.onManifestProcessed();
+            });
         });
 
         s2cHandlers.put(SERVER_VIDEO_START_PACKET, data -> {
@@ -236,6 +240,7 @@ public final class ConfigSyncNetworking {
         String serverId = ActiveConfigResolver.resolveCurrentServerId(net.minecraft.client.Minecraft.getInstance());
         Path baseDir = gameDir.resolve("config").resolve("conditionalvideos").resolve(serverId);
 
+        Set<String> requestedPaths = new HashSet<>();
         for (VideoManifestEntry entry : manifest) {
             ActiveConfigResolver.addManifestedVideoPath(entry.configuredPath());
 
@@ -264,7 +269,8 @@ public final class ConfigSyncNetworking {
                 needsDownload = false;
             }
 
-            if (needsDownload) {
+            if (needsDownload && !requestedPaths.contains(entry.configuredPath())) {
+                requestedPaths.add(entry.configuredPath());
                 net.minecraft.client.Minecraft.getInstance().execute(
                         () -> requestVideoFromServer(entry.configuredPath()));
             }
@@ -283,6 +289,9 @@ public final class ConfigSyncNetworking {
     }
 
     private static void onClientVideoStart(String configuredPath, String conditionType, String hash, String extension, int expectedChunks) {
+        if (CLIENT_DOWNLOADS.containsKey(configuredPath)) {
+            return;
+        }
         Path gameDir = net.minecraft.client.Minecraft.getInstance().gameDirectory.toPath();
         String serverId = ActiveConfigResolver.resolveCurrentServerId(net.minecraft.client.Minecraft.getInstance());
         Path baseDir = gameDir.resolve("config").resolve("conditionalvideos").resolve(serverId);
@@ -308,20 +317,19 @@ public final class ConfigSyncNetworking {
             return;
         }
 
-        try {
-            Files.write(state.tempPath, data, StandardOpenOption.CREATE, StandardOpenOption.APPEND, StandardOpenOption.WRITE);
-        } catch (IOException exception) {
-            ConditionalVideos.LOGGER.warn("Failed writing chunk {} for '{}'", chunkIndex, configuredPath, exception);
-            CLIENT_DOWNLOADS.remove(configuredPath);
-            return;
-        }
-
         state.receivedChunks++;
-        if (state.receivedChunks >= state.expectedChunks) {
-            CLIENT_DOWNLOADS.remove(configuredPath);
-            final DownloadState finalState = state;
-            ASYNC_IO.execute(() -> finalizeDownload(finalState));
-        }
+        boolean complete = state.receivedChunks >= state.expectedChunks;
+        if (complete) CLIENT_DOWNLOADS.remove(configuredPath);
+
+        ASYNC_IO.execute(() -> {
+            try {
+                Files.write(state.tempPath, data, StandardOpenOption.CREATE, StandardOpenOption.APPEND, StandardOpenOption.WRITE);
+            } catch (IOException exception) {
+                ConditionalVideos.LOGGER.warn("Failed writing chunk {} for '{}'", chunkIndex, configuredPath, exception);
+                return;
+            }
+            if (complete) finalizeDownload(state);
+        });
     }
 
     private static void finalizeDownload(DownloadState state) {

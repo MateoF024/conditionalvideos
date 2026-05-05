@@ -10,24 +10,52 @@ import net.minecraft.world.entity.LivingEntity;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
 import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
 import org.mateof24.conditionalvideos.condition.shared.ConditionVideoPlayer;
-
-
+import org.mateof24.conditionalvideos.video.VideoAudioState;
 
 public final class PlayerDeathVideoHandler {
     private static final String CONDITION_ID = "playerDeath";
-    private static long lastHandledAtMillis = Long.MIN_VALUE;
     private static final String ENTITY_CONDITION_ID_PREFIX = "deathByEntity:";
-    private static volatile String pendingKillerEntityId = null;
     private static final int DEATH_PLAY_DELAY_TICKS = 8;
+
+    private static long lastHandledAtMillis = Long.MIN_VALUE;
+    private static volatile String pendingKillerEntityId = null;
     private static int pendingDeathTicks = -1;
 
     private PlayerDeathVideoHandler() {
     }
 
-    public static void onPlayerDied(Minecraft minecraft) {
+    public static void scheduleDeath(Minecraft minecraft) {
+        pendingKillerEntityId = resolveKillerEntityId(minecraft);
+        pendingDeathTicks = DEATH_PLAY_DELAY_TICKS;
+    }
+
+    public static void onDeathDetected(Minecraft minecraft) {
+        if (pendingDeathTicks < 0) {
+            pendingKillerEntityId = resolveKillerEntityId(minecraft);
+            pendingDeathTicks = 0;
+        }
+    }
+
+    public static void tickPendingDeath(Minecraft minecraft) {
+        if (pendingDeathTicks < 0) {
+            return;
+        }
+        if (pendingDeathTicks > 0) {
+            pendingDeathTicks--;
+            return;
+        }
+        if (VideoAudioState.isVideoPlaying()) {
+            return;
+        }
+        pendingDeathTicks = -1;
         String captured = pendingKillerEntityId;
         pendingKillerEntityId = null;
         onPlayerDiedInternal(minecraft, captured);
+    }
+
+    public static void cancelPendingDeath() {
+        pendingDeathTicks = -1;
+        pendingKillerEntityId = null;
     }
 
     private static void onPlayerDiedInternal(Minecraft minecraft, String capturedKillerEntityId) {
@@ -70,7 +98,6 @@ public final class PlayerDeathVideoHandler {
                     return attackerId.toString();
                 }
             }
-
             Entity directAttacker = lastDamageSource.getDirectEntity();
             if (directAttacker != null) {
                 ResourceLocation directAttackerId = BuiltInRegistries.ENTITY_TYPE.getKey(directAttacker.getType());
@@ -79,35 +106,11 @@ public final class PlayerDeathVideoHandler {
                 }
             }
         }
-
         LivingEntity killer = minecraft.player.getLastHurtByMob();
         if (killer == null) {
             return "";
         }
         ResourceLocation key = BuiltInRegistries.ENTITY_TYPE.getKey(killer.getType());
         return key == null ? "" : key.toString();
-    }
-
-    public static void scheduleDeath(Minecraft minecraft) {
-        pendingKillerEntityId = resolveKillerEntityId(minecraft);
-        pendingDeathTicks = DEATH_PLAY_DELAY_TICKS;
-    }
-
-    public static void tickPendingDeath(Minecraft minecraft) {
-        if (pendingDeathTicks < 0) {
-            return;
-        }
-        pendingDeathTicks--;
-        if (pendingDeathTicks <= 0) {
-            pendingDeathTicks = -1;
-            String captured = pendingKillerEntityId;
-            pendingKillerEntityId = null;
-            onPlayerDiedInternal(minecraft, captured);
-        }
-    }
-
-    public static void cancelPendingDeath() {
-        pendingDeathTicks = -1;
-        pendingKillerEntityId = null;
     }
 }
