@@ -29,7 +29,11 @@
     "minecraft": "~1.20.1",
     "java": ">=17",
     "architectury": ">=9.2.14",
-    "fabric-api": "*",
-    "watermedia": "=2.1.37"
+    "fabric-api": "*"
+  },
+  "suggests": {
+    "watermedia": ">=3.0.0-alpha",
+    "wm_binaries": ">=3.0.0-alpha",
+    "watermedia_youtube_extension": ">=3.0.0-alpha"
   }
 }

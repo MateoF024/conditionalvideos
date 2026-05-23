@@ -1,3 +1,4 @@
 {
-  "screen.conditionalvideos.skip_hint": "Press ESC to skip"
+  "screen.conditionalvideos.skip_hint": "Press ESC to skip",
+  "screen.conditionalvideos.loading": "Loading video..."
 }

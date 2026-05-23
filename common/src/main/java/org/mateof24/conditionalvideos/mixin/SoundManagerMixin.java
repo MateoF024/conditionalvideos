@@ -12,14 +12,14 @@ public abstract class SoundManagerMixin {
 
     @Inject(method = "play", at = @At("HEAD"), cancellable = true)
     private void conditionalvideos$blockPlayDuringVideo(CallbackInfo ci) {
-        if (VideoAudioState.isVideoPlaying()) {
+        if (VideoAudioState.shouldMuteAudio()) {
             ci.cancel();
         }
     }
 
     @Inject(method = "playDelayed", at = @At("HEAD"), cancellable = true)
     private void conditionalvideos$blockPlayDelayedDuringVideo(CallbackInfo ci) {
-        if (VideoAudioState.isVideoPlaying()) {
+        if (VideoAudioState.shouldMuteAudio()) {
             ci.cancel();
         }
     }

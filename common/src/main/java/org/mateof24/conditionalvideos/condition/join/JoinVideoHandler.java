@@ -17,23 +17,19 @@ public final class JoinVideoHandler {
     public static boolean onJoinedSession(Minecraft minecraft) {
         ConditionalVideosConfig config = ActiveConfigResolver.resolve(minecraft);
         ConditionalVideosConfig.ConditionConfig firstJoin = config.firstJoin();
-        if (firstJoin == null || firstJoin.video().isBlank()) {
+        if (firstJoin == null || firstJoin.resolvedPlaylist().isEmpty()) {
             return true;
         }
 
         ConfigSyncNetworking.notifyFirstJoinVideoState(true);
-
         boolean started = ConditionVideoPlayer.play(
                 minecraft,
                 config,
                 firstJoin,
                 CONDITION_ID,
                 "first join",
-                () -> {
-                    ConfigSyncNetworking.notifyFirstJoinVideoState(false);
-                }
+                () -> ConfigSyncNetworking.notifyFirstJoinVideoState(false)
         );
-
         if (!started) {
             ConfigSyncNetworking.notifyFirstJoinVideoState(false);
         }

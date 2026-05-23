@@ -12,6 +12,7 @@ import net.minecraft.world.level.GameType;
 import org.mateof24.conditionalvideos.ConditionalVideos;
 import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
+import org.mateof24.conditionalvideos.video.path.VideoSourceResolver;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -87,16 +88,6 @@ public final class ConfigSyncNetworking {
             });
 
         }
-
-        NetworkManager.registerReceiver(NetworkManager.c2s(), CLIENT_VIDEO_REQUEST_PACKET, (buffer, context) -> {
-            String configuredPath = buffer.readUtf();
-            context.queue(() -> {
-                if (!(context.getPlayer() instanceof ServerPlayer player)) {
-                    return;
-                }
-                sendVideoFile(player, configuredPath);
-            });
-        });
 
         NetworkManager.registerReceiver(NetworkManager.c2s(), CLIENT_VIDEO_REQUEST_PACKET, (buffer, context) -> {
             String configuredPath = buffer.readUtf();
@@ -207,21 +198,36 @@ public final class ConfigSyncNetworking {
 
     private static List<VideoManifestEntry> collectVideoEntries(ConditionalVideosConfig config, Path serverRoot) {
         List<VideoManifestEntry> entries = new ArrayList<>();
-        addVideoEntry(entries, "join", config.firstJoin().video(), serverRoot);
-        addVideoEntry(entries, "death", config.playerDeath().video(), serverRoot);
-        config.entityKilled().forEach((key, value) -> addVideoEntry(entries, "kill_entity", value.video(), serverRoot));
-        config.deathByEntity().forEach((key, value) -> addVideoEntry(entries, "death_by_entity", value.video(), serverRoot));
-        config.advancementCompleted().forEach((key, value) -> addVideoEntry(entries, "advancement", value.video(), serverRoot));
-        config.dimensionChanged().forEach((key, value) -> addVideoEntry(entries, "dimension", value.video(), serverRoot));
+        addPlaylistEntries(entries, "join", config.firstJoin(), serverRoot);
+        addPlaylistEntries(entries, "death", config.playerDeath(), serverRoot);
+        config.entityKilled().forEach((key, value) -> addPlaylistEntries(entries, "kill_entity", value, serverRoot));
+        config.deathByEntity().forEach((key, value) -> addPlaylistEntries(entries, "death_by_entity", value, serverRoot));
+        config.advancementCompleted().forEach((key, value) -> addPlaylistEntries(entries, "advancement", value, serverRoot));
+        config.dimensionChanged().forEach((key, value) -> addPlaylistEntries(entries, "dimension", value, serverRoot));
         return entries;
+    }
+
+    private static void addPlaylistEntries(List<VideoManifestEntry> entries, String conditionType,
+                                           ConditionalVideosConfig.ConditionConfig conditionConfig, Path root) {
+        if (conditionConfig == null) {
+            return;
+        }
+        for (ConditionalVideosConfig.VideoEntry entry : conditionConfig.resolvedPlaylist()) {
+            addVideoEntry(entries, conditionType, entry.source(), root);
+        }
     }
 
     private static void addVideoEntry(List<VideoManifestEntry> entries, String conditionType, String configuredPath, Path root) {
         if (configuredPath == null || configuredPath.isBlank()) {
             return;
         }
+        if (VideoSourceResolver.looksLikeUrl(configuredPath)) {
+            ConditionalVideos.LOGGER.debug("Skipping {} URL entry '{}' from manifest; clients will resolve it directly.", conditionType, configuredPath);
+            return;
+        }
         Path resolved = resolveConfigPath(root, configuredPath);
         if (resolved == null || !Files.isRegularFile(resolved)) {
+            ConditionalVideos.LOGGER.warn("Server config references {} video '{}' but the file is missing or invalid on the server filesystem. Clients will not receive it.", conditionType, configuredPath);
             return;
         }
         try {
@@ -263,6 +269,8 @@ public final class ConfigSyncNetworking {
         Path baseDir = gameDir.resolve("config").resolve("conditionalvideos").resolve(serverId);
 
         for (VideoManifestEntry entry : manifest) {
+            ActiveConfigResolver.addManifestedVideoPath(entry.configuredPath());
+
             Path destination = buildClientVideoPath(baseDir, entry.conditionType(), entry.configuredPath(), entry.extension());
             try {
                 Files.createDirectories(destination.getParent());

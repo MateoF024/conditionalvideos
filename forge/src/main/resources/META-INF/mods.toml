@@ -4,7 +4,7 @@ license = "All Rights Reserved"
 
 [[mods]]
 modId = "conditionalvideos"
-version = "1.0.1"
+version = "${version}"
 displayName = "Conditional Videos"
 logoFile="icon.png"
 authors = "MateoF24"
@@ -36,6 +36,20 @@ side = "BOTH"
 [[dependencies.conditionalvideos]]
 modId = "watermedia"
 mandatory = true
-versionRange = "[2.1.37,)"
+versionRange = "[3.0.0-alpha,4.0.0)"
+ordering = "AFTER"
+side = "CLIENT"
+
+[[dependencies.conditionalvideos]]
+modId = "wm_binaries"
+mandatory = true
+versionRange = "[3.0.0-alpha,4.0.0)"
+ordering = "AFTER"
+side = "CLIENT"
+
+[[dependencies.conditionalvideos]]
+modId = "watermedia_youtube_extension"
+mandatory = false
+versionRange = "[3.0.0-alpha,4.0.0)"
 ordering = "AFTER"
 side = "CLIENT"

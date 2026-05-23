@@ -7,113 +7,581 @@ import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.Tesselator;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import net.minecraft.client.renderer.GameRenderer;
+import org.lwjgl.opengl.GL11;
 import org.mateof24.conditionalvideos.ConditionalVideos;
+import org.watermedia.api.media.MRL;
+import org.watermedia.api.media.MediaAPI;
+import org.watermedia.api.media.engines.ALEngine;
+import org.watermedia.api.media.engines.GFXEngine;
+import org.watermedia.api.media.engines.GLEngine;
+import org.watermedia.api.media.engines.SFXEngine;
+import org.watermedia.api.media.players.MediaPlayer;
 
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Method;
 import java.net.URI;
-import java.nio.file.Path;
+import java.util.Set;
+import java.util.concurrent.Executor;
 
 public final class WaterMediaVideoBackend {
     private static final float DEFAULT_VIDEO_ASPECT_RATIO = 16.0F / 9.0F;
+    private static final int MRL_LOAD_TIMEOUT_TICKS = 20 * 60;
+    private static final int MRL_ERROR_GRACE_TICKS = 20 * 30;
+    private static final long HOLD_AT_ZERO_THRESHOLD_MS = 100L;
 
-    private final Path videoPath;
+    private final URI source;
+    private final float configuredVolume;
+    private float volumeMultiplier = 1f;
+    private boolean startPaused;
+    private boolean resumeOnReady;
+    private boolean repeatRequested;
+    private boolean holdAtZero;
 
-    private Object player;
-    private Method textureMethod;
-    private Method releaseMethod;
-    private Method videoWidthMethod;
-    private Method videoHeightMethod;
-    private Method endedMethod;
-    private Method playingMethod;
-    private int finishedChecks;
+    private MRL mrl;
+    private MediaPlayer player;
+    private GFXEngine gfx;
+    private SFXEngine sfx;
+    private MRL.Quality desiredQuality = MRL.Quality.HIGHEST;
+
     private boolean renderedAnyFrame;
+    private boolean closed;
+    private boolean errored;
+    private boolean playerStarted;
+    private int mrlWaitTicks;
+    private int mrlErrorTicks;
+    private int appliedVolumeIntCache = Integer.MIN_VALUE;
 
+    public WaterMediaVideoBackend(URI source, float volume) {
+        this.source = source;
+        this.configuredVolume = Math.max(0f, Math.min(1f, volume));
+    }
 
-    public WaterMediaVideoBackend(Path videoPath) {
-        this.videoPath = videoPath;
+    public boolean hasRenderedAnyFrame() {
+        return renderedAnyFrame;
+    }
+
+    public boolean isReadyToRender() {
+        if (player == null || closed) {
+            return false;
+        }
+        try {
+            if (player.texture() <= 0) {
+                return false;
+            }
+            MediaPlayer.Status status = player.status();
+            return status == MediaPlayer.Status.PLAYING
+                    || status == MediaPlayer.Status.PAUSED
+                    || status == MediaPlayer.Status.BUFFERING;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    public boolean hasTextureValid() {
+        if (closed) {
+            return false;
+        }
+        try {
+            if (player != null && player.texture() > 0) {
+                return true;
+            }
+            if (gfx != null && gfx.texture() > 0) {
+                return true;
+            }
+        } catch (Throwable ignored) {
+        }
+        return false;
+    }
+
+    public URI source() {
+        return source;
+    }
+
+    public boolean hasError() {
+        return errored;
+    }
+
+    public void setStartPaused(boolean value) {
+        this.startPaused = value;
+        this.holdAtZero = value;
+    }
+
+    public void setRepeat(boolean value) {
+        this.repeatRequested = value;
+        applyRepeatIfPossible();
+    }
+
+    private void applyRepeatIfPossible() {
+        if (player == null || closed) {
+            return;
+        }
+        try {
+            player.repeat(repeatRequested);
+        } catch (Throwable t) {
+            ConditionalVideos.LOGGER.debug("player.repeat({}) failed for '{}': {}", repeatRequested, source, t.toString());
+        }
+    }
+
+    public void resumePlayback() {
+        if (closed) {
+            return;
+        }
+        holdAtZero = false;
+        if (player == null) {
+            resumeOnReady = true;
+            return;
+        }
+        boolean needsSeek = true;
+        try {
+            long ms = player.time();
+            if (ms >= 0L && ms < 100L) {
+                needsSeek = false;
+            }
+        } catch (Throwable ignored) {
+        }
+        if (needsSeek) {
+            try {
+                if (player.canSeek()) {
+                    player.seek(0L);
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        try {
+            player.resume();
+        } catch (Throwable t) {
+            try {
+                player.start();
+            } catch (Throwable t2) {
+                ConditionalVideos.LOGGER.debug("resume()/start() failed for '{}': {}", source, t2.toString());
+            }
+        }
+    }
+
+    public boolean seekToStart() {
+        if (player == null || closed) {
+            return false;
+        }
+        try {
+            if (!player.canSeek()) {
+                return false;
+            }
+            return player.seek(0L);
+        } catch (Throwable t) {
+            ConditionalVideos.LOGGER.debug("seek(0) failed for '{}': {}", source, t.toString());
+            return false;
+        }
     }
 
     public void init() {
         try {
-            Class<?> playerApiClass = Class.forName("org.watermedia.api.player.PlayerAPI");
-            Method isReadyMethod = playerApiClass.getMethod("isReady");
-            boolean ready = (boolean) isReadyMethod.invoke(null);
-            if (!ready) {
-                ConditionalVideos.LOGGER.warn("WATERMeDIA PlayerAPI is not ready (VLC not initialized/found). Video playback skipped.");
+            Thread renderThread = Thread.currentThread();
+            Executor renderExecutor = (Runnable r) -> RenderSystem.recordRenderCall(r::run);
+            gfx = new GLEngine.Builder(renderThread, renderExecutor)
+                    .setGenTexture(() -> GL11.glGenTextures())
+                    .setBindTexture(GL11::glBindTexture)
+                    .setTexParameter(GL11::glTexParameteri)
+                    .setPixelStore(GL11::glPixelStorei)
+                    .setDelTexture((int t) -> GL11.glDeleteTextures(t))
+                    .build();
+            sfx = ALEngine.buildDefault();
+        } catch (Throwable throwable) {
+            ConditionalVideos.LOGGER.warn("Failed to initialize WATERMeDIA v3 engines for '{}': {}", source, throwable.toString());
+            errored = true;
+            cleanup();
+            return;
+        }
+
+        tryAcquireMrl();
+    }
+
+    private void tryAcquireMrl() {
+        if (mrl != null || closed || errored) {
+            return;
+        }
+        try {
+            mrl = MediaAPI.getMRL(source.toString());
+            if (mrl != null && mrl.expired()) {
+                try {
+                    mrl.reload();
+                } catch (Throwable t) {
+                    ConditionalVideos.LOGGER.debug("MRL.reload() failed for '{}': {}", source, t.toString());
+                }
+            }
+            if (mrl != null) {
+                ConditionalVideos.LOGGER.info("Requested MRL load from WATERMeDIA v3: {}", source);
+            }
+        } catch (Throwable throwable) {
+            ConditionalVideos.LOGGER.debug("MediaAPI.getMRL() not ready yet for '{}': {}", source, throwable.toString());
+        }
+    }
+
+    public void tick() {
+        if (closed) {
+            return;
+        }
+        if (player == null) {
+            tickPreStart();
+            return;
+        }
+        reinforcePlayerSettings();
+        enforceHoldAtZero();
+    }
+
+    private void reinforcePlayerSettings() {
+        if (!playerStarted || player == null || closed) {
+            return;
+        }
+        try {
+            MRL.Quality current = player.quality();
+            if (current != null && current != MRL.Quality.UNKNOWN
+                    && desiredQuality != null && desiredQuality != MRL.Quality.UNKNOWN
+                    && current.threshold < desiredQuality.threshold) {
+                player.quality(desiredQuality);
+            }
+        } catch (Throwable ignored) {
+        }
+        if (repeatRequested) {
+            try {
+                if (!player.repeat()) {
+                    player.repeat(true);
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    private void enforceHoldAtZero() {
+        if (!holdAtZero || !playerStarted || player == null || closed) {
+            return;
+        }
+        try {
+            MediaPlayer.Status status = player.status();
+            if (status != MediaPlayer.Status.PLAYING) {
                 return;
             }
+            try { player.pause(); } catch (Throwable ignored) { }
+            try {
+                if (player.time() > HOLD_AT_ZERO_THRESHOLD_MS && player.canSeek()) {
+                    player.seek(0L);
+                }
+            } catch (Throwable ignored) {
+            }
+        } catch (Throwable ignored) {
+        }
+    }
 
-            Class<?> playerClass = Class.forName("org.watermedia.api.player.videolan.VideoPlayer");
-            Constructor<?> constructor = playerClass.getConstructor(java.util.concurrent.Executor.class);
-            player = constructor.newInstance(net.minecraft.client.Minecraft.getInstance());
+    private void tickPreStart() {
+        if (playerStarted) {
+            return;
+        }
+        if (mrl == null) {
+            mrlWaitTicks++;
+            if (mrlWaitTicks >= MRL_LOAD_TIMEOUT_TICKS) {
+                ConditionalVideos.LOGGER.warn("MediaAPI never produced an MRL for '{}' after {}s.", source, MRL_LOAD_TIMEOUT_TICKS / 20);
+                errored = true;
+                cleanup();
+                return;
+            }
+            tryAcquireMrl();
+            return;
+        }
+        boolean busy;
+        try {
+            busy = mrl.busy();
+        } catch (Throwable ignored) {
+            busy = false;
+        }
+        if (mrl.error()) {
+            if (busy) {
+                mrlErrorTicks = 0;
+                mrlWaitTicks++;
+                if (mrlWaitTicks >= MRL_LOAD_TIMEOUT_TICKS) {
+                    ConditionalVideos.LOGGER.warn("Timed out waiting for busy MRL '{}' to settle.", source);
+                    errored = true;
+                    cleanup();
+                }
+                return;
+            }
+            mrlErrorTicks++;
+            if (mrlErrorTicks < MRL_ERROR_GRACE_TICKS) {
+                if (mrlErrorTicks % 20 == 0) {
+                    try {
+                        MRL.invalidate(source);
+                    } catch (Throwable ignored) {
+                    }
+                    mrl = null;
+                    tryAcquireMrl();
+                }
+                return;
+            }
+            ConditionalVideos.LOGGER.warn("MRL persistently failed to load for '{}' after {}s.", source, MRL_ERROR_GRACE_TICKS / 20);
+            errored = true;
+            cleanup();
+            return;
+        }
+        mrlErrorTicks = 0;
+        if (!mrl.ready() || busy) {
+            mrlWaitTicks++;
+            if (mrlWaitTicks >= MRL_LOAD_TIMEOUT_TICKS) {
+                ConditionalVideos.LOGGER.warn("Timed out waiting for MRL '{}' to resolve.", source);
+                errored = true;
+                cleanup();
+            }
+            return;
+        }
+        try {
+            MRL.Source preferred = mrl.videoSource();
+            if (preferred == null) {
+                preferred = mrl.imageSource();
+            }
+            if (preferred == null) {
+                ConditionalVideos.LOGGER.warn("MRL '{}' resolved but reported no playable source.", source);
+                errored = true;
+                cleanup();
+                return;
+            }
+            player = mrl.createPlayer(gfx, sfx);
+            desiredQuality = pickBestQuality(preferred);
+            applyQualityIfPossible();
+            applyVolumeIfPossible();
+            applyRepeatIfPossible();
+            boolean willStartPaused = startPaused && !resumeOnReady;
+            if (willStartPaused) {
+                try {
+                    player.startPaused();
+                } catch (Throwable t) {
+                    ConditionalVideos.LOGGER.debug("startPaused() failed for '{}', falling back to start()+pause(): {}", source, t.toString());
+                    try {
+                        player.start();
+                        player.pause();
+                    } catch (Throwable t2) {
+                        ConditionalVideos.LOGGER.debug("start()+pause() fallback failed for '{}': {}", source, t2.toString());
+                    }
+                }
+                try {
+                    if (player.canSeek()) {
+                        player.seek(0L);
+                    }
+                } catch (Throwable ignored) {
+                }
+            } else {
+                holdAtZero = false;
+                player.start();
+            }
+            playerStarted = true;
+            resumeOnReady = false;
+            applyRepeatIfPossible();
+            ConditionalVideos.LOGGER.info("Started WATERMeDIA v3 player for '{}' (quality={}, startPaused={}, repeat={}, holdAtZero={}).",
+                    source, player.quality(), willStartPaused, repeatRequested, holdAtZero);
+        } catch (Throwable throwable) {
+            ConditionalVideos.LOGGER.warn("Failed to start WATERMeDIA v3 player for '{}': {}", source, throwable.toString());
+            mrlErrorTicks++;
+            if (mrlErrorTicks >= MRL_ERROR_GRACE_TICKS) {
+                errored = true;
+                cleanup();
+            } else {
+                player = null;
+            }
+        }
+    }
 
-            Method startMethod = playerClass.getMethod("start", URI.class);
-            textureMethod = playerClass.getMethod("texture");
-            releaseMethod = playerClass.getMethod("release");
-            videoWidthMethod = resolveDimensionMethod(playerClass,
-                    "videoWidth", "getVideoWidth", "width", "getWidth");
-            videoHeightMethod = resolveDimensionMethod(playerClass,
-                    "videoHeight", "getVideoHeight", "height", "getHeight");
-            endedMethod = resolveBooleanMethod(playerClass, "isEnded", "ended", "isStopped", "stopped");
-            playingMethod = resolveBooleanMethod(playerClass, "isPlaying", "playing");
+    private MRL.Quality pickBestQuality(MRL.Source preferred) {
+        try {
+            Set<MRL.Quality> available = preferred.availableQualities();
+            if (available != null && !available.isEmpty()) {
+                MRL.Quality picked = MRL.Quality.closest(available, MRL.Quality.HIGHEST);
+                if (picked != null && picked != MRL.Quality.UNKNOWN) {
+                    return picked;
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return MRL.Quality.HIGHEST;
+    }
 
-            startMethod.invoke(player, videoPath.toUri());
-            finishedChecks = 0;
-            renderedAnyFrame = false;
-            ConditionalVideos.LOGGER.info("Playing first-join video with WATERMeDIA: {}", videoPath);
-        } catch (Exception exception) {
-            ConditionalVideos.LOGGER.warn("Failed to initialize WATERMeDIA playback backend: {}", exception.getMessage());
-            player = null;
-            textureMethod = null;
-            releaseMethod = null;
-            videoWidthMethod = null;
-            videoHeightMethod = null;
-            endedMethod = null;
-            playingMethod = null;
-            finishedChecks = 0;
-            renderedAnyFrame = false;
+    private void applyQualityIfPossible() {
+        if (player == null || closed || desiredQuality == null) {
+            return;
+        }
+        try {
+            player.quality(desiredQuality);
+        } catch (Throwable t) {
+            ConditionalVideos.LOGGER.debug("player.quality({}) failed for '{}': {}", desiredQuality, source, t.toString());
+        }
+    }
+
+    public void setVolumeMultiplier(float multiplier) {
+        float clamped = Math.max(0f, Math.min(1f, multiplier));
+        if (Math.abs(clamped - volumeMultiplier) < 0.005f) {
+            return;
+        }
+        volumeMultiplier = clamped;
+        applyVolumeIfPossible();
+    }
+
+    private void applyVolumeIfPossible() {
+        if (player == null) {
+            return;
+        }
+        int target = Math.round(configuredVolume * volumeMultiplier * 100f);
+        if (target == appliedVolumeIntCache) {
+            return;
+        }
+        try {
+            player.volume(target);
+            appliedVolumeIntCache = target;
+        } catch (Throwable ignored) {
         }
     }
 
     public void render(int width, int height) {
-        int textureId = getTextureId();
-        if (textureId <= 0) {
+        render(width, height, 1f);
+    }
+
+    public void render(int width, int height, float alpha) {
+        long texId = 0L;
+        if (player != null) {
+            try {
+                texId = player.texture();
+            } catch (Throwable ignored) {
+                texId = 0L;
+            }
+        }
+        if (texId <= 0 && gfx != null) {
+            try {
+                texId = gfx.texture();
+            } catch (Throwable ignored) {
+                texId = 0L;
+            }
+        }
+        if (texId <= 0) {
             return;
         }
         renderedAnyFrame = true;
 
-        RenderBounds renderBounds = calculateRenderBounds(width, height);
+        RenderBounds bounds = calculateRenderBounds(width, height);
+        float clampedAlpha = Math.max(0f, Math.min(1f, alpha));
 
         RenderSystem.enableBlend();
         RenderSystem.defaultBlendFunc();
         RenderSystem.setShader(GameRenderer::getPositionTexShader);
-        RenderSystem._setShaderTexture(0, textureId);
+        RenderSystem.setShaderColor(1f, 1f, 1f, clampedAlpha);
+        RenderSystem._setShaderTexture(0, (int) texId);
 
         Tesselator tesselator = Tesselator.getInstance();
         BufferBuilder builder = tesselator.getBuilder();
         builder.begin(VertexFormat.Mode.QUADS, DefaultVertexFormat.POSITION_TEX);
-        builder.vertex(renderBounds.left(), renderBounds.bottom(), 0).uv(0f, 1f).endVertex();
-        builder.vertex(renderBounds.right(), renderBounds.bottom(), 0).uv(1f, 1f).endVertex();
-        builder.vertex(renderBounds.right(), renderBounds.top(), 0).uv(1f, 0f).endVertex();
-        builder.vertex(renderBounds.left(), renderBounds.top(), 0).uv(0f, 0f).endVertex();
+        builder.vertex(bounds.left, bounds.bottom, 0).uv(0f, 1f).endVertex();
+        builder.vertex(bounds.right, bounds.bottom, 0).uv(1f, 1f).endVertex();
+        builder.vertex(bounds.right, bounds.top, 0).uv(1f, 0f).endVertex();
+        builder.vertex(bounds.left, bounds.top, 0).uv(0f, 0f).endVertex();
         BufferUploader.drawWithShader(builder.end());
+
+        RenderSystem.setShaderColor(1f, 1f, 1f, 1f);
+    }
+
+    public void close() {
+        cleanup();
+    }
+
+    private void cleanup() {
+        closed = true;
+        if (player != null) {
+            try {
+                player.mute(true);
+            } catch (Throwable ignored) {
+            }
+            try {
+                player.stop();
+            } catch (Throwable ignored) {
+            }
+            try {
+                player.release();
+            } catch (Throwable t) {
+                ConditionalVideos.LOGGER.debug("Failed to release player for '{}': {}", source, t.toString());
+            }
+            player = null;
+        }
+        if (gfx != null) {
+            try {
+                gfx.release();
+            } catch (Throwable t) {
+                ConditionalVideos.LOGGER.debug("Failed to release GFX engine for '{}': {}", source, t.toString());
+            }
+            gfx = null;
+        }
+        sfx = null;
+        if (mrl != null) {
+            if (errored) {
+                try {
+                    MRL.invalidate(source);
+                } catch (Throwable ignored) {
+                }
+            }
+            mrl = null;
+        }
+    }
+
+    public boolean hasFinished() {
+        if (closed) {
+            return true;
+        }
+        if (player == null) {
+            return false;
+        }
+        try {
+            MediaPlayer.Status status = player.status();
+            return status == MediaPlayer.Status.ERROR
+                    || status == MediaPlayer.Status.ENDED
+                    || status == MediaPlayer.Status.STOPPED;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    public double positionSeconds() {
+        if (player == null || closed) {
+            return -1d;
+        }
+        try {
+            long ms = player.time();
+            if (ms < 0L) {
+                return -1d;
+            }
+            return ms / 1000d;
+        } catch (Throwable t) {
+            return -1d;
+        }
+    }
+
+    public double durationSeconds() {
+        if (player == null || closed) {
+            return -1d;
+        }
+        try {
+            long ms = player.duration();
+            if (ms <= 0L) {
+                return -1d;
+            }
+            return ms / 1000d;
+        } catch (Throwable t) {
+            return -1d;
+        }
     }
 
     private RenderBounds calculateRenderBounds(int screenWidth, int screenHeight) {
-        float videoAspectRatio = resolveVideoAspectRatio();
-        float screenAspectRatio = (float) screenWidth / (float) screenHeight;
+        float videoAspect = resolveVideoAspectRatio();
+        float screenAspect = (float) screenWidth / (float) screenHeight;
 
         int drawWidth = screenWidth;
         int drawHeight = screenHeight;
         int left = 0;
         int top = 0;
 
-        if (screenAspectRatio > videoAspectRatio) {
-            drawWidth = Math.round(screenHeight * videoAspectRatio);
+        if (screenAspect > videoAspect) {
+            drawWidth = Math.round(screenHeight * videoAspect);
             left = (screenWidth - drawWidth) / 2;
-        } else if (screenAspectRatio < videoAspectRatio) {
-            drawHeight = Math.round(screenWidth / videoAspectRatio);
+        } else if (screenAspect < videoAspect) {
+            drawHeight = Math.round(screenWidth / videoAspect);
             top = (screenHeight - drawHeight) / 2;
         }
 
@@ -121,124 +589,16 @@ public final class WaterMediaVideoBackend {
     }
 
     private float resolveVideoAspectRatio() {
-        int videoWidth = invokeDimensionMethod(videoWidthMethod);
-        int videoHeight = invokeDimensionMethod(videoHeightMethod);
-        if (videoWidth > 0 && videoHeight > 0) {
-            return (float) videoWidth / (float) videoHeight;
+        if (player == null) {
+            return DEFAULT_VIDEO_ASPECT_RATIO;
+        }
+        int w = player.width();
+        int h = player.height();
+        if (w > 0 && h > 0) {
+            return (float) w / (float) h;
         }
         return DEFAULT_VIDEO_ASPECT_RATIO;
     }
-
-    private int invokeDimensionMethod(Method method) {
-        if (player == null || method == null) {
-            return -1;
-        }
-
-        try {
-            Object result = method.invoke(player);
-            if (result instanceof Number number) {
-                return number.intValue();
-            }
-        } catch (Exception ignored) {
-            return -1;
-        }
-
-        return -1;
-    }
-
-    private Method resolveDimensionMethod(Class<?> playerClass, String... methodNames) {
-        for (String methodName : methodNames) {
-            try {
-                Method method = playerClass.getMethod(methodName);
-                if (Number.class.isAssignableFrom(method.getReturnType()) || method.getReturnType() == int.class) {
-                    return method;
-                }
-            } catch (NoSuchMethodException ignored) {
-                // Try next candidate.
-            }
-        }
-
-        return null;
-    }
-
-    private Method resolveBooleanMethod(Class<?> playerClass, String... methodNames) {
-        for (String methodName : methodNames) {
-            try {
-                Method method = playerClass.getMethod(methodName);
-                if (method.getReturnType() == boolean.class || method.getReturnType() == Boolean.class) {
-                    return method;
-                }
-            } catch (NoSuchMethodException ignored) {
-                // Try next candidate.
-            }
-        }
-        return null;
-    }
-
-    private int getTextureId() {
-        if (player == null || textureMethod == null) {
-            return -1;
-        }
-
-        try {
-            return (int) textureMethod.invoke(player);
-        } catch (Exception exception) {
-            ConditionalVideos.LOGGER.warn("Failed to fetch WATERMeDIA texture: {}", exception.getMessage());
-            return -1;
-        }
-    }
-
-    public void close() {
-        if (player == null || releaseMethod == null) {
-            return;
-        }
-
-        try {
-            releaseMethod.invoke(player);
-        } catch (Exception exception) {
-            ConditionalVideos.LOGGER.warn("Failed to release WATERMeDIA player: {}", exception.getMessage());
-        }
-    }
-
-    public boolean hasFinished() {
-        finishedChecks++;
-
-        if (player == null) {
-            return true;
-        }
-
-        try {
-            if (endedMethod != null) {
-                Object ended = endedMethod.invoke(player);
-                if (ended instanceof Boolean endedBool && endedBool) {
-                    return true;
-                }
-            }
-
-            if (playingMethod != null) {
-                Object playing = playingMethod.invoke(player);
-                if (playing instanceof Boolean playingBool) {
-                    if (playingBool) {
-                        return false;
-                    }
-
-                    // Avoid closing too early while VLC/WATERMeDIA is still warming up.
-                    if (renderedAnyFrame && finishedChecks > 40) {
-                        return true;
-                    }
-
-                    // If nothing ever rendered and playback stayed false for a long period,
-                    // treat it as finished/failed to avoid a stuck screen.
-                    return !renderedAnyFrame && finishedChecks > 200;
-                }
-            }
-        } catch (Exception ignored) {
-            return false;
-        }
-
-        return false;
-    }
-
 
     private record RenderBounds(int left, int top, int right, int bottom) {
     }

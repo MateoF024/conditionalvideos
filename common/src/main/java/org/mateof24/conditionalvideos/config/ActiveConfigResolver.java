@@ -5,7 +5,9 @@ import net.minecraft.client.multiplayer.ServerData;
 
 import java.nio.file.Path;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 public final class ActiveConfigResolver {
     public enum RemoteConfigState {
@@ -17,6 +19,7 @@ public final class ActiveConfigResolver {
     private static ConditionalVideosConfig remoteConfig;
     private static RemoteConfigState remoteConfigState = RemoteConfigState.UNKNOWN;
     private static final Map<String, Path> remoteVideoPaths = new HashMap<>();
+    private static final Set<String> manifestedRemoteVideoPaths = new HashSet<>();
 
     private ActiveConfigResolver() {
     }
@@ -50,6 +53,7 @@ public final class ActiveConfigResolver {
         remoteConfig = null;
         remoteConfigState = RemoteConfigState.UNKNOWN;
         remoteVideoPaths.clear();
+        manifestedRemoteVideoPaths.clear();
     }
 
     public static RemoteConfigState remoteConfigState() {
@@ -68,6 +72,14 @@ public final class ActiveConfigResolver {
 
     public static Path resolveRemoteVideoPath(String configuredPath) {
         return remoteVideoPaths.get(configuredPath);
+    }
+
+    public static void addManifestedVideoPath(String configuredPath) {
+        manifestedRemoteVideoPaths.add(configuredPath);
+    }
+
+    public static boolean isVideoPathInManifest(String configuredPath) {
+        return manifestedRemoteVideoPaths.contains(configuredPath);
     }
 
     public static String resolveCurrentServerId(Minecraft minecraft) {
