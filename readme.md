@@ -42,8 +42,8 @@ It is designed for curated gameplay experiences such as servers, story maps, que
 - **Dedicated Server Config File:** `config/conditionalvideos-server.json`
 - **Required Fabric API** (Fabric only)
 - **Required** [**WATERMeDIA: Multimedia API v3**](https://modrinth.com/mod/watermedia) (client side)
-- **Required** [**WATERMeDIA: Native Binaries**](https://modrinth.com/mod/wm_binaries) (client side, ships with WATERMeDIA)
-- **Optional** [**WATERMeDIA: YouTube Extension**](https://modrinth.com/mod/watermedia_youtube_extension) — required only if your config uses YouTube URLs
+- **Required** [**WATERMeDIA: Native Binaries**](https://modrinth.com/mod/watermedia-binaries) (client side, ships with WATERMeDIA)
+- **Optional** [**WATERMeDIA: YouTube Extension**](https://modrinth.com/mod/watermedia-yt-plugin) — required only if your config uses YouTube URLs
 
 ---
 
