@@ -1,0 +1,45 @@
+modLoader = "javafml"
+loaderVersion = "[2,)"
+issueTrackerURL = "https://github.com/MateoF024/conditionalvideos/issues"
+license = "All Rights Reserved"
+
+[[mods]]
+modId = "conditionalvideos"
+version = "${version}"
+displayName = "Conditional Videos"
+authors = "MateoF24"
+description = '''
+Client-side mod that plays configurable videos for gameplay events such as first join, deaths, kills, advancements, and dimension changes.
+'''
+logoFile = "icon.png"
+
+[[dependencies.conditionalvideos]]
+modId = "neoforge"
+type = "required"
+versionRange = "[21,)"
+ordering = "NONE"
+side = "BOTH"
+
+[[dependencies.conditionalvideos]]
+modId = "minecraft"
+type = "required"
+versionRange = "[1.21.1,)"
+ordering = "NONE"
+side = "BOTH"
+
+[[dependencies.conditionalvideos]]
+modId = "architectury"
+type = "required"
+versionRange = "[13.0.8,)"
+ordering = "AFTER"
+side = "BOTH"
+
+[[dependencies.conditionalvideos]]
+modId = "watermedia"
+type = "optional"
+versionRange = "[2.1.37,)"
+ordering = "AFTER"
+side = "CLIENT"
+
+[[mixins]]
+config = "conditionalvideos.mixins.json"

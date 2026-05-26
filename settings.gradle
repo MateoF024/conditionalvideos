@@ -3,12 +3,30 @@ pluginManagement {
         maven { url "https://maven.fabricmc.net/" }
         maven { url "https://maven.architectury.dev/" }
         maven { url "https://files.minecraftforge.net/maven/" }
+        maven { url "https://maven.neoforged.net/releases/" }
         gradlePluginPortal()
     }
 }
 
 rootProject.name = 'conditionalvideos'
 
-include 'common'
-include 'fabric'
-include 'forge'
+def minecraftVer = gradle.startParameter.projectProperties.containsKey('minecraft_version')
+        ? gradle.startParameter.projectProperties.get('minecraft_version')
+        : new File(rootDir, 'gradle.properties').with { f ->
+    def props = new Properties()
+    f.withInputStream { props.load(it) }
+    props.getProperty('minecraft_version')
+}
+
+if (minecraftVer.startsWith("1.20")) {
+    include 'common'
+    include 'fabric'
+    include 'forge'
+} else if (minecraftVer.startsWith("1.21")) {
+    include 'common'
+    include 'fabric'
+    include 'neoforge'
+    project(':common').projectDir = file('v1.21.1/common')
+    project(':fabric').projectDir = file('v1.21.1/fabric')
+    project(':neoforge').projectDir = file('v1.21.1/neoforge')
+}

@@ -2,10 +2,16 @@
 
 <p align="center">
   <a href="https://fabricmc.net">
-    <img alt="Fabric version" src="https://img.shields.io/badge/Fabric-1.20.1-dbd0b4?style=for-the-badge" />
+    <img alt="Fabric 1.20.1" src="https://img.shields.io/badge/Fabric-1.20.1-dbd0b4?style=for-the-badge" />
   </a>
   <a href="https://minecraftforge.net">
-    <img alt="Forge version" src="https://img.shields.io/badge/Forge-1.20.1-e04e14?style=for-the-badge" />
+    <img alt="Forge 1.20.1" src="https://img.shields.io/badge/Forge-1.20.1-e04e14?style=for-the-badge" />
+  </a>
+  <a href="https://fabricmc.net">
+    <img alt="Fabric 1.21.1" src="https://img.shields.io/badge/Fabric-1.21.1-dbd0b4?style=for-the-badge" />
+  </a>
+  <a href="https://neoforged.net">
+    <img alt="NeoForge 1.21.1" src="https://img.shields.io/badge/NeoForge-1.21.1-f98010?style=for-the-badge" />
   </a>
   <a href="https://modrinth.com">
     <img alt="Environment" src="https://img.shields.io/badge/Env-Client%20%26%20Server-4a90d9?style=for-the-badge" />
@@ -35,9 +41,8 @@ It is designed for curated gameplay experiences such as servers, story maps, que
 
 ## 🧩 Compatibility & Requirements
 
-- **Minecraft Version:** 1.20.1
-- **Loaders:** Fabric, Forge
-- **Java:** 17+
+- **Minecraft 1.20.1:** Fabric, Forge — Java 17+
+- **Minecraft 1.21.1:** Fabric, NeoForge — Java 21+
 - **Client Config File:** `config/conditionalvideos.json`
 - **Dedicated Server Config File:** `config/conditionalvideos-server.json`
 - **Required Fabric API** (Fabric only)
