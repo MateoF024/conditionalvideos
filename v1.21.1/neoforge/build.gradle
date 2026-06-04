@@ -35,6 +35,10 @@ dependencies {
 
     common(project(path: ':common', configuration: 'namedElements')) { transitive false }
     shadowBundle project(path: ':common', configuration: 'transformProductionNeoForge')
+
+    modLocalRuntime files("${rootProject.projectDir}/libs/watermedia-${rootProject.watermedia_api_version}.jar")
+    modLocalRuntime files("${rootProject.projectDir}/libs/wm_binaries-${rootProject.watermedia_binaries_version}.jar")
+    modLocalRuntime files("${rootProject.projectDir}/libs/watermedia_youtube_extension-${rootProject.watermedia_youtube_extension_version}.jar")
 }
 
 processResources {

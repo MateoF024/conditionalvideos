@@ -9,6 +9,8 @@ import com.mojang.blaze3d.vertex.VertexFormat;
 import net.minecraft.client.renderer.GameRenderer;
 import org.lwjgl.opengl.GL11;
 import org.mateof24.conditionalvideos.ConditionalVideos;
+import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
+import org.watermedia.WaterMediaConfig;
 import org.watermedia.api.media.MRL;
 import org.watermedia.api.media.MediaAPI;
 import org.watermedia.api.media.engines.ALEngine;
@@ -16,6 +18,7 @@ import org.watermedia.api.media.engines.GFXEngine;
 import org.watermedia.api.media.engines.GLEngine;
 import org.watermedia.api.media.engines.SFXEngine;
 import org.watermedia.api.media.players.MediaPlayer;
+import org.watermedia.api.util.MediaQuality;
 
 import java.net.URI;
 import java.util.Set;
@@ -39,7 +42,8 @@ public final class WaterMediaVideoBackend {
     private MediaPlayer player;
     private GFXEngine gfx;
     private SFXEngine sfx;
-    private MRL.Quality desiredQuality = MRL.Quality.HIGHEST;
+    private MediaQuality desiredQuality = MediaQuality.HIGHEST;
+    private MediaQuality forcedQuality;
 
     private boolean renderedAnyFrame;
     private boolean closed;
@@ -99,6 +103,14 @@ public final class WaterMediaVideoBackend {
         return errored;
     }
 
+    public boolean isPlayerReady() {
+        return playerStarted && player != null && !closed && !errored;
+    }
+
+    public void setForcedQuality(MediaQuality quality) {
+        this.forcedQuality = quality;
+    }
+
     public void setStartPaused(boolean value) {
         this.startPaused = value;
         this.holdAtZero = value;
@@ -156,6 +168,28 @@ public final class WaterMediaVideoBackend {
         }
     }
 
+    public void pause() {
+        if (player == null || closed) {
+            return;
+        }
+        try {
+            player.pause();
+        } catch (Throwable t) {
+            ConditionalVideos.LOGGER.debug("pause() failed for '{}': {}", source, t.toString());
+        }
+    }
+
+    public void resume() {
+        if (player == null || closed) {
+            return;
+        }
+        try {
+            player.resume();
+        } catch (Throwable t) {
+            ConditionalVideos.LOGGER.debug("resume() failed for '{}': {}", source, t.toString());
+        }
+    }
+
     public boolean seekToStart() {
         if (player == null || closed) {
             return false;
@@ -172,6 +206,8 @@ public final class WaterMediaVideoBackend {
     }
 
     public void init() {
+        applyMatureContentPolicy();
+        quietenFfmpegNativeLogging();
         try {
             Thread renderThread = Thread.currentThread();
             Executor renderExecutor = (Runnable r) -> RenderSystem.recordRenderCall(r::run);
@@ -191,6 +227,34 @@ public final class WaterMediaVideoBackend {
         }
 
         tryAcquireMrl();
+    }
+
+    private void applyMatureContentPolicy() {
+        try {
+            WaterMediaConfig.media.platforms.allowMatureContent = !ActiveConfigResolver.effectiveBlockMatureContent();
+        } catch (Throwable t) {
+            ConditionalVideos.LOGGER.debug("Failed to apply mature-content policy to WaterMedia: {}", t.toString());
+        }
+    }
+
+    private static volatile boolean ffmpegLogLevelApplied;
+
+    private static void quietenFfmpegNativeLogging() {
+        if (ffmpegLogLevelApplied) {
+            return;
+        }
+        ffmpegLogLevelApplied = true;
+        // WaterMedia v3 streams through bundled bytedeco FFmpeg but never lowers its native
+        // log level, so HLS/HTTP/TLS demuxer chatter floods stdout at AV_LOG_INFO. Drop it to
+        // AV_LOG_ERROR (keeps real errors). Reflective so it degrades cleanly if FFMPEG is absent.
+        try {
+            Class<?> avutil = Class.forName("org.bytedeco.ffmpeg.global.avutil");
+            int errorLevel = avutil.getField("AV_LOG_ERROR").getInt(null);
+            avutil.getMethod("av_log_set_level", int.class).invoke(null, errorLevel);
+            ConditionalVideos.LOGGER.debug("Lowered FFmpeg native log level to AV_LOG_ERROR to silence stream demuxer chatter.");
+        } catch (Throwable t) {
+            ConditionalVideos.LOGGER.debug("Could not adjust FFmpeg native log level: {}", t.toString());
+        }
     }
 
     private void tryAcquireMrl() {
@@ -231,9 +295,13 @@ public final class WaterMediaVideoBackend {
             return;
         }
         try {
-            MRL.Quality current = player.quality();
-            if (current != null && current != MRL.Quality.UNKNOWN
-                    && desiredQuality != null && desiredQuality != MRL.Quality.UNKNOWN
+            MediaQuality current = player.quality();
+            if (forcedQuality != null) {
+                if (desiredQuality != null && current != desiredQuality) {
+                    player.quality(desiredQuality);
+                }
+            } else if (current != null && current != MediaQuality.UNKNOWN
+                    && desiredQuality != null && desiredQuality != MediaQuality.UNKNOWN
                     && current.threshold < desiredQuality.threshold) {
                 player.quality(desiredQuality);
             }
@@ -284,48 +352,48 @@ public final class WaterMediaVideoBackend {
             tryAcquireMrl();
             return;
         }
-        boolean busy;
-        try {
-            busy = mrl.busy();
-        } catch (Throwable ignored) {
-            busy = false;
-        }
-        if (mrl.error()) {
-            if (busy) {
-                mrlErrorTicks = 0;
-                mrlWaitTicks++;
-                if (mrlWaitTicks >= MRL_LOAD_TIMEOUT_TICKS) {
-                    ConditionalVideos.LOGGER.warn("Timed out waiting for busy MRL '{}' to settle.", source);
-                    errored = true;
-                    cleanup();
-                }
-                return;
-            }
+        if (mrl.hasError()) {
             mrlErrorTicks++;
             if (mrlErrorTicks < MRL_ERROR_GRACE_TICKS) {
                 if (mrlErrorTicks % 20 == 0) {
                     try {
-                        MRL.invalidate(source);
-                    } catch (Throwable ignored) {
+                        mrl.reload();
+                    } catch (Throwable t) {
+                        ConditionalVideos.LOGGER.debug("MRL.reload() failed for '{}': {}", source, t.toString());
                     }
-                    mrl = null;
-                    tryAcquireMrl();
                 }
                 return;
             }
-            ConditionalVideos.LOGGER.warn("MRL persistently failed to load for '{}' after {}s.", source, MRL_ERROR_GRACE_TICKS / 20);
+            Throwable cause = null;
+            try {
+                cause = mrl.exception();
+            } catch (Throwable ignored) {
+            }
+            ConditionalVideos.LOGGER.warn("MRL persistently failed to load for '{}' after {}s: {}", source, MRL_ERROR_GRACE_TICKS / 20, cause != null ? cause.toString() : "unknown");
             errored = true;
             cleanup();
             return;
         }
         mrlErrorTicks = 0;
-        if (!mrl.ready() || busy) {
+        if (!mrl.ready()) {
             mrlWaitTicks++;
             if (mrlWaitTicks >= MRL_LOAD_TIMEOUT_TICKS) {
                 ConditionalVideos.LOGGER.warn("Timed out waiting for MRL '{}' to resolve.", source);
                 errored = true;
                 cleanup();
             }
+            return;
+        }
+        boolean blocked;
+        try {
+            blocked = mrl.blocked();
+        } catch (Throwable ignored) {
+            blocked = false;
+        }
+        if (blocked) {
+            ConditionalVideos.LOGGER.warn("MRL '{}' is blocked by WaterMedia (restricted/mature content); skipping.", source);
+            errored = true;
+            cleanup();
             return;
         }
         try {
@@ -339,7 +407,7 @@ public final class WaterMediaVideoBackend {
                 cleanup();
                 return;
             }
-            player = mrl.createPlayer(gfx, sfx);
+            player = MediaAPI.createPlayer(mrl, () -> gfx, () -> sfx);
             desiredQuality = pickBestQuality(preferred);
             applyQualityIfPossible();
             applyVolumeIfPossible();
@@ -384,18 +452,19 @@ public final class WaterMediaVideoBackend {
         }
     }
 
-    private MRL.Quality pickBestQuality(MRL.Source preferred) {
+    private MediaQuality pickBestQuality(MRL.Source preferred) {
+        MediaQuality target = forcedQuality != null ? forcedQuality : MediaQuality.HIGHEST;
         try {
-            Set<MRL.Quality> available = preferred.availableQualities();
+            Set<MediaQuality> available = preferred.availableQualities();
             if (available != null && !available.isEmpty()) {
-                MRL.Quality picked = MRL.Quality.closest(available, MRL.Quality.HIGHEST);
-                if (picked != null && picked != MRL.Quality.UNKNOWN) {
+                MediaQuality picked = MediaQuality.closest(available, target);
+                if (picked != null && picked != MediaQuality.UNKNOWN) {
                     return picked;
                 }
             }
         } catch (Throwable ignored) {
         }
-        return MRL.Quality.HIGHEST;
+        return target;
     }
 
     private void applyQualityIfPossible() {
@@ -510,15 +579,7 @@ public final class WaterMediaVideoBackend {
             gfx = null;
         }
         sfx = null;
-        if (mrl != null) {
-            if (errored) {
-                try {
-                    MRL.invalidate(source);
-                } catch (Throwable ignored) {
-                }
-            }
-            mrl = null;
-        }
+        mrl = null;
     }
 
     public boolean hasFinished() {

@@ -8,7 +8,8 @@ import net.minecraft.network.chat.Component;
 // wait in MP) and VideoPlaybackScreen (backend init / MRL resolution / URL fetch) so the swap
 // between them is pixel-identical and the user never sees a frame of world peek-through.
 public final class VideoLoadingOverlay {
-    private static final Component LOADING_TEXT = Component.translatable("screen.conditionalvideos.loading");
+    private static final Component LOADING_TEXT_SINGLE = Component.translatable("screen.conditionalvideos.loading");
+    private static final Component LOADING_TEXT_MULTIPLE = Component.translatable("screen.conditionalvideos.loading.plural");
     private static final int SPINNER_RADIUS = 16;
     private static final int SPINNER_DOT_HALF_SIZE = 2;
     private static final int SPINNER_DOT_COUNT = 8;
@@ -21,10 +22,10 @@ public final class VideoLoadingOverlay {
     private VideoLoadingOverlay() {
     }
 
-    public static void render(GuiGraphics guiGraphics, Font font, int width, int height) {
+    public static void render(GuiGraphics guiGraphics, Font font, int width, int height, int videoCount) {
         guiGraphics.fill(0, 0, width, height, 0xFF000000);
         renderSpinner(guiGraphics, width, height);
-        renderLoadingText(guiGraphics, font, width, height);
+        renderLoadingText(guiGraphics, font, width, height, videoCount);
     }
 
     private static void renderSpinner(GuiGraphics guiGraphics, int width, int height) {
@@ -48,9 +49,10 @@ public final class VideoLoadingOverlay {
         }
     }
 
-    private static void renderLoadingText(GuiGraphics guiGraphics, Font font, int width, int height) {
+    private static void renderLoadingText(GuiGraphics guiGraphics, Font font, int width, int height, int videoCount) {
         int centerX = width / 2;
         int textY = height / 2 + LOADING_TEXT_OFFSET_Y;
-        guiGraphics.drawCenteredString(font, LOADING_TEXT, centerX, textY, 0xFFFFFFFF);
+        Component text = videoCount > 1 ? LOADING_TEXT_MULTIPLE : LOADING_TEXT_SINGLE;
+        guiGraphics.drawCenteredString(font, text, centerX, textY, 0xFFFFFFFF);
     }
 }

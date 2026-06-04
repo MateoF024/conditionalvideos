@@ -5,6 +5,7 @@ import org.mateof24.conditionalvideos.ConditionalVideos;
 import org.mateof24.conditionalvideos.condition.join.SessionKeyResolver;
 import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
+import org.mateof24.conditionalvideos.config.MatureContentFilter;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig.VideoEntry;
 import org.mateof24.conditionalvideos.video.VideoLoadingScreen;
 import org.mateof24.conditionalvideos.video.VideoPlaybackScreen;
@@ -13,13 +14,89 @@ import org.mateof24.conditionalvideos.video.path.VideoSourceResolver;
 
 import java.net.URI;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.List;
 import java.util.function.Function;
 
 public final class ConditionVideoPlayer {
     private static final int LOADING_SCREEN_TIMEOUT_TICKS = 20 * 60;
+    private static final int MAX_QUEUE_SIZE = 32;
+    private static final String FIRST_JOIN_CONDITION_ID = "firstJoin";
+
+    private static final Deque<QueuedPlayback> QUEUE = new ArrayDeque<>();
+
+    // While armed, any non-firstJoin condition that fires is postponed instead of started, so the
+    // firstJoin video is always guaranteed to play first. Recipes/advancements granted by the game
+    // itself during world load (e.g. the crafting table recipe on a brand-new world) would otherwise
+    // win the race and play before firstJoin. Armed at session start and released once the join flow
+    // has resolved (firstJoin started, or determined to have nothing to play).
+    private static volatile boolean firstJoinGuardActive = true;
 
     private ConditionVideoPlayer() {
+    }
+
+    public static void armFirstJoinGuard() {
+        firstJoinGuardActive = true;
+    }
+
+    public static void releaseFirstJoinGuard(Minecraft minecraft) {
+        if (!firstJoinGuardActive) {
+            return;
+        }
+        firstJoinGuardActive = false;
+        playNextInQueue(minecraft);
+    }
+
+    private record QueuedPlayback(
+            ConditionalVideosConfig config,
+            ConditionalVideosConfig.ConditionConfig conditionConfig,
+            String conditionId,
+            String logName,
+            Runnable onCloseCallback,
+            boolean force
+    ) {
+    }
+
+    private static boolean isVideoActive(Minecraft minecraft) {
+        return minecraft != null
+                && (minecraft.screen instanceof VideoPlaybackScreen
+                || minecraft.screen instanceof VideoLoadingScreen);
+    }
+
+    private static void enqueue(QueuedPlayback item) {
+        for (QueuedPlayback queued : QUEUE) {
+            if (queued.conditionId().equals(item.conditionId())) {
+                return;
+            }
+        }
+        if (QUEUE.size() >= MAX_QUEUE_SIZE) {
+            ConditionalVideos.LOGGER.debug("Playback queue full ({}); dropping '{}'.", MAX_QUEUE_SIZE, item.conditionId());
+            return;
+        }
+        QUEUE.addLast(item);
+        ConditionalVideos.LOGGER.debug("Postponed '{}' behind the active video ({} queued).", item.conditionId(), QUEUE.size());
+    }
+
+    public static void playNextInQueue(Minecraft minecraft) {
+        if (minecraft == null) {
+            return;
+        }
+        while (!isVideoActive(minecraft)) {
+            QueuedPlayback next = QUEUE.pollFirst();
+            if (next == null) {
+                return;
+            }
+            boolean started = play(minecraft, next.config(), next.conditionConfig(),
+                    next.conditionId(), next.logName(), next.onCloseCallback(), next.force());
+            if (started) {
+                return;
+            }
+        }
+    }
+
+    public static void clearQueue() {
+        QUEUE.clear();
     }
 
     public static boolean play(Minecraft minecraft,
@@ -28,6 +105,24 @@ public final class ConditionVideoPlayer {
                                String conditionId,
                                String logName,
                                Runnable onCloseCallback) {
+        return play(minecraft, config, conditionConfig, conditionId, logName, onCloseCallback, false);
+    }
+
+    public static boolean playForced(Minecraft minecraft,
+                                     ConditionalVideosConfig config,
+                                     ConditionalVideosConfig.ConditionConfig conditionConfig,
+                                     String conditionId,
+                                     String logName) {
+        return play(minecraft, config, conditionConfig, conditionId, logName, null, true);
+    }
+
+    private static boolean play(Minecraft minecraft,
+                                ConditionalVideosConfig config,
+                                ConditionalVideosConfig.ConditionConfig conditionConfig,
+                                String conditionId,
+                                String logName,
+                                Runnable onCloseCallback,
+                                boolean force) {
         if (conditionConfig == null) {
             ConditionalVideos.LOGGER.debug("No {} video configured. Skipping playback.", logName);
             return false;
@@ -40,12 +135,23 @@ public final class ConditionVideoPlayer {
         }
 
         String sessionKey = null;
-        if (!conditionConfig.repeatableInSameSession()) {
+        if (!force && !conditionConfig.repeatableInSameSession()) {
             sessionKey = SessionKeyResolver.resolveSessionKey(minecraft);
             if (config.hasConsumedConditionSession(conditionId, sessionKey)) {
                 ConditionalVideos.LOGGER.debug("{} condition '{}' already consumed for session {}.", logName, conditionId, sessionKey);
                 return false;
             }
+        }
+
+        boolean isFirstJoin = FIRST_JOIN_CONDITION_ID.equals(conditionId);
+        if (firstJoinGuardActive && !isFirstJoin) {
+            enqueue(new QueuedPlayback(config, conditionConfig, conditionId, logName, onCloseCallback, force));
+            return true;
+        }
+
+        if (isVideoActive(minecraft)) {
+            enqueue(new QueuedPlayback(config, conditionConfig, conditionId, logName, onCloseCallback, force));
+            return true;
         }
 
         Function<VideoEntry, URI> sourceResolver = entry -> resolveSource(minecraft, entry.source(), logName);
@@ -59,14 +165,14 @@ public final class ConditionVideoPlayer {
                     return true;
                 }
                 openLoadingScreen(minecraft, config, conditionConfig, conditionId, sessionKey,
-                        playlist, sourceResolver, configuredPath, logName, onCloseCallback);
+                        playlist, sourceResolver, configuredPath, logName, onCloseCallback, force);
                 return true;
             }
             return shouldGiveUpOnSource(configuredPath, logName);
         }
 
         startPlayback(minecraft, config, conditionConfig, conditionId, sessionKey,
-                playlist, sourceResolver, firstSourceUri, onCloseCallback);
+                playlist, sourceResolver, firstSourceUri, onCloseCallback, force);
         return true;
     }
 
@@ -79,7 +185,8 @@ public final class ConditionVideoPlayer {
                                           Function<VideoEntry, URI> sourceResolver,
                                           String configuredPath,
                                           String logName,
-                                          Runnable onCloseCallback) {
+                                          Runnable onCloseCallback,
+                                          boolean force) {
         ConditionalVideos.LOGGER.debug("Opened video loading screen for {} video '{}'.", logName, configuredPath);
         VideoEntry firstEntry = playlist.get(0);
         VideoLoadingScreen screen = new VideoLoadingScreen(
@@ -95,10 +202,11 @@ public final class ConditionVideoPlayer {
                         if (onCloseCallback != null) {
                             onCloseCallback.run();
                         }
+                        playNextInQueue(minecraft);
                         return;
                     }
                     startPlayback(minecraft, config, conditionConfig, conditionId, sessionKey,
-                            playlist, sourceResolver, readyUri, onCloseCallback);
+                            playlist, sourceResolver, readyUri, onCloseCallback, force);
                 },
                 () -> {
                     ConditionalVideos.LOGGER.warn("Timed out waiting for {} video '{}'.", logName, configuredPath);
@@ -108,8 +216,10 @@ public final class ConditionVideoPlayer {
                     if (onCloseCallback != null) {
                         onCloseCallback.run();
                     }
+                    playNextInQueue(minecraft);
                 },
-                LOADING_SCREEN_TIMEOUT_TICKS
+                LOADING_SCREEN_TIMEOUT_TICKS,
+                playlist.size()
         );
         minecraft.setScreen(screen);
     }
@@ -122,8 +232,9 @@ public final class ConditionVideoPlayer {
                                       List<VideoEntry> playlist,
                                       Function<VideoEntry, URI> sourceResolver,
                                       URI firstSourceUri,
-                                      Runnable onCloseCallback) {
-        if (!conditionConfig.repeatableInSameSession()) {
+                                      Runnable onCloseCallback,
+                                      boolean force) {
+        if (!force && !conditionConfig.repeatableInSameSession()) {
             config.markConditionSessionConsumed(conditionId, sessionKey);
             if (ActiveConfigResolver.shouldPersistLocalChanges(minecraft)) {
                 config.save();
@@ -146,8 +257,10 @@ public final class ConditionVideoPlayer {
                 playlist,
                 sourceResolver,
                 firstSourceUri,
+                conditionId,
                 playlistEnd
         ));
+        org.mateof24.conditionalvideos.runtime.PlaybackEvents.notifyStarted(conditionId);
     }
 
     private static boolean isDownloadPending(Minecraft minecraft, String configuredPath) {
@@ -169,6 +282,11 @@ public final class ConditionVideoPlayer {
             URI uri = VideoSourceResolver.parseUri(configuredPath);
             if (uri == null) {
                 ConditionalVideos.LOGGER.warn("Invalid URL '{}' in {} condition. Ignoring.", configuredPath, logName);
+                return null;
+            }
+            if (ActiveConfigResolver.effectiveBlockMatureContent() && MatureContentFilter.isMatureUrl(uri)) {
+                ConditionalVideos.LOGGER.warn("Blocked mature-content URL '{}' in {} condition (blockMatureContent=true).", configuredPath, logName);
+                return null;
             }
             return uri;
         }

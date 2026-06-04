@@ -7,9 +7,12 @@
     "ClientAdvancementsMixin",
     "ClientPacketListenerMixin",
     "PlayerAttackMixin",
-    "SoundManagerMixin"
+    "SoundManagerMixin",
+    "ToastComponentMixin"
   ],
   "mixins": [
+    "RecipeUnlockedMixin",
+    "TotemUsedMixin"
   ],
   "injectors": {
     "defaultRequire": 1

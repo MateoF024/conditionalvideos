@@ -11,6 +11,7 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.GameType;
 import org.mateof24.conditionalvideos.ConditionalVideos;
 import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
+import org.mateof24.conditionalvideos.config.CommonConfig;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
 import org.mateof24.conditionalvideos.video.path.VideoSourceResolver;
 
@@ -25,6 +26,8 @@ import java.util.*;
 public final class ConfigSyncNetworking {
     private static final ResourceLocation SERVER_CONFIG_PACKET =
             new ResourceLocation(ConditionalVideos.MOD_ID, "server_config_sync");
+    private static final ResourceLocation SERVER_COMMON_CONFIG_PACKET =
+            new ResourceLocation(ConditionalVideos.MOD_ID, "server_common_config_sync");
     private static final ResourceLocation SERVER_VIDEO_MANIFEST_PACKET =
             new ResourceLocation(ConditionalVideos.MOD_ID, "server_video_manifest");
     private static final ResourceLocation CLIENT_VIDEO_REQUEST_PACKET =
@@ -52,6 +55,11 @@ public final class ConfigSyncNetworking {
             NetworkManager.registerReceiver(NetworkManager.s2c(), SERVER_CONFIG_PACKET, (buffer, context) -> {
                 String json = buffer.readUtf(262144);
                 context.queue(() -> ActiveConfigResolver.setRemoteConfig(ConditionalVideosConfig.fromJson(json)));
+            });
+
+            NetworkManager.registerReceiver(NetworkManager.s2c(), SERVER_COMMON_CONFIG_PACKET, (buffer, context) -> {
+                String json = buffer.readUtf(262144);
+                context.queue(() -> ActiveConfigResolver.setRemoteCommonConfig(CommonConfig.fromAuthoritativeJson(json)));
             });
 
             NetworkManager.registerReceiver(NetworkManager.s2c(), SERVER_VIDEO_MANIFEST_PACKET, (buffer, context) -> {
@@ -125,6 +133,7 @@ public final class ConfigSyncNetworking {
     private static void sendServerData(ServerPlayer player) {
         if (player.server.isDedicatedServer()) {
             sendServerConfig(player);
+            sendServerCommonConfig(player);
             sendVideoManifest(player);
         }
     }
@@ -135,6 +144,13 @@ public final class ConfigSyncNetworking {
         FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
         buffer.writeUtf(serverConfig.toJson());
         NetworkManager.sendToPlayer(player, SERVER_CONFIG_PACKET, buffer);
+    }
+
+    public static void sendServerCommonConfig(ServerPlayer player) {
+        CommonConfig serverCommon = CommonConfig.loadServer(player.server.getServerDirectory().toPath());
+        FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+        buffer.writeUtf(serverCommon.toAuthoritativeJson());
+        NetworkManager.sendToPlayer(player, SERVER_COMMON_CONFIG_PACKET, buffer);
     }
 
     private static void sendVideoManifest(ServerPlayer player) {
@@ -204,6 +220,13 @@ public final class ConfigSyncNetworking {
         config.deathByEntity().forEach((key, value) -> addPlaylistEntries(entries, "death_by_entity", value, serverRoot));
         config.advancementCompleted().forEach((key, value) -> addPlaylistEntries(entries, "advancement", value, serverRoot));
         config.dimensionChanged().forEach((key, value) -> addPlaylistEntries(entries, "dimension", value, serverRoot));
+        addPlaylistEntries(entries, "totem_used", config.totemUsed(), serverRoot);
+        addPlaylistEntries(entries, "bed_sleep", config.bedSleep(), serverRoot);
+        config.itemObtained().forEach((key, value) -> addPlaylistEntries(entries, "item_obtained", value, serverRoot));
+        config.itemCrafted().forEach((key, value) -> addPlaylistEntries(entries, "item_crafted", value, serverRoot));
+        config.recipeUnlocked().forEach((key, value) -> addPlaylistEntries(entries, "recipe_unlocked", value, serverRoot));
+        config.custom().forEach((key, value) -> addPlaylistEntries(entries, "custom", value, serverRoot));
+        config.scoreboard().forEach((key, value) -> addPlaylistEntries(entries, "scoreboard", value.toConditionConfig(), serverRoot));
         return entries;
     }
 

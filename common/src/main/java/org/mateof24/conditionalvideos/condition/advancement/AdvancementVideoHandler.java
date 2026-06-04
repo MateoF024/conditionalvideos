@@ -1,51 +1,70 @@
 package org.mateof24.conditionalvideos.condition.advancement;
 
+import net.minecraft.advancements.AdvancementProgress;
 import net.minecraft.client.Minecraft;
-import org.mateof24.conditionalvideos.ConditionalVideos;
+import net.minecraft.resources.ResourceLocation;
 import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
 import org.mateof24.conditionalvideos.condition.shared.ConditionVideoPlayer;
 
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
 public final class AdvancementVideoHandler {
     private static final String CONDITION_ID_PREFIX = "advancementCompleted:";
+    private static final Set<String> trackedCompleted = new HashSet<>();
+    private static final Set<String> pendingNewCompletions = new HashSet<>();
 
     private AdvancementVideoHandler() {
     }
 
-    public static Set<String> snapshotCompletedAdvancements(Minecraft minecraft) {
-        Set<String> completed = new HashSet<>();
-        Object advancements = resolveClientAdvancements(minecraft);
-        if (advancements == null) {
-            return completed;
+    public static void onPacketReceived(boolean shouldReset,
+                                        Set<ResourceLocation> removed,
+                                        Map<ResourceLocation, AdvancementProgress> progressUpdates) {
+        if (shouldReset) {
+            trackedCompleted.clear();
+            pendingNewCompletions.clear();
         }
 
-        Map<?, ?> progressMap = resolveProgressMap(advancements);
-        if (progressMap == null) {
-            return completed;
+        for (ResourceLocation id : removed) {
+            trackedCompleted.remove(id.toString());
         }
 
-        for (Map.Entry<?, ?> entry : progressMap.entrySet()) {
-            Object advancement = entry.getKey();
-            Object progress = entry.getValue();
-            if (!isCompleted(progress)) {
-                continue;
+        for (Map.Entry<ResourceLocation, AdvancementProgress> entry : progressUpdates.entrySet()) {
+            String id = entry.getKey().toString();
+            boolean done = entry.getValue() != null && entry.getValue().isDone();
+
+            if (done) {
+                boolean wasNew = trackedCompleted.add(id);
+                if (wasNew && !shouldReset) {
+                    pendingNewCompletions.add(id);
+                }
+            } else {
+                trackedCompleted.remove(id);
             }
-
-            String advancementId = resolveAdvancementId(advancement);
-            if (!advancementId.isBlank()) {
-                completed.add(advancementId);
-            }
         }
-        return completed;
     }
 
-    public static boolean onAdvancementCompleted(Minecraft minecraft, String advancementId) {
+    public static void tickPendingCompletions(Minecraft minecraft) {
+        if (pendingNewCompletions.isEmpty()) {
+            return;
+        }
+        Set<String> toProcess = new HashSet<>(pendingNewCompletions);
+        pendingNewCompletions.clear();
+        for (String advancementId : toProcess) {
+            if (fireAdvancementVideo(minecraft, advancementId)) {
+                break;
+            }
+        }
+    }
+
+    public static void reset() {
+        trackedCompleted.clear();
+        pendingNewCompletions.clear();
+    }
+
+    private static boolean fireAdvancementVideo(Minecraft minecraft, String advancementId) {
         ConditionalVideosConfig config = ActiveConfigResolver.resolve(minecraft);
         ConditionalVideosConfig.ConditionConfig advancementConfig = config.advancementCompleted().get(advancementId);
 
@@ -57,88 +76,5 @@ public final class AdvancementVideoHandler {
                 "advancement completed ('" + advancementId + "')",
                 null
         );
-    }
-
-    private static Object resolveClientAdvancements(Minecraft minecraft) {
-        if (minecraft.getConnection() == null) {
-            return null;
-        }
-
-        try {
-            Method getAdvancements = minecraft.getConnection().getClass().getMethod("getAdvancements");
-            return getAdvancements.invoke(minecraft.getConnection());
-        } catch (ReflectiveOperationException exception) {
-            ConditionalVideos.LOGGER.debug("Unable to resolve client advancements for conditional videos.", exception);
-            return null;
-        }
-    }
-
-    private static Map<?, ?> resolveProgressMap(Object advancements) {
-        for (Field field : advancements.getClass().getDeclaredFields()) {
-            if (!Map.class.isAssignableFrom(field.getType())) {
-                continue;
-            }
-
-            try {
-                field.setAccessible(true);
-                Object value = field.get(advancements);
-                if (value instanceof Map<?, ?> map && looksLikeProgressMap(map)) {
-                    return map;
-                }
-            } catch (ReflectiveOperationException ignored) {
-            }
-        }
-        return null;
-    }
-
-    private static boolean looksLikeProgressMap(Map<?, ?> map) {
-        if (map.isEmpty()) {
-            return false;
-        }
-
-        for (Object entryValue : map.values()) {
-            if (entryValue == null) {
-                continue;
-            }
-            try {
-                entryValue.getClass().getMethod("isDone");
-                return true;
-            } catch (NoSuchMethodException ignored) {
-                return false;
-            }
-        }
-        return false;
-    }
-
-    private static boolean isCompleted(Object progress) {
-        if (progress == null) {
-            return false;
-        }
-
-        try {
-            Method isDone = progress.getClass().getMethod("isDone");
-            Object done = isDone.invoke(progress);
-            return done instanceof Boolean completed && completed;
-        } catch (ReflectiveOperationException exception) {
-            return false;
-        }
-    }
-
-    private static String resolveAdvancementId(Object advancement) {
-        if (advancement == null) {
-            return "";
-        }
-
-        for (String methodName : new String[]{"getId", "id"}) {
-            try {
-                Method method = advancement.getClass().getMethod(methodName);
-                Object id = method.invoke(advancement);
-                if (id != null && !id.toString().isBlank()) {
-                    return id.toString();
-                }
-            } catch (ReflectiveOperationException ignored) {
-            }
-        }
-        return "";
     }
 }

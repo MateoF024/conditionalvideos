@@ -15,12 +15,27 @@ public final class PlayerDeathVideoHandler {
     private static final String CONDITION_ID = "playerDeath";
     private static final String ENTITY_CONDITION_ID_PREFIX = "deathByEntity:";
     private static final int DEFERRED_PLAY_TICKS = 4;
+    private static final long KILLER_CAPTURE_VALIDITY_MILLIS = 2000L;
 
     private static long lastHandledAtMillis = Long.MIN_VALUE;
     private static boolean pendingDeath;
     private static int pendingDeathTicks;
+    private static String capturedKillerId = "";
+    private static long capturedKillerMillis = Long.MIN_VALUE;
 
     private PlayerDeathVideoHandler() {
+    }
+
+    // Resolve and remember the killer at the exact moment of death (combat-kill packet), before the
+    // player can respawn. Playback is deferred a few ticks, and with doImmediateRespawn the player is
+    // already replaced by then with its last-damage data cleared, so resolving inside executeDeathVideo
+    // would lose the killer and fall back to a generic death. The captured value is the fallback.
+    public static void captureKiller(Minecraft minecraft) {
+        String id = resolveKillerEntityId(minecraft);
+        if (!id.isBlank()) {
+            capturedKillerId = id;
+            capturedKillerMillis = Util.getMillis();
+        }
     }
 
     public static void onPlayerDied(Minecraft minecraft) {
@@ -48,6 +63,7 @@ public final class PlayerDeathVideoHandler {
     public static void reset() {
         pendingDeath = false;
         pendingDeathTicks = 0;
+        clearCapturedKiller();
     }
 
     private static void executeDeathVideo(Minecraft minecraft) {
@@ -56,7 +72,8 @@ public final class PlayerDeathVideoHandler {
         }
 
         ConditionalVideosConfig config = ActiveConfigResolver.resolve(minecraft);
-        String killerEntityId = resolveKillerEntityId(minecraft);
+        String killerEntityId = resolveKillerWithCapture(minecraft);
+        clearCapturedKiller();
         if (!killerEntityId.isBlank()) {
             ConditionalVideosConfig.ConditionConfig entityConfig = config.deathByEntity().get(killerEntityId);
             if (ConditionVideoPlayer.play(
@@ -72,6 +89,22 @@ public final class PlayerDeathVideoHandler {
         }
 
         ConditionVideoPlayer.play(minecraft, config, config.playerDeath(), CONDITION_ID, "player death", null);
+    }
+
+    private static String resolveKillerWithCapture(Minecraft minecraft) {
+        String live = resolveKillerEntityId(minecraft);
+        if (!live.isBlank()) {
+            return live;
+        }
+        if (!capturedKillerId.isBlank() && Util.getMillis() - capturedKillerMillis <= KILLER_CAPTURE_VALIDITY_MILLIS) {
+            return capturedKillerId;
+        }
+        return "";
+    }
+
+    private static void clearCapturedKiller() {
+        capturedKillerId = "";
+        capturedKillerMillis = Long.MIN_VALUE;
     }
 
     private static String resolveKillerEntityId(Minecraft minecraft) {

@@ -23,12 +23,62 @@ public final class ActiveConfigResolver {
     private static volatile boolean manifestReceived = false;
     private static volatile boolean manifestProcessed = true;
 
+    private static CommonConfig localCommonConfig;
+    private static CommonConfig remoteCommonConfig;
+
+    private static final long LOCAL_CONFIG_TTL_MILLIS = 3000L;
+    private static ConditionalVideosConfig localConfigCache;
+    private static long localConfigCacheExpiry;
+
     private ActiveConfigResolver() {
+    }
+
+    public static CommonConfig localCommonConfig() {
+        if (localCommonConfig == null) {
+            localCommonConfig = CommonConfig.load();
+        }
+        return localCommonConfig;
+    }
+
+    public static void reloadLocalCommonConfig() {
+        localCommonConfig = CommonConfig.load();
+    }
+
+    public static void setRemoteCommonConfig(CommonConfig config) {
+        remoteCommonConfig = config;
+    }
+
+    private static CommonConfig authoritativeCommonConfig(Minecraft minecraft) {
+        if (isMultiplayerSession(minecraft) && remoteCommonConfig != null) {
+            return remoteCommonConfig;
+        }
+        return localCommonConfig();
+    }
+
+    public static String effectiveVideoQuality(Minecraft minecraft) {
+        return authoritativeCommonConfig(minecraft).videoQuality();
+    }
+
+    public static boolean effectiveAlwaysShowCursor(Minecraft minecraft) {
+        return authoritativeCommonConfig(minecraft).alwaysShowCursor();
+    }
+
+    public static boolean effectiveAllowGameSounds(Minecraft minecraft) {
+        return authoritativeCommonConfig(minecraft).allowGameSounds();
+    }
+
+    public static boolean effectiveBlockMatureContent() {
+        return localCommonConfig().blockMatureContent();
     }
 
     public static ConditionalVideosConfig resolve(Minecraft minecraft) {
         if (!isMultiplayerSession(minecraft)) {
-            return ConditionalVideosConfig.load();
+            long now = System.currentTimeMillis();
+            if (localConfigCache == null || now >= localConfigCacheExpiry) {
+                localConfigCache = ConditionalVideosConfig.load();
+                localConfigCacheExpiry = now + LOCAL_CONFIG_TTL_MILLIS;
+            }
+            return localConfigCache;
         }
 
         if (remoteConfigState == RemoteConfigState.AVAILABLE && remoteConfig != null) {
@@ -36,6 +86,11 @@ public final class ActiveConfigResolver {
         }
 
         return new ConditionalVideosConfig();
+    }
+
+    public static void invalidateLocalConfigCache() {
+        localConfigCache = null;
+        localConfigCacheExpiry = 0L;
     }
 
     public static boolean shouldPersistLocalChanges(Minecraft minecraft) {
@@ -58,6 +113,7 @@ public final class ActiveConfigResolver {
         manifestedRemoteVideoPaths.clear();
         manifestReceived = false;
         manifestProcessed = true;
+        remoteCommonConfig = null;
     }
 
     public static RemoteConfigState remoteConfigState() {

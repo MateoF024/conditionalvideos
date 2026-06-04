@@ -1,4 +1,11 @@
 {
-  "screen.conditionalvideos.skip_hint": "Presiona ESC para saltar",
-  "screen.conditionalvideos.loading": "Cargando video..."
+  "screen.conditionalvideos.skip_hint": "Presioná %s para saltar",
+  "screen.conditionalvideos.loading": "Cargando video...",
+  "screen.conditionalvideos.loading.plural": "Cargando videos...",
+  "command.conditionalvideos.play.invalid": "La condición '%s' no está configurada o no tiene videos. Fijate que esté bien escrita y que tenga al menos un video.",
+  "command.conditionalvideos.play.success": "Se pidió la reproducción de '%s' para %s jugador(es).",
+  "command.conditionalvideos.stop.success": "Se detuvo la reproducción para %s jugador(es).",
+  "command.conditionalvideos.pause.success": "Se alternó la pausa para %s jugador(es).",
+  "key.categories.conditionalvideos": "Videos condicionales",
+  "key.conditionalvideos.skip": "Saltar video"
 }

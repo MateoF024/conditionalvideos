@@ -4,11 +4,15 @@
   "compatibilityLevel": "JAVA_17",
   "minVersion": "0.8",
   "client": [
+    "ClientAdvancementsMixin",
     "ClientPacketListenerMixin",
     "PlayerAttackMixin",
-    "SoundManagerMixin"
+    "SoundManagerMixin",
+    "ToastComponentMixin"
   ],
   "mixins": [
+    "RecipeUnlockedMixin",
+    "TotemUsedMixin"
   ],
   "injectors": {
     "defaultRequire": 1

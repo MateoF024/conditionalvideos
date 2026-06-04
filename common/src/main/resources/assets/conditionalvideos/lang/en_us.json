@@ -1,4 +1,11 @@
 {
-  "screen.conditionalvideos.skip_hint": "Press ESC to skip",
-  "screen.conditionalvideos.loading": "Loading video..."
+  "screen.conditionalvideos.skip_hint": "Press %s to skip",
+  "screen.conditionalvideos.loading": "Loading video...",
+  "screen.conditionalvideos.loading.plural": "Loading videos...",
+  "command.conditionalvideos.play.invalid": "Condition '%s' is not configured or has no videos. Check the spelling and that it has at least one video.",
+  "command.conditionalvideos.play.success": "Requested playback of '%s' for %s player(s).",
+  "command.conditionalvideos.stop.success": "Stopped playback for %s player(s).",
+  "command.conditionalvideos.pause.success": "Toggled pause for %s player(s).",
+  "key.categories.conditionalvideos": "Conditional Videos",
+  "key.conditionalvideos.skip": "Skip video"
 }

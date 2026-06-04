@@ -10,9 +10,6 @@ import org.mateof24.conditionalvideos.condition.kill.KillEntityVideoHandler;
 import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
 import org.mateof24.conditionalvideos.network.ConfigSyncNetworking;
 
-import java.util.LinkedHashSet;
-import java.util.Set;
-
 public final class ClientRuntime {
     private static final int DIMENSION_VIDEO_DELAY_TICKS = 20;
     private static final int MULTIPLAYER_HANDSHAKE_TIMEOUT_TICKS = 100;
@@ -23,7 +20,6 @@ public final class ClientRuntime {
     private ResourceLocation lastDimension;
     private ResourceLocation pendingDimensionVideoTarget;
     private int pendingDimensionVideoTicks;
-    private Set<String> completedAdvancements = new LinkedHashSet<>();
     private boolean joinVideoHandled;
     private int multiplayerHandshakeTicks;
 
@@ -33,13 +29,16 @@ public final class ClientRuntime {
             if (wasInSession) {
                 KillEntityVideoHandler.onSessionEnded();
                 ConfigSyncNetworking.onClientDisconnected();
+                AdvancementVideoHandler.reset();
+                ActiveConfigResolver.invalidateLocalConfigCache();
+                org.mateof24.conditionalvideos.condition.shared.ConditionVideoPlayer.clearQueue();
+                org.mateof24.conditionalvideos.condition.shared.ConditionVideoPlayer.armFirstJoinGuard();
             }
             wasInSession = false;
             wasAlive = false;
             lastDimension = null;
             pendingDimensionVideoTarget = null;
             pendingDimensionVideoTicks = 0;
-            completedAdvancements = new LinkedHashSet<>();
             joinVideoHandled = false;
             multiplayerHandshakeTicks = 0;
             return;
@@ -49,7 +48,8 @@ public final class ClientRuntime {
             wasInSession = true;
             KillEntityVideoHandler.onSessionStarted();
             lastDimension = minecraft.level.dimension().location();
-            completedAdvancements = AdvancementVideoHandler.snapshotCompletedAdvancements(minecraft);
+            AdvancementVideoHandler.reset();
+            org.mateof24.conditionalvideos.condition.shared.ConditionVideoPlayer.armFirstJoinGuard();
             joinVideoHandled = false;
             multiplayerHandshakeTicks = 0;
             if (ActiveConfigResolver.isMultiplayerSession(minecraft)) {
@@ -59,6 +59,9 @@ public final class ClientRuntime {
 
         if (!joinVideoHandled) {
             tickJoinFlow(minecraft);
+            if (joinVideoHandled) {
+                org.mateof24.conditionalvideos.condition.shared.ConditionVideoPlayer.releaseFirstJoinGuard(minecraft);
+            }
         }
 
         boolean isAlive = minecraft.player.isAlive();
@@ -75,15 +78,7 @@ public final class ClientRuntime {
         lastDimension = currentDimension;
         tryPlayPendingDimensionVideo(minecraft, currentDimension);
 
-        Set<String> nowCompleted = AdvancementVideoHandler.snapshotCompletedAdvancements(minecraft);
-        for (String advancementId : nowCompleted) {
-            if (!completedAdvancements.contains(advancementId)) {
-                if (AdvancementVideoHandler.onAdvancementCompleted(minecraft, advancementId)) {
-                    break;
-                }
-            }
-        }
-        completedAdvancements = nowCompleted;
+        AdvancementVideoHandler.tickPendingCompletions(minecraft);
 
         KillEntityVideoHandler.onClientTick(minecraft);
     }

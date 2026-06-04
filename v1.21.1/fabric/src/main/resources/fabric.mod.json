@@ -32,6 +32,8 @@
     "fabric-api": "*"
   },
   "suggests": {
-    "watermedia": "~2.1.37"
+    "watermedia": ">=3.0.0-alpha",
+    "wm_binaries": ">=3.0.0-alpha",
+    "watermedia_youtube_extension": ">=3.0.0-alpha"
   }
 }

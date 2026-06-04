@@ -22,7 +22,7 @@ subprojects {
 
     base {
         if (isLegacy) {
-            archivesName = "$rootProject.archives_name-$project.name"
+            archivesName = "$rootProject.archives_name-$project.name-$rootProject.minecraft_version"
         } else {
             archivesName = "$rootProject.archives_name-$project.name-$rootProject.minecraft_version"
         }

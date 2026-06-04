@@ -7,6 +7,7 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.GameType;
 import org.mateof24.conditionalvideos.ConditionalVideos;
 import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
+import org.mateof24.conditionalvideos.config.CommonConfig;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
 import org.mateof24.conditionalvideos.video.path.VideoSourceResolver;
 
@@ -23,6 +24,8 @@ import java.util.concurrent.Executors;
 public final class ConfigSyncNetworking {
     private static final ResourceLocation SERVER_CONFIG_PACKET =
             ResourceLocation.fromNamespaceAndPath(ConditionalVideos.MOD_ID, "server_config_sync");
+    private static final ResourceLocation SERVER_COMMON_CONFIG_PACKET =
+            ResourceLocation.fromNamespaceAndPath(ConditionalVideos.MOD_ID, "server_common_config_sync");
     private static final ResourceLocation SERVER_VIDEO_MANIFEST_PACKET =
             ResourceLocation.fromNamespaceAndPath(ConditionalVideos.MOD_ID, "server_video_manifest");
     private static final ResourceLocation CLIENT_VIDEO_REQUEST_PACKET =
@@ -59,6 +62,12 @@ public final class ConfigSyncNetworking {
             FriendlyByteBuf buf = NetworkHelper.fromBytes(data);
             String json = buf.readUtf(262144);
             ActiveConfigResolver.setRemoteConfig(ConditionalVideosConfig.fromJson(json));
+        });
+
+        s2cHandlers.put(SERVER_COMMON_CONFIG_PACKET, data -> {
+            FriendlyByteBuf buf = NetworkHelper.fromBytes(data);
+            String json = buf.readUtf(262144);
+            ActiveConfigResolver.setRemoteCommonConfig(CommonConfig.fromAuthoritativeJson(json));
         });
 
         s2cHandlers.put(SERVER_VIDEO_MANIFEST_PACKET, data -> {
@@ -113,6 +122,8 @@ public final class ConfigSyncNetworking {
             onServerJoinVideoState(player, playing);
         });
 
+        PlaybackControlNetworking.registerS2CHandlers(s2cHandlers);
+
         NetworkHelper.registerPackets(s2cHandlers, c2sHandlers);
 
         PlayerEvent.PLAYER_JOIN.register(ConfigSyncNetworking::sendServerData);
@@ -127,6 +138,7 @@ public final class ConfigSyncNetworking {
     private static void sendServerData(ServerPlayer player) {
         if (player.server.isDedicatedServer()) {
             sendServerConfig(player);
+            sendServerCommonConfig(player);
             sendVideoManifest(player);
         }
     }
@@ -135,6 +147,12 @@ public final class ConfigSyncNetworking {
         ConditionalVideosConfig serverConfig = ConditionalVideosConfig.loadServer(player.server.getServerDirectory());
         byte[] data = NetworkHelper.toBytes(buf -> buf.writeUtf(serverConfig.toJson()));
         NetworkHelper.sendToPlayer(player, SERVER_CONFIG_PACKET, data);
+    }
+
+    public static void sendServerCommonConfig(ServerPlayer player) {
+        CommonConfig serverCommon = CommonConfig.loadServer(player.server.getServerDirectory());
+        byte[] data = NetworkHelper.toBytes(buf -> buf.writeUtf(serverCommon.toAuthoritativeJson()));
+        NetworkHelper.sendToPlayer(player, SERVER_COMMON_CONFIG_PACKET, data);
     }
 
     private static void sendVideoManifest(ServerPlayer player) {
@@ -200,6 +218,13 @@ public final class ConfigSyncNetworking {
         config.deathByEntity().forEach((key, value) -> addPlaylistEntries(entries, "death_by_entity", value, serverRoot));
         config.advancementCompleted().forEach((key, value) -> addPlaylistEntries(entries, "advancement", value, serverRoot));
         config.dimensionChanged().forEach((key, value) -> addPlaylistEntries(entries, "dimension", value, serverRoot));
+        addPlaylistEntries(entries, "totem_used", config.totemUsed(), serverRoot);
+        addPlaylistEntries(entries, "bed_sleep", config.bedSleep(), serverRoot);
+        config.itemObtained().forEach((key, value) -> addPlaylistEntries(entries, "item_obtained", value, serverRoot));
+        config.itemCrafted().forEach((key, value) -> addPlaylistEntries(entries, "item_crafted", value, serverRoot));
+        config.recipeUnlocked().forEach((key, value) -> addPlaylistEntries(entries, "recipe_unlocked", value, serverRoot));
+        config.custom().forEach((key, value) -> addPlaylistEntries(entries, "custom", value, serverRoot));
+        config.scoreboard().forEach((key, value) -> addPlaylistEntries(entries, "scoreboard", value.toConditionConfig(), serverRoot));
         return entries;
     }
 

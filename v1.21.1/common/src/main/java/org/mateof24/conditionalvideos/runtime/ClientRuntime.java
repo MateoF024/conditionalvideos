@@ -30,6 +30,9 @@ public final class ClientRuntime {
                 KillEntityVideoHandler.onSessionEnded();
                 ConfigSyncNetworking.onClientDisconnected();
                 AdvancementVideoHandler.reset();
+                ActiveConfigResolver.invalidateLocalConfigCache();
+                org.mateof24.conditionalvideos.condition.shared.ConditionVideoPlayer.clearQueue();
+                org.mateof24.conditionalvideos.condition.shared.ConditionVideoPlayer.armFirstJoinGuard();
             }
             wasInSession = false;
             wasAlive = false;
@@ -47,6 +50,7 @@ public final class ClientRuntime {
             PlayerDeathVideoHandler.reset();
             AdvancementVideoHandler.reset();
             lastDimension = minecraft.level.dimension().location();
+            org.mateof24.conditionalvideos.condition.shared.ConditionVideoPlayer.armFirstJoinGuard();
             joinVideoHandled = false;
             multiplayerHandshakeTicks = 0;
             if (ActiveConfigResolver.isMultiplayerSession(minecraft)) {
@@ -56,6 +60,9 @@ public final class ClientRuntime {
 
         if (!joinVideoHandled) {
             tickJoinFlow(minecraft);
+            if (joinVideoHandled) {
+                org.mateof24.conditionalvideos.condition.shared.ConditionVideoPlayer.releaseFirstJoinGuard(minecraft);
+            }
         }
 
         boolean isAlive = minecraft.player.isAlive();

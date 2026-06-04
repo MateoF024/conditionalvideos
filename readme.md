@@ -37,6 +37,15 @@ It is **not strictly client-side**: it runs on both client and dedicated server,
 
 It is designed for curated gameplay experiences such as servers, story maps, quest packs, and roleplay setups where cinematic feedback improves immersion.
 
+**Highlights**
+
+- A dozen trigger types: first join, deaths (generic and per-killer), kills, advancements, dimension changes, item obtained, item crafted, recipe unlocked, totem used, sleeping in a bed, scoreboard thresholds, and mod-defined custom conditions.
+- Per-condition **playlists** with crossfade/cut transitions, looping, overlays, per-clip volume, and timed cuts.
+- A shared **common config** for client behavior (forced quality, cursor, sounds, mature-content blocking).
+- Operator-driven **scoreboard** triggers and a server **command tree** to play/stop/pause videos on any player.
+- A **playback queue** so overlapping triggers play in sequence instead of cutting each other off.
+- A small, stable **public API** for other mods (see the [Developer Wiki](#-developer-api)).
+
 ---
 
 ## 🧩 Compatibility & Requirements
@@ -45,22 +54,25 @@ It is designed for curated gameplay experiences such as servers, story maps, que
 - **Minecraft 1.21.1:** Fabric, NeoForge — Java 21+
 - **Client Config File:** `config/conditionalvideos.json`
 - **Dedicated Server Config File:** `config/conditionalvideos-server.json`
+- **Common Config File:** `config/conditionalvideos-common.json` (client behavior; also read by dedicated servers for the synced options)
 - **Required Fabric API** (Fabric only)
-- **Required** [**WATERMeDIA: Multimedia API v3**](https://modrinth.com/mod/watermedia) (client side)
+- **Required** [**WATERMeDIA: Multimedia API v3**](https://modrinth.com/mod/watermedia) (client side) — **v3.0.0+**
 - **Required** [**WATERMeDIA: Native Binaries**](https://modrinth.com/mod/watermedia-binaries) (client side, ships with WATERMeDIA)
 - **Optional** [**WATERMeDIA: YouTube Extension**](https://modrinth.com/mod/watermedia-yt-plugin) — required only if your config uses YouTube URLs
+
+> **WATERMeDIA v3** brings broader platform coverage out of the box (YouTube, Twitch/Kick clips, TikTok, Bluesky, Odysee, Google Drive/Dropbox/MediaFire, SoundCloud, IPTV, and more). Most of these "just work" as `source` URLs as long as they are reachable from the client.
 
 ---
 
 ## 🧭 Client vs Server (Important)
 
-
 ### Client Instance
 
 - Creates and uses:
   - `config/conditionalvideos.json`
+  - `config/conditionalvideos-common.json`
 - In **singleplayer**:
-  - Uses local client config directly.
+  - Uses the local client config directly (the integrated server detects server-side conditions).
   - Local `source` paths are resolved from the local game directory (or absolute path).
   - URL sources (`http://`, `https://`, YouTube links) are streamed directly through WATERMeDIA.
 - In **multiplayer**:
@@ -78,6 +90,7 @@ It is designed for curated gameplay experiences such as servers, story maps, que
 - Creates and uses:
   - `config/conditionalvideos-server.json`
 - Owns the **authoritative config** for connected clients.
+- **Detects** server-side conditions (item obtained/crafted, recipe unlocked, totem used, bed sleep, scoreboard thresholds) and **orders** the relevant client to play through an internal control channel.
 - On player join:
   - Sends synced config to clients.
   - Publishes a manifest of configured **local-file** videos (URLs are excluded — the client fetches them by itself).
@@ -99,7 +112,8 @@ It is designed for curated gameplay experiences such as servers, story maps, que
 
 Whenever any condition is about to play a **local-file** video that lives in the server manifest but has not been downloaded into the local cache yet, a full-screen loading overlay (black background + animated spinner + translatable text) takes over while the file is transferred in the background. Vanilla Minecraft sounds are muted during the wait, and as soon as the download finishes the loading screen hands off seamlessly to the playback screen.
 
-- Applies to **every** condition (`firstJoin`, `playerDeath`, `deathByEntity`, `entityKilled`, `advancementCompleted`, `dimensionChanged`) — not just the first-join cinematic.
+- Applies to **every** condition — not just the first-join cinematic.
+- The loading text is **singular/plural aware**: `Loading video…` for a single clip, `Loading videos…` for a playlist.
 - For `firstJoin` specifically, the server also puts the player in Spectator from the moment the loading screen appears until the playback finishes, so the world is invisible and silent during the wait. Other conditions only show the overlay; gameplay keeps running underneath them, matching the existing behavior of the playback screen.
 - URL/YouTube sources skip the loading screen — WATERMeDIA handles buffering directly inside the playback screen.
 - Already-cached files skip the loading screen and jump straight to playback.
@@ -109,37 +123,88 @@ Whenever any condition is about to play a **local-file** video that lives in the
 
 ## 🎯 Supported Conditions
 
-Supports multiple gameplay trigger types so you can tailor cinematic playback to meaningful moments during progression.
+Supports multiple gameplay trigger types so you can tailor cinematic playback to meaningful moments during progression. Each condition is configured with a **playlist** (see [Condition Object Schema](#-condition-object-schema)).
 
-- **First connection trigger** (`firstJoin`)
-  Plays an intro/cinematic when the player enters the world/session.
+### Simple conditions (single config key)
 
+- **First connection** (`firstJoin`)
+  Plays an intro/cinematic when the player enters the world/session. **Always prioritized**: even if another condition fires during world load, `firstJoin` plays first and the rest are queued behind it.
 
-- **General death trigger** (`playerDeath`)
-  Works as the default fallback cinematic for any player death event.
+- **General death** (`playerDeath`)
+  Default fallback cinematic for any player death event.
 
+- **Totem used** (`totemUsed`)
+  Plays when a Totem of Undying saves the player.
 
-- **Death by entity trigger** (`deathByEntity`)
-  Lets you override the generic death behavior with custom videos based on the killer entity ID (`namespace:entity`), such as `minecraft:zombie` or `minecraft:creeper`.
-  When this trigger matches, it takes precedence over the general death trigger.
+- **Bed sleep** (`bedSleep`)
+  Plays when the player begins sleeping in a bed.
 
+### Keyed conditions (map of `id → condition`)
 
-- **Entity kill trigger** (`entityKilled`)
-  Plays a video when the player defeats specific configured entity IDs.
+- **Death by entity** (`deathByEntity`)
+  Overrides the generic death with custom videos based on the killer entity ID (`namespace:entity`), such as `minecraft:zombie` or `minecraft:creeper`. When it matches, it takes precedence over `playerDeath`.
 
+- **Entity kill** (`entityKilled`)
+  Plays when the player defeats specific configured entity IDs.
 
-- **Advancement completion trigger** (`advancementCompleted`)
-  Plays a video when configured advancements are completed.
+- **Advancement completion** (`advancementCompleted`)
+  Plays when configured advancements are completed.
 
+- **Dimension transition** (`dimensionChanged`)
+  Plays when the player enters configured dimensions.
 
-- **Dimension transition trigger** (`dimensionChanged`)
-  Plays a video when the player enters configured dimensions.
+- **Item obtained** (`itemObtained`)
+  Plays when the player obtains a configured item ID (pickup, craft, or smelt result). *Obtaining* is not the same as *holding* — it does not fire from already-owned items, and `/give` is not guaranteed to emit an event (best-effort).
+
+- **Item crafted** (`itemCrafted`)
+  Plays when a configured item is **actually crafted** (inventory 2×2 grid or crafting table) — the act of crafting itself, never a pickup, `/give`, or smelt. It is independent from `itemObtained`, so a single craft may fire both if both are configured for that item.
+
+- **Recipe unlocked** (`recipeUnlocked`)
+  Plays when a configured recipe is newly unlocked in the player's recipe book.
+
+- **Scoreboard threshold** (`scoreboard`)
+  Plays when a player's score on a configured objective satisfies a comparison (see below).
+
+- **Custom** (`custom`)
+  Has no built-in detector — fired only by the [public API](#-developer-api) or the `play` command. Useful for other mods to attach cinematics to their own events.
+
+### Scoreboard comparators
+
+Each `scoreboard` entry compares a player's score on an objective against a `value` using a `comparator`:
+
+| `comparator` | Fires when |
+|---|---|
+| `equal` | `score == value` |
+| `less` | `score < value` |
+| `greater` | `score > value` |
+| `lessOrEqual` | `score <= value` |
+| `greaterOrEqual` | `score >= value` (default) |
+
+- **Edge-triggered, re-armable:** a satisfied comparison fires **once** and will not repeat every time the score changes. It only re-arms (becomes eligible to fire again) after the comparison turns **false** and crosses back to true.
+- **Persistent across reconnects:** because scores persist with the world, a comparison that was already satisfied before you logged out will **not** re-fire when you rejoin. It only fires again if the score drops below the comparator and crosses it again while online.
+
+---
+
+## ⚙️ Common Configuration (`conditionalvideos-common.json`)
+
+A separate file controls client playback behavior. It is created automatically with safe defaults.
+
+| Property | Type | Default | Authority | Description |
+|---|---|---|---|---|
+| `videoQuality` | `string` | `AUTO` | Server-authoritative | `AUTO` picks the best available stream. Any other value (e.g. `LOWEST`, `LOW`, `MEDIUM`, `HIGH`, `HIGHEST`) **strictly forces** that quality. |
+| `alwaysShowCursor` | `boolean` | `false` | Server-authoritative | When `true`, the playback screen never auto-hides the mouse cursor. |
+| `allowGameSounds` | `boolean` | `false` | Server-authoritative | When `true`, vanilla Minecraft sounds keep playing during a video (by default they are muted). |
+| `blockMatureContent` | `boolean` | `true` | **Client-only** | When `true`, mature-content sources are blocked. **A server cannot override this** — it is always read from the client's own file. |
+
+> **Authority:** in multiplayer, the three server-authoritative options come from the server's common config when available, falling back to the client's local file otherwise. `blockMatureContent` is **never** synced and is **always** enforced from the local client file, in both singleplayer and multiplayer.
+
+> **Forced quality is precise, not a crop:** forcing a quality only has an effect on **multi-variant** sources (YouTube and similar platforms). A direct file or single-variant `.mp4` has only one stream, so forcing is a no-op there. Available qualities also depend on what the YouTube extension can extract.
 
 ---
 
 ## 🧱 Condition Object Schema
 
-Each condition entry now holds a **playlist** under `videos: [...]` plus a few shared flags. Each item in `videos` is a `VideoEntry` describing a single clip plus its overlay/skip/loop/transition options.
+Each condition entry holds a **playlist** under `videos: [...]` plus a few shared flags. Each item in `videos` is a `VideoEntry` describing a single clip plus its overlay/skip/loop/transition options.
 
 ### Shared condition fields
 
@@ -147,15 +212,24 @@ Each condition entry now holds a **playlist** under `videos: [...]` plus a few s
 |---|---|---|---|
 | `repeatableInSameSession` | `boolean` | Yes | If `false`, this condition key can trigger once per session. If `true`, it can trigger repeatedly during the same session. |
 | `playlistLoop` | `boolean` | No | When `true`, after the last entry finishes the playlist restarts from the first. Default `false`. |
-| `videos` | `VideoEntry[]` | Yes | One or more entries played in order. A playlist of length 1 behaves like the legacy single-video setup. |
+| `videos` | `VideoEntry[]` | Yes | One or more entries played in order. A playlist of length 1 behaves like a single-video setup. |
+
+### Scoreboard-only fields
+
+`scoreboard` entries add two fields **at the condition level** (alongside the shared fields above):
+
+| Property | Type | Required | Description |
+|---|---|---|---|
+| `value` | `int` | Yes | The threshold compared against the player's score. |
+| `comparator` | `string` | No | One of `equal`, `less`, `greater`, `lessOrEqual`, `greaterOrEqual`. Default `greaterOrEqual`. |
 
 ### `VideoEntry` fields
 
 | Property | Type | Required | Description |
 |---|---|---|---|
 | `source` | `string` | Yes | Either a path to a local video file (relative to the Minecraft game directory or absolute) **or** a URL (`http://`, `https://`, YouTube link). |
-| `skippable` | `boolean` | No | If `true`, the user can skip playback with `ESC`. Default `true`. Forced to `true` when `videoLoop = true`. |
-| `videoLoop` | `boolean` | No | If `true`, the entry loops seamlessly until the player skips it with `ESC`. Default `false`. Requires `skippable = true`. |
+| `skippable` | `boolean` | No | If `true`, the user can skip playback. Default `true`. Forced to `true` when `videoLoop = true`. |
+| `videoLoop` | `boolean` | No | If `true`, the entry loops seamlessly until the player skips it. Default `false`. Requires `skippable = true`. |
 | `enableBackground` | `boolean` | No | Enables a solid-color full-screen background behind the video. Default `true`. |
 | `colorBackground` | `string` | No | Hex color in `#RRGGBB` or `#AARRGGBB` format. Default `#000000`. |
 | `videoTitle` | `string` | No | Optional title overlay. Supports legacy Minecraft format codes (`&6`, `&l`, `&r`, etc.). |
@@ -206,22 +280,85 @@ In multiplayer the server only ships **local-file** sources to clients. URLs in 
 
 ---
 
+## 🧑‍⚖️ Server Commands
+
+A command tree lets operators drive playback on any player. Available to **permission level 2+** (so it works from command blocks and OPs), and from the server console.
+
+```
+/conditionalvideos play <targets> <condition>
+/conditionalvideos stop <targets>
+/conditionalvideos pause <targets>
+```
+
+- **`play`** forces the given condition to play on each target, ignoring the once-per-session gate. The `<condition>` argument auto-completes with the keys that currently have at least one video in the active config.
+- **`stop`** closes the active playback on each target and clears their pending queue.
+- **`pause`** toggles pause/resume on each target's current video (a pause icon appears in the top-right corner).
+
+**Condition keys** use a bare key for simple conditions or a `type/key` form for keyed ones:
+
+| Key form | Examples |
+|---|---|
+| Bare | `firstJoin`, `playerDeath`, `totemUsed`, `bedSleep` |
+| `entityKilled/<entity>` | `entityKilled/minecraft:warden` |
+| `deathByEntity/<entity>` | `deathByEntity/minecraft:creeper` |
+| `advancement/<id>` | `advancement/minecraft:story/mine_diamond` |
+| `dimension/<id>` | `dimension/minecraft:the_nether` |
+| `itemObtained/<item>` | `itemObtained/minecraft:diamond` |
+| `itemCrafted/<item>` | `itemCrafted/minecraft:crafting_table` |
+| `recipeUnlocked/<recipe>` | `recipeUnlocked/minecraft:furnace` |
+| `scoreboard/<objective>` | `scoreboard/kills` |
+| `custom/<id>` | `custom/my_event` |
+
+> Note: the command/API key for advancement and dimension conditions uses the `advancement/...` and `dimension/...` prefixes, while the **config JSON** stores them under the `advancementCompleted` and `dimensionChanged` maps.
+
+---
+
 ## ⌨️ In-Game Controls
 
-While a video is playing:
+By default the **skip key is unbound**, which falls back to `ESC`:
 
 - **Tap `ESC`** → skip to the next playlist entry (or close the playback if it is the last one). Looped entries are interrupted as well.
 - **Hold `ESC` for ~1 second, then release** → close the playback screen entirely without queuing the next entry. The release-after-hold behavior prevents the in-world pause menu from toggling repeatedly if you keep the key pressed.
-- The mouse cursor auto-hides after a few seconds of inactivity and reappears the moment the mouse moves.
-- Vanilla Minecraft sounds are muted while a video (or the multiplayer loading screen) is on screen.
+
+If you **bind a dedicated skip key** (Options → Controls → *Conditional Videos*), that key becomes the only active skip key (tap = skip / hold = close), and any other key — including `ESC` — does nothing while a video is playing. The on-screen skip hint always shows the name of the **currently active** key.
+
+Other behavior:
+
+- The mouse cursor auto-hides after a few seconds of inactivity and reappears the moment the mouse moves (unless `alwaysShowCursor` is enabled).
+- Vanilla Minecraft sounds are muted while a video (or the multiplayer loading screen) is on screen (unless `allowGameSounds` is enabled).
+- Minecraft toast notifications (advancements, recipes, system) are hidden while a video is playing so they do not obstruct it, and reappear once playback ends.
 
 `skippable = false` disables both the tap and hold behaviors for that entry; the player must wait for it to finish or for the playlist to advance via `nextAt` / `videoLoop = false`.
 
 ---
 
+## 🪢 Playback Queue
+
+Only one video plays at a time. If a new condition triggers while a video (or the loading screen) is already on screen, it is **postponed**, not dropped:
+
+- Triggers are queued **FIFO** and play in order once the current video closes, chaining until the queue is empty.
+- The same condition is not queued twice, and the queue is capped to avoid unbounded growth.
+- `firstJoin` is always guaranteed to play first; anything that fires during world load waits behind it.
+- A `stop` command (or the equivalent API call) both stops the current video and clears the pending queue.
+- Disconnecting clears the queue.
+
+---
+
+## 🔞 Mature Content Blocking
+
+`blockMatureContent` (default `true`, **client-only and not overridable by the server**) protects the client from adult-content sources:
+
+- URLs configured by a **server** that point to a mature-content site are blocked — the client does not even attempt to play them.
+- **Singleplayer / local** videos in your own config are subject to the same rule.
+- Protection combines a best-effort domain blocklist (checked before a stream is opened) with WATERMeDIA's own platform classification. Blocked entries are skipped silently (logged, no crash) and the playlist advances to the next entry.
+
+> Domain coverage is best-effort; raw CDNs that WATERMeDIA does not classify as a platform may not be detected.
+
+---
+
 ## 🌍 Localization
 
-UI strings (`Press ESC to skip`, `Loading video…`) ship in four locales out of the box:
+UI and command strings ship in four locales out of the box:
 
 - `en_us`
 - `es_es`
@@ -246,21 +383,22 @@ The config includes one internal tracking field managed by the mod:
 
 ## 🔄 Config Migration
 
-The on-disk schema is versioned via `configVersion`. Configs created by ConditionalVideos 1.1.x (with the legacy `video: "..."` field per condition) are migrated automatically the first time 1.2.0 reads them:
+The on-disk schema is versioned via `configVersion`. The current version is **3**.
 
-1. A backup of the original file is written next to it as `conditionalvideos.json.bak-v<previousVersion>` (or `conditionalvideos-server.json.bak-v...`).
-2. Each legacy condition's `video` string and decorator fields are folded into a single-entry `videos: [...]` playlist.
-3. The file is rewritten with `configVersion: 2`.
+- Configs created by ConditionalVideos 1.1.x (legacy `video: "..."` per condition) are folded into single-entry `videos: [...]` playlists, and a backup is written next to the file as `conditionalvideos.json.bak-v<previousVersion>`.
+- The 1.2.0 → 1.3.0 (`v2` → `v3`) migration is **additive**: new condition maps are simply created empty; existing entries and `consumedConditionSessions` are preserved.
 
-If you want to revert, the `.bak-v1` file is left untouched and you can restore it manually.
+> **Config safety:** a single malformed entry (typo) **never** wipes the file. Entries are parsed leniently — a bad one is skipped and logged (once), while every valid entry is kept. On a JSON syntax error the file is left **untouched** and defaults are used only in memory for that session, so you can fix the typo without losing your work.
 
 ---
 
-## 🗂️ Full `config/conditionalvideos.json` or `config/conditionalvideos-server.json` Example
+## 🗂️ Example `config/conditionalvideos.json` / `config/conditionalvideos-server.json`
+
+Only `firstJoin` ships preconfigured by default; every other condition is written as an empty `{}` until you add videos to it. The example below is filled in to show the shape of each condition type (`configVersion: 3`).
 
 ```json
 {
-  "configVersion": 2,
+  "configVersion": 3,
   "firstJoin": {
     "repeatableInSameSession": false,
     "playlistLoop": false,
@@ -275,7 +413,6 @@ If you want to revert, the `.bak-v1` file is left untouched and you can restore 
         "videoDescription": "&fEnjoy your journey",
         "videoDescriptionPosition": "topLeft",
         "titleTextScale": 1.4,
-        "descriptionTextScale": 1.0,
         "textBoxOpacity": 0.5,
         "videoVolume": 0.8,
         "nextAt": 8.0
@@ -283,8 +420,6 @@ If you want to revert, the `.bak-v1` file is left untouched and you can restore 
       {
         "source": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
         "skippable": true,
-        "enableBackground": true,
-        "colorBackground": "#FF000000",
         "videoVolume": 1.0,
         "transition": "fadeOut/In"
       }
@@ -292,82 +427,30 @@ If you want to revert, the `.bak-v1` file is left untouched and you can restore 
   },
   "playerDeath": {
     "repeatableInSameSession": true,
-    "playlistLoop": false,
     "videos": [
-      {
-        "source": "videos/death/default_death.mp4",
-        "skippable": true,
-        "enableBackground": true,
-        "colorBackground": "#AA000000",
-        "videoTitle": "&cYou Died",
-        "videoTitlePosition": "bottomLeft",
-        "videoDescription": "&7Try again",
-        "videoDescriptionPosition": "bottomLeft"
-      }
+      { "source": "videos/death/default_death.mp4", "videoTitle": "&cYou Died" }
     ]
   },
+  "totemUsed": {
+    "repeatableInSameSession": true,
+    "videos": [
+      { "source": "videos/totem.mp4", "videoTitle": "&eSaved by a Totem" }
+    ]
+  },
+  "bedSleep": {},
   "entityKilled": {
-    "minecraft:skeleton": {
-      "repeatableInSameSession": true,
-      "videos": [
-        {
-          "source": "videos/kills/skeleton.mp4",
-          "skippable": true,
-          "enableBackground": false,
-          "colorBackground": "#000000",
-          "videoTitle": "&fSkeleton Defeated",
-          "videoTitlePosition": "topRight",
-          "videoDescription": "&7Nice shot",
-          "videoDescriptionPosition": "topRight"
-        }
-      ]
-    },
     "minecraft:warden": {
       "repeatableInSameSession": false,
       "videos": [
-        {
-          "source": "videos/kills/warden.mp4",
-          "skippable": false,
-          "enableBackground": true,
-          "colorBackground": "#CC000000",
-          "videoTitle": "&5&lEpic Victory",
-          "videoTitlePosition": "topRight",
-          "videoDescription": "&dYou defeated the Warden",
-          "videoDescriptionPosition": "topRight",
-          "titleTextScale": 1.6
-        }
+        { "source": "videos/kills/warden.mp4", "skippable": false, "videoTitle": "&5&lEpic Victory" }
       ]
     }
   },
   "deathByEntity": {
-    "minecraft:zombie": {
-      "repeatableInSameSession": true,
-      "videos": [
-        {
-          "source": "videos/death/zombie_death.mp4",
-          "skippable": true,
-          "enableBackground": true,
-          "colorBackground": "#B0000000",
-          "videoTitle": "&2A Zombie got you",
-          "videoTitlePosition": "bottomRight",
-          "videoDescription": "&7Watch your back at night",
-          "videoDescriptionPosition": "bottomRight"
-        }
-      ]
-    },
     "minecraft:creeper": {
       "repeatableInSameSession": false,
       "videos": [
-        {
-          "source": "videos/death/creeper_death.mp4",
-          "skippable": true,
-          "enableBackground": true,
-          "colorBackground": "#99000000",
-          "videoTitle": "&aBoom...",
-          "videoTitlePosition": "bottomRight",
-          "videoDescription": "&7A Creeper surprised you",
-          "videoDescriptionPosition": "bottomRight"
-        }
+        { "source": "videos/death/creeper_death.mp4", "videoTitle": "&aBoom..." }
       ]
     }
   },
@@ -375,31 +458,7 @@ If you want to revert, the `.bak-v1` file is left untouched and you can restore 
     "minecraft:story/mine_diamond": {
       "repeatableInSameSession": false,
       "videos": [
-        {
-          "source": "videos/advancements/diamond.mp4",
-          "skippable": true,
-          "enableBackground": false,
-          "colorBackground": "#000000",
-          "videoTitle": "&bDiamonds!",
-          "videoTitlePosition": "topLeft",
-          "videoDescription": "&fFirst diamond obtained",
-          "videoDescriptionPosition": "topLeft"
-        }
-      ]
-    },
-    "minecraft:nether/root": {
-      "repeatableInSameSession": false,
-      "videos": [
-        {
-          "source": "videos/advancements/nether_entry.mp4",
-          "skippable": true,
-          "enableBackground": true,
-          "colorBackground": "#AA1A0000",
-          "videoTitle": "&4Welcome to the Nether",
-          "videoTitlePosition": "topLeft",
-          "videoDescription": "&7Temperature rising",
-          "videoDescriptionPosition": "topLeft"
-        }
+        { "source": "videos/advancements/diamond.mp4", "videoTitle": "&bDiamonds!" }
       ]
     }
   },
@@ -408,38 +467,60 @@ If you want to revert, the `.bak-v1` file is left untouched and you can restore 
       "repeatableInSameSession": true,
       "playlistLoop": true,
       "videos": [
-        {
-          "source": "videos/dimensions/nether_loop.mp4",
-          "skippable": true,
-          "videoLoop": true,
-          "enableBackground": true,
-          "colorBackground": "#CC000000",
-          "videoTitle": "&cEntered the Nether",
-          "videoTitlePosition": "bottomLeft",
-          "videoDescription": "&7Press ESC when you are ready",
-          "videoDescriptionPosition": "bottomLeft"
-        }
-      ]
-    },
-    "minecraft:the_end": {
-      "repeatableInSameSession": false,
-      "videos": [
-        {
-          "source": "videos/dimensions/end.mp4",
-          "skippable": false,
-          "enableBackground": true,
-          "colorBackground": "#CC000000",
-          "videoTitle": "&5The End awaits",
-          "videoTitlePosition": "bottomLeft",
-          "videoDescription": "&dPrepare for the dragon",
-          "videoDescriptionPosition": "bottomLeft"
-        }
+        { "source": "videos/dimensions/nether_loop.mp4", "videoLoop": true, "videoTitle": "&cEntered the Nether" }
       ]
     }
   },
+  "itemObtained": {
+    "minecraft:diamond": {
+      "repeatableInSameSession": false,
+      "videos": [
+        { "source": "videos/items/first_diamond.mp4", "videoTitle": "&bFirst Diamond" }
+      ]
+    }
+  },
+  "itemCrafted": {
+    "minecraft:crafting_table": {
+      "repeatableInSameSession": false,
+      "videos": [
+        { "source": "videos/items/first_table.mp4", "videoTitle": "&6Crafting Table" }
+      ]
+    }
+  },
+  "recipeUnlocked": {
+    "minecraft:furnace": {
+      "repeatableInSameSession": false,
+      "videos": [
+        { "source": "videos/recipes/furnace.mp4", "videoTitle": "&7Furnace Unlocked" }
+      ]
+    }
+  },
+  "scoreboard": {
+    "kills": {
+      "repeatableInSameSession": false,
+      "value": 100,
+      "comparator": "greaterOrEqual",
+      "videos": [
+        { "source": "videos/scoreboard/100_kills.mp4", "videoTitle": "&c100 Kills!" }
+      ]
+    }
+  },
+  "custom": {},
   "consumedConditionSessions": []
 }
 ```
+
+---
+
+## 🧰 Developer API
+
+Other mods can register **custom conditions** and **trigger / control playback** through a small, stable public API in the `org.mateof24.conditionalvideos.api` package.
+
+📖 **Full technical documentation lives in the [Developer Wiki](wiki/Home.md):**
+
+- [Home — getting started, where things run, dependency setup](wiki/Home.md)
+- [API Reference — every public method, types, and condition keys](wiki/API-Reference.md)
+- [Custom Conditions & Examples — end-to-end recipes](wiki/Custom-Conditions.md)
 
 ---
 

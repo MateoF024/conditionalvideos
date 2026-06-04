@@ -3,6 +3,7 @@ package org.mateof24.conditionalvideos.video;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
+import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
 
 import java.util.function.BooleanSupplier;
 
@@ -13,23 +14,27 @@ public final class VideoLoadingScreen extends Screen {
     private final Runnable onReady;
     private final Runnable onTimeout;
     private final int timeoutTicks;
+    private final int videoCount;
 
     private int elapsedTicks;
     private boolean transitioned;
     private boolean settled;
 
-    public VideoLoadingScreen(BooleanSupplier readyCheck, Runnable onReady, Runnable onTimeout, int timeoutTicks) {
+    public VideoLoadingScreen(BooleanSupplier readyCheck, Runnable onReady, Runnable onTimeout, int timeoutTicks, int videoCount) {
         super(Component.literal("Conditional Video Loading"));
         this.readyCheck = readyCheck;
         this.onReady = onReady;
         this.onTimeout = onTimeout;
         this.timeoutTicks = timeoutTicks;
+        this.videoCount = videoCount;
     }
 
     @Override
     protected void init() {
+        boolean allowSounds = ActiveConfigResolver.effectiveAllowGameSounds(minecraft);
+        VideoAudioState.setAllowGameSounds(allowSounds);
         VideoAudioState.setLoadingActive(true);
-        if (minecraft != null) {
+        if (minecraft != null && !allowSounds) {
             minecraft.getSoundManager().stop();
         }
     }
@@ -62,7 +67,7 @@ public final class VideoLoadingScreen extends Screen {
 
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
-        VideoLoadingOverlay.render(guiGraphics, font, width, height);
+        VideoLoadingOverlay.render(guiGraphics, font, width, height, videoCount);
     }
 
     @Override

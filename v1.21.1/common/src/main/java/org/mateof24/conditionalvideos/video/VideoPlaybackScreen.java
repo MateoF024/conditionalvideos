@@ -2,16 +2,22 @@ package org.mateof24.conditionalvideos.video;
 
 import com.mojang.blaze3d.platform.InputConstants;
 import com.mojang.blaze3d.vertex.PoseStack;
+import net.minecraft.client.KeyMapping;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.FormattedCharSequence;
 import org.lwjgl.glfw.GLFW;
 import org.mateof24.conditionalvideos.ConditionalVideos;
+import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
+import org.mateof24.conditionalvideos.config.CommonConfig;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig.VideoEntry;
+import org.mateof24.conditionalvideos.runtime.ConditionalVideosKeybinds;
 import org.mateof24.conditionalvideos.video.backend.WaterMediaVideoBackend;
 import org.watermedia.api.media.MRL;
+import org.watermedia.api.util.MediaQuality;
 
 import java.net.URI;
 import java.util.ArrayList;
@@ -19,7 +25,6 @@ import java.util.List;
 import java.util.function.Function;
 
 public final class VideoPlaybackScreen extends Screen {
-    private static final Component SKIP_HINT = Component.translatable("screen.conditionalvideos.skip_hint");
     private static final int HINT_VISIBLE_TICKS = 120;
     private static final int HINT_FADE_IN_TICKS = 30;
     private static final int HINT_FADE_OUT_TICKS = 40;
@@ -34,6 +39,7 @@ public final class VideoPlaybackScreen extends Screen {
     private static final int FIRST_FRAME_TIMEOUT_TICKS = 20 * 90;
     private static final int ESC_LONG_PRESS_TICKS = 20;
     private static final int ESCAPE_KEY = 256;
+    private static final int FULLSCREEN_KEYCODE = 300;
     private static final int CURSOR_HIDE_DELAY_TICKS = 100;
     private static final int LOOP_PRELOAD_LEAD_TICKS = 20 * 20;
     private static final int PRE_RESUME_LEAD_TICKS = 5;
@@ -44,7 +50,9 @@ public final class VideoPlaybackScreen extends Screen {
     private final List<VideoEntry> playlist;
     private final Function<VideoEntry, URI> sourceResolver;
     private final boolean playlistLoop;
+    private final String conditionKey;
     private final Runnable onPlaylistEnd;
+    private final MediaQuality forcedQuality;
 
     private State state = State.PLAYING;
 
@@ -83,14 +91,20 @@ public final class VideoPlaybackScreen extends Screen {
     private boolean closed;
     private boolean currentBackendInitialised;
     private int firstFrameWaitTicks;
-    private int escHoldTicks;
-    private boolean wasEscDownLastTick;
     private int consecutiveFailures;
+
+    private boolean skipKeyDown;
+    private int skipHoldTicks;
+    private boolean skipClosedByHold;
 
     private double lastMouseX = Double.NaN;
     private double lastMouseY = Double.NaN;
     private int ticksSinceMouseMoved;
     private boolean cursorHidden;
+    private boolean alwaysShowCursor;
+    private boolean paused;
+    private boolean skipKeyIsEsc = true;
+    private Component skipHint = Component.translatable("screen.conditionalvideos.skip_hint", escDisplayName());
 
     public VideoPlaybackScreen(
             ConditionalVideosConfig config,
@@ -98,6 +112,7 @@ public final class VideoPlaybackScreen extends Screen {
             List<VideoEntry> playlist,
             Function<VideoEntry, URI> sourceResolver,
             URI firstSourceUri,
+            String conditionKey,
             Runnable onPlaylistEnd
     ) {
         super(Component.literal("Conditional Video"));
@@ -105,12 +120,15 @@ public final class VideoPlaybackScreen extends Screen {
         this.playlist = playlist;
         this.sourceResolver = sourceResolver;
         this.playlistLoop = conditionConfig.resolvedPlaylistLoop();
+        this.conditionKey = conditionKey;
         this.onPlaylistEnd = onPlaylistEnd == null ? () -> { } : onPlaylistEnd;
+        this.forcedQuality = resolveForcedQuality(ActiveConfigResolver.effectiveVideoQuality(Minecraft.getInstance()));
 
         this.currentIndex = 0;
         this.currentEntry = playlist.get(0);
         applyCurrentEntryVisuals();
         this.currentBackend = new WaterMediaVideoBackend(firstSourceUri, currentEntry.resolvedVolume());
+        this.currentBackend.setForcedQuality(forcedQuality);
 
         warmAllPlaylistMrls(firstSourceUri);
     }
@@ -152,43 +170,58 @@ public final class VideoPlaybackScreen extends Screen {
             ensureBackendInitialised(currentBackend);
             currentBackendInitialised = true;
         }
+        boolean allowSounds = ActiveConfigResolver.effectiveAllowGameSounds(minecraft);
+        alwaysShowCursor = ActiveConfigResolver.effectiveAlwaysShowCursor(minecraft);
+        VideoAudioState.setAllowGameSounds(allowSounds);
         VideoAudioState.setVideoPlaying(true);
-        if (minecraft != null) {
+        if (minecraft != null && !allowSounds) {
             minecraft.getSoundManager().stop();
-            wasEscDownLastTick = InputConstants.isKeyDown(minecraft.getWindow().getWindow(), ESCAPE_KEY);
+        }
+        resolveSkipBinding();
+    }
+
+    private static MediaQuality resolveForcedQuality(String value) {
+        if (value == null || value.isBlank() || CommonConfig.QUALITY_AUTO.equalsIgnoreCase(value.trim())) {
+            return null;
+        }
+        try {
+            return MediaQuality.valueOf(value.trim().toUpperCase(java.util.Locale.ROOT));
+        } catch (IllegalArgumentException exception) {
+            ConditionalVideos.LOGGER.warn("Unknown videoQuality '{}' in common config; falling back to AUTO.", value);
+            return null;
         }
     }
 
-    private boolean isEscapeDownNow() {
-        return minecraft != null && InputConstants.isKeyDown(minecraft.getWindow().getWindow(), ESCAPE_KEY);
+    // The "skip key" is a single key: ESC when the keybind is unbound (or bound to ESC), otherwise
+    // the assigned key. That key does tap = skip / hold = close. Whatever isn't the skip key
+    // (e.g. ESC once another key is assigned) does nothing — only one key is ever active.
+    private void resolveSkipBinding() {
+        KeyMapping skip = ConditionalVideosKeybinds.SKIP;
+        skipKeyIsEsc = skip.isUnbound() || skip.matches(ESCAPE_KEY, -1);
+        Component keyName = skipKeyIsEsc ? escDisplayName() : skip.getTranslatedKeyMessage();
+        skipHint = Component.translatable("screen.conditionalvideos.skip_hint", keyName);
     }
 
-    private void handleEscapePolling() {
-        if (!isCurrentSkippable()) {
-            wasEscDownLastTick = false;
-            escHoldTicks = 0;
+    private static Component escDisplayName() {
+        return InputConstants.getKey(ESCAPE_KEY, -1).getDisplayName();
+    }
+
+    private boolean isSkipKey(int keyCode, int scanCode) {
+        if (skipKeyIsEsc) {
+            return keyCode == ESCAPE_KEY;
+        }
+        return ConditionalVideosKeybinds.SKIP.matches(keyCode, scanCode);
+    }
+
+    private void tickSkipHold() {
+        if (!skipKeyDown || skipClosedByHold || !isCurrentSkippable()) {
             return;
         }
-        boolean escDown = isEscapeDownNow();
-        if (escDown && !wasEscDownLastTick) {
-            escHoldTicks = 1;
-        } else if (escDown) {
-            escHoldTicks++;
-        } else if (wasEscDownLastTick) {
-            if (state == State.PLAYING) {
-                if (escHoldTicks >= ESC_LONG_PRESS_TICKS) {
-                    escHoldTicks = 0;
-                    wasEscDownLastTick = false;
-                    onClose();
-                    return;
-                }
-                if (escHoldTicks > 0) {
-                    skipToNextEntry();
-                }
-            }
-            escHoldTicks = 0;
+        skipHoldTicks++;
+        if (skipHoldTicks >= ESC_LONG_PRESS_TICKS) {
+            skipClosedByHold = true;
+            onClose();
         }
-        wasEscDownLastTick = escDown;
     }
 
     private void advanceAfterFailure() {
@@ -276,12 +309,16 @@ public final class VideoPlaybackScreen extends Screen {
             return;
         }
 
-        handleEscapePolling();
+        tickSkipHold();
         if (closed) {
             return;
         }
 
         tickCursorAutoHide();
+
+        if (paused) {
+            return;
+        }
 
         currentBackend.tick();
         if (nextBackend != null) {
@@ -448,6 +485,7 @@ public final class VideoPlaybackScreen extends Screen {
         skipNextIndex = target;
         skipNextEntry = entry;
         skipNextBackend = new WaterMediaVideoBackend(uri, entry.resolvedVolume());
+        skipNextBackend.setForcedQuality(forcedQuality);
         skipNextBackend.setVolumeMultiplier(0f);
         skipNextBackend.setStartPaused(true);
         ensureBackendInitialised(skipNextBackend);
@@ -481,6 +519,7 @@ public final class VideoPlaybackScreen extends Screen {
         nextIndex = targetIndex;
         nextEntry = entry;
         nextBackend = new WaterMediaVideoBackend(uri, entry.resolvedVolume());
+        nextBackend.setForcedQuality(forcedQuality);
         nextBackend.setVolumeMultiplier(0f);
         nextBackend.setStartPaused(true);
         ensureBackendInitialised(nextBackend);
@@ -606,7 +645,7 @@ public final class VideoPlaybackScreen extends Screen {
             if (currentBackend.hasRenderedAnyFrame() && currentEnableBackground) {
                 guiGraphics.fill(0, 0, width, height, currentBackgroundColor);
             } else {
-                VideoLoadingOverlay.render(guiGraphics, font, width, height);
+                VideoLoadingOverlay.render(guiGraphics, font, width, height, playlist.size());
             }
             currentBackend.render(width, height, 1f);
             return;
@@ -629,7 +668,7 @@ public final class VideoPlaybackScreen extends Screen {
             int x = width / 2;
             int y = height - 24;
             int color = (hintAlpha << 24) | 0x00FFFFFF;
-            guiGraphics.drawCenteredString(font, SKIP_HINT, x, y, color);
+            guiGraphics.drawCenteredString(font, skipHint, x, y, color);
             renderVideoMetadata(guiGraphics, hintAlpha);
         }
 
@@ -640,6 +679,22 @@ public final class VideoPlaybackScreen extends Screen {
                 guiGraphics.fill(0, 0, width, height, (alpha << 24));
             }
         }
+
+        if (paused) {
+            drawPauseIcon(guiGraphics);
+        }
+    }
+
+    private void drawPauseIcon(GuiGraphics guiGraphics) {
+        int barWidth = 6;
+        int barHeight = 22;
+        int gap = 6;
+        int margin = 12;
+        int color = 0xCCFFFFFF;
+        int right = width - margin;
+        int top = margin;
+        guiGraphics.fill(right - (barWidth * 2) - gap, top, right - barWidth - gap, top + barHeight, color);
+        guiGraphics.fill(right - barWidth, top, right, top + barHeight, color);
     }
 
     private void renderVideoMetadata(GuiGraphics guiGraphics, int alpha) {
@@ -752,13 +807,34 @@ public final class VideoPlaybackScreen extends Screen {
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
-        if (keyCode == 300) {
+        if (keyCode == FULLSCREEN_KEYCODE) {
             return super.keyPressed(keyCode, scanCode, modifiers);
         }
-        if (keyCode == ESCAPE_KEY) {
+        if (isSkipKey(keyCode, scanCode)) {
+            if (!skipKeyDown) {
+                skipKeyDown = true;
+                skipHoldTicks = 0;
+                skipClosedByHold = false;
+            }
             return true;
         }
-        return super.keyPressed(keyCode, scanCode, modifiers);
+        // Any other key (including ESC once a separate skip key is bound) does nothing.
+        return true;
+    }
+
+    @Override
+    public boolean keyReleased(int keyCode, int scanCode, int modifiers) {
+        if (isSkipKey(keyCode, scanCode) && skipKeyDown) {
+            boolean closedByHold = skipClosedByHold;
+            skipKeyDown = false;
+            skipHoldTicks = 0;
+            skipClosedByHold = false;
+            if (!closedByHold && state == State.PLAYING && !paused && isCurrentSkippable()) {
+                skipToNextEntry();
+            }
+            return true;
+        }
+        return super.keyReleased(keyCode, scanCode, modifiers);
     }
 
     @Override
@@ -816,6 +892,12 @@ public final class VideoPlaybackScreen extends Screen {
     }
 
     private void tickCursorAutoHide() {
+        if (alwaysShowCursor) {
+            if (cursorHidden) {
+                setCursorVisibility(true);
+            }
+            return;
+        }
         if (cursorHidden) {
             return;
         }
@@ -849,11 +931,53 @@ public final class VideoPlaybackScreen extends Screen {
         return currentEntry.resolvedSkippable();
     }
 
+    public boolean isPaused() {
+        return paused;
+    }
+
+    public void togglePause() {
+        setPaused(!paused);
+    }
+
+    public void setPaused(boolean value) {
+        if (paused == value) {
+            return;
+        }
+        paused = value;
+        if (currentBackend != null) {
+            if (paused) {
+                currentBackend.pause();
+            } else {
+                currentBackend.resume();
+            }
+        }
+    }
+
     @Override
     public void onClose() {
         if (closed) {
             return;
         }
+        finishPlayback();
+        if (minecraft != null && minecraft.screen == this) {
+            minecraft.setScreen(null);
+        }
+        org.mateof24.conditionalvideos.condition.shared.ConditionVideoPlayer.playNextInQueue(minecraft);
+    }
+
+    @Override
+    public void removed() {
+        // If this screen is replaced without going through onClose() (e.g. another screen takes
+        // over), Minecraft only calls removed(). Release native resources and fire the end event
+        // here too so WaterMedia backends never leak. The queue is intentionally NOT resumed:
+        // something else is deliberately taking the screen.
+        if (closed) {
+            return;
+        }
+        finishPlayback();
+    }
+
+    private void finishPlayback() {
         closed = true;
         state = State.CLOSED;
         if (cursorHidden) {
@@ -872,10 +996,8 @@ public final class VideoPlaybackScreen extends Screen {
         }
         disposeSkipPreload();
         VideoAudioState.setVideoPlaying(false);
+        org.mateof24.conditionalvideos.runtime.PlaybackEvents.notifyEnded(conditionKey);
         onPlaylistEnd.run();
-        if (minecraft != null && minecraft.screen == this) {
-            minecraft.setScreen(null);
-        }
     }
 
     @Override

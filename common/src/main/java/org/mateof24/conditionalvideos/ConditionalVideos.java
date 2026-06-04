@@ -1,6 +1,10 @@
 package org.mateof24.conditionalvideos;
 
+import org.mateof24.conditionalvideos.api.ConditionalVideosAPI;
+import org.mateof24.conditionalvideos.command.ConditionalVideosCommands;
+import org.mateof24.conditionalvideos.condition.server.ServerConditionEvents;
 import org.mateof24.conditionalvideos.network.ConfigSyncNetworking;
+import org.mateof24.conditionalvideos.network.PlaybackControlNetworking;
 import dev.architectury.platform.Platform;
 import dev.architectury.utils.Env;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
@@ -22,6 +26,10 @@ public final class ConditionalVideos {
             ConditionalVideosConfig.load(ConditionalVideosConfig.serverConfigPath(Platform.getGameFolder()));
         }
         ConfigSyncNetworking.init();
+        PlaybackControlNetworking.init();
+        ConditionalVideosCommands.register();
+        ServerConditionEvents.init();
+        ConditionalVideosAPI.init();
         LOGGER.info("Initializing ConditionalVideos core.");
     }
 }

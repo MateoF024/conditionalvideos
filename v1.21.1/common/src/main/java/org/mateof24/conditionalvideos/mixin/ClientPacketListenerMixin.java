@@ -12,6 +12,17 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(ClientPacketListener.class)
 public abstract class ClientPacketListenerMixin {
 
+    @Inject(method = "handlePlayerCombatKill", at = @At("HEAD"))
+    private void conditionalvideos$captureKiller(ClientboundPlayerCombatKillPacket packet, CallbackInfo ci) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.player == null) {
+            return;
+        }
+        if (packet.playerId() == minecraft.player.getId()) {
+            PlayerDeathVideoHandler.captureKiller(minecraft);
+        }
+    }
+
     @Inject(method = "handlePlayerCombatKill", at = @At("TAIL"))
     private void conditionalvideos$onPlayerCombatKill(ClientboundPlayerCombatKillPacket packet, CallbackInfo ci) {
         Minecraft minecraft = Minecraft.getInstance();
