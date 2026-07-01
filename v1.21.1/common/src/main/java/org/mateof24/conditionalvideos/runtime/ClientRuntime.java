@@ -7,9 +7,12 @@ import net.minecraft.resources.ResourceLocation;
 import org.mateof24.conditionalvideos.condition.advancement.AdvancementVideoHandler;
 import org.mateof24.conditionalvideos.condition.dimension.DimensionChangeVideoHandler;
 import org.mateof24.conditionalvideos.condition.kill.KillEntityVideoHandler;
+import org.mateof24.conditionalvideos.condition.shared.ConditionVideoPlayer;
 import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
 import org.mateof24.conditionalvideos.network.ConfigSyncNetworking;
 
+// Per-tick client dispatcher: detects session start/end, the firstJoin flow, death, and dimension
+// change, handing each off to its condition handler.
 public final class ClientRuntime {
     private static final int DIMENSION_VIDEO_DELAY_TICKS = 20;
     private static final int MULTIPLAYER_HANDSHAKE_TIMEOUT_TICKS = 100;
@@ -31,8 +34,8 @@ public final class ClientRuntime {
                 ConfigSyncNetworking.onClientDisconnected();
                 AdvancementVideoHandler.reset();
                 ActiveConfigResolver.invalidateLocalConfigCache();
-                org.mateof24.conditionalvideos.condition.shared.ConditionVideoPlayer.clearQueue();
-                org.mateof24.conditionalvideos.condition.shared.ConditionVideoPlayer.armFirstJoinGuard();
+                ConditionVideoPlayer.clearQueue();
+                ConditionVideoPlayer.armFirstJoinGuard();
             }
             wasInSession = false;
             wasAlive = false;
@@ -50,7 +53,7 @@ public final class ClientRuntime {
             PlayerDeathVideoHandler.reset();
             AdvancementVideoHandler.reset();
             lastDimension = minecraft.level.dimension().location();
-            org.mateof24.conditionalvideos.condition.shared.ConditionVideoPlayer.armFirstJoinGuard();
+            ConditionVideoPlayer.armFirstJoinGuard();
             joinVideoHandled = false;
             multiplayerHandshakeTicks = 0;
             if (ActiveConfigResolver.isMultiplayerSession(minecraft)) {
@@ -61,7 +64,7 @@ public final class ClientRuntime {
         if (!joinVideoHandled) {
             tickJoinFlow(minecraft);
             if (joinVideoHandled) {
-                org.mateof24.conditionalvideos.condition.shared.ConditionVideoPlayer.releaseFirstJoinGuard(minecraft);
+                ConditionVideoPlayer.releaseFirstJoinGuard(minecraft);
             }
         }
 

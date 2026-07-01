@@ -8,6 +8,7 @@ import com.google.gson.JsonParser;
 import com.google.gson.JsonSyntaxException;
 import net.minecraft.client.Minecraft;
 import org.mateof24.conditionalvideos.ConditionalVideos;
+import org.mateof24.conditionalvideos.debug.DebugLog;
 
 import java.io.IOException;
 import java.io.Reader;
@@ -22,19 +23,27 @@ public final class CommonConfig {
 
     public static final int CURRENT_COMMON_VERSION = 1;
     public static final String QUALITY_AUTO = "AUTO";
+    public static final int DEFAULT_LOAD_TIMEOUT_SECONDS = 180;
+    public static final int MIN_LOAD_TIMEOUT_SECONDS = 30;
 
     private Integer configVersion;
     private String videoQuality;
     private Boolean alwaysShowCursor;
     private Boolean allowGameSounds;
     private Boolean blockMatureContent;
+    private Boolean debugLogging;
+    private Integer videoLoadTimeoutSeconds;
 
     public static CommonConfig load() {
-        return load(configPath());
+        CommonConfig config = load(configPath());
+        DebugLog.setEnabled(config.debugLogging());
+        return config;
     }
 
     public static CommonConfig loadServer(Path gameDirectory) {
-        return load(gameDirectory.resolve("config").resolve(FILE_NAME));
+        CommonConfig config = load(gameDirectory.resolve("config").resolve(FILE_NAME));
+        DebugLog.setEnabled(config.debugLogging());
+        return config;
     }
 
     public static CommonConfig load(Path file) {
@@ -67,6 +76,8 @@ public final class CommonConfig {
         config.alwaysShowCursor = readBool(root, "alwaysShowCursor");
         config.allowGameSounds = readBool(root, "allowGameSounds");
         config.blockMatureContent = readBool(root, "blockMatureContent");
+        config.debugLogging = readBool(root, "debugLogging");
+        config.videoLoadTimeoutSeconds = readInt(root, "videoLoadTimeoutSeconds");
         boolean changed = config.ensureDefaults();
         if (changed) {
             config.save(file);
@@ -141,6 +152,14 @@ public final class CommonConfig {
             blockMatureContent = Boolean.TRUE;
             changed = true;
         }
+        if (debugLogging == null) {
+            debugLogging = Boolean.FALSE;
+            changed = true;
+        }
+        if (videoLoadTimeoutSeconds == null) {
+            videoLoadTimeoutSeconds = DEFAULT_LOAD_TIMEOUT_SECONDS;
+            changed = true;
+        }
         if (configVersion == null || configVersion < CURRENT_COMMON_VERSION) {
             configVersion = CURRENT_COMMON_VERSION;
             changed = true;
@@ -162,6 +181,19 @@ public final class CommonConfig {
 
     public boolean blockMatureContent() {
         return blockMatureContent == null || blockMatureContent;
+    }
+
+    public boolean debugLogging() {
+        return debugLogging != null && debugLogging;
+    }
+
+    // Seconds to wait for a source to start (MRL resolve + first frame) before giving up. A bad/low
+    // value is clamped here rather than rewritten, so the file is never reset on a questionable entry.
+    public int videoLoadTimeoutSeconds() {
+        if (videoLoadTimeoutSeconds == null) {
+            return DEFAULT_LOAD_TIMEOUT_SECONDS;
+        }
+        return Math.max(MIN_LOAD_TIMEOUT_SECONDS, videoLoadTimeoutSeconds);
     }
 
     public boolean isAutoQuality() {

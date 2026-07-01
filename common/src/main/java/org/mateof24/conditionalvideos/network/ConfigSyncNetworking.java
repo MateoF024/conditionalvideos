@@ -7,6 +7,7 @@ import dev.architectury.utils.Env;
 import io.netty.buffer.Unpooled;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.GameType;
 import org.mateof24.conditionalvideos.ConditionalVideos;
@@ -16,6 +17,7 @@ import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
 import org.mateof24.conditionalvideos.video.path.VideoSourceResolver;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
@@ -46,6 +48,10 @@ public final class ConfigSyncNetworking {
     private static final Map<String, DownloadState> CLIENT_DOWNLOADS = new HashMap<>();
     private static boolean clientSyncRequested;
     private static final Map<UUID, GameType> PLAYER_PRE_VIDEO_GAME_MODES = new HashMap<>();
+
+    private static final long SERVER_DATA_TTL_MILLIS = 5000L;
+    private static ServerData cachedServerData;
+    private static long serverDataExpiryMillis;
 
     private ConfigSyncNetworking() {
     }
@@ -138,24 +144,38 @@ public final class ConfigSyncNetworking {
         }
     }
 
+    // Loads the server config, common config and hashed video manifest once and caches them for a short
+    // TTL. Without this every join reloaded the config from disk three times and every client file
+    // request re-hashed every configured video; now a join and a burst of file requests share one load.
+    private static ServerData serverData(MinecraftServer server) {
+        long now = System.currentTimeMillis();
+        ServerData data = cachedServerData;
+        if (data == null || now >= serverDataExpiryMillis) {
+            Path root = server.getServerDirectory().toPath();
+            ConditionalVideosConfig config = ConditionalVideosConfig.loadServer(root);
+            CommonConfig common = CommonConfig.loadServer(root);
+            List<VideoManifestEntry> manifest = collectVideoEntries(config, root);
+            data = new ServerData(config, common, manifest);
+            cachedServerData = data;
+            serverDataExpiryMillis = now + SERVER_DATA_TTL_MILLIS;
+        }
+        return data;
+    }
 
     public static void sendServerConfig(ServerPlayer player) {
-        ConditionalVideosConfig serverConfig = ConditionalVideosConfig.loadServer(player.server.getServerDirectory().toPath());
         FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
-        buffer.writeUtf(serverConfig.toJson());
+        buffer.writeUtf(serverData(player.server).config().toJson());
         NetworkManager.sendToPlayer(player, SERVER_CONFIG_PACKET, buffer);
     }
 
     public static void sendServerCommonConfig(ServerPlayer player) {
-        CommonConfig serverCommon = CommonConfig.loadServer(player.server.getServerDirectory().toPath());
         FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
-        buffer.writeUtf(serverCommon.toAuthoritativeJson());
+        buffer.writeUtf(serverData(player.server).common().toAuthoritativeJson());
         NetworkManager.sendToPlayer(player, SERVER_COMMON_CONFIG_PACKET, buffer);
     }
 
     private static void sendVideoManifest(ServerPlayer player) {
-        ConditionalVideosConfig serverConfig = ConditionalVideosConfig.loadServer(player.server.getServerDirectory().toPath());
-        List<VideoManifestEntry> entries = collectVideoEntries(serverConfig, player.server.getServerDirectory().toPath());
+        List<VideoManifestEntry> entries = serverData(player.server).manifest();
         FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
         buffer.writeVarInt(entries.size());
         for (VideoManifestEntry entry : entries) {
@@ -194,21 +214,8 @@ public final class ConfigSyncNetworking {
     private static void setServerPlayerGameMode(ServerPlayer player, GameType gameType) {
         try {
             player.setGameMode(gameType);
-            return;
-        } catch (Throwable ignored) {
-            // Try reflective fallbacks below.
-        }
-        try {
-            for (java.lang.reflect.Method method : player.getClass().getMethods()) {
-                if (!"setGameMode".equals(method.getName()) || method.getParameterCount() != 1) {
-                    continue;
-                }
-                if (method.getParameterTypes()[0] == GameType.class) {
-                    method.invoke(player, gameType);
-                    return;
-                }
-            }
-        } catch (Exception ignored) {
+        } catch (Throwable throwable) {
+            ConditionalVideos.LOGGER.debug("Failed to set game mode for '{}': {}", player.getScoreboardName(), throwable.toString());
         }
     }
 
@@ -383,8 +390,7 @@ public final class ConfigSyncNetworking {
     }
 
     private static void sendVideoFile(ServerPlayer player, String configuredPath) {
-        ConditionalVideosConfig serverConfig = ConditionalVideosConfig.loadServer(player.server.getServerDirectory().toPath());
-        List<VideoManifestEntry> entries = collectVideoEntries(serverConfig, player.server.getServerDirectory().toPath());
+        List<VideoManifestEntry> entries = serverData(player.server).manifest();
         VideoManifestEntry targetEntry = entries.stream()
                 .filter(entry -> entry.configuredPath().equals(configuredPath))
                 .findFirst()
@@ -398,15 +404,15 @@ public final class ConfigSyncNetworking {
             return;
         }
 
-        byte[] all;
+        long size;
         try {
-            all = Files.readAllBytes(source);
+            size = Files.size(source);
         } catch (IOException exception) {
             ConditionalVideos.LOGGER.warn("Failed reading configured video '{}'", configuredPath, exception);
             return;
         }
 
-        int expectedChunks = (all.length + FILE_CHUNK_SIZE - 1) / FILE_CHUNK_SIZE;
+        int expectedChunks = (int) ((size + FILE_CHUNK_SIZE - 1) / FILE_CHUNK_SIZE);
         FriendlyByteBuf start = new FriendlyByteBuf(Unpooled.buffer());
         start.writeUtf(configuredPath);
         start.writeUtf(targetEntry.conditionType());
@@ -415,15 +421,22 @@ public final class ConfigSyncNetworking {
         start.writeVarInt(expectedChunks);
         NetworkManager.sendToPlayer(player, SERVER_VIDEO_START_PACKET, start);
 
-        for (int i = 0; i < expectedChunks; i++) {
-            int startIndex = i * FILE_CHUNK_SIZE;
-            int length = Math.min(FILE_CHUNK_SIZE, all.length - startIndex);
-            FriendlyByteBuf chunk = new FriendlyByteBuf(Unpooled.buffer());
-            chunk.writeUtf(configuredPath);
-            chunk.writeVarInt(i);
-            chunk.writeVarInt(length);
-            chunk.writeBytes(all, startIndex, length);
-            NetworkManager.sendToPlayer(player, SERVER_VIDEO_CHUNK_PACKET, chunk);
+        // Stream the file in chunks straight from disk instead of holding the whole video in memory.
+        try (InputStream in = Files.newInputStream(source)) {
+            byte[] buffer = new byte[FILE_CHUNK_SIZE];
+            int index = 0;
+            int read;
+            while ((read = in.readNBytes(buffer, 0, buffer.length)) > 0) {
+                FriendlyByteBuf chunk = new FriendlyByteBuf(Unpooled.buffer());
+                chunk.writeUtf(configuredPath);
+                chunk.writeVarInt(index);
+                chunk.writeVarInt(read);
+                chunk.writeBytes(buffer, 0, read);
+                NetworkManager.sendToPlayer(player, SERVER_VIDEO_CHUNK_PACKET, chunk);
+                index++;
+            }
+        } catch (IOException exception) {
+            ConditionalVideos.LOGGER.warn("Failed reading configured video '{}'", configuredPath, exception);
         }
     }
 
@@ -445,6 +458,10 @@ public final class ConfigSyncNetworking {
 
     private record VideoManifestEntry(String configuredPath, String conditionType, String hash, long size,
                                       String extension) {
+    }
+
+    private record ServerData(ConditionalVideosConfig config, CommonConfig common,
+                              List<VideoManifestEntry> manifest) {
     }
 
     private static final class DownloadState {

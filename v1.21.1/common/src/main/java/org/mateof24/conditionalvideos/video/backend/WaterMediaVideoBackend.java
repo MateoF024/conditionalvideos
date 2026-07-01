@@ -6,10 +6,12 @@ import com.mojang.blaze3d.vertex.BufferUploader;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.Tesselator;
 import com.mojang.blaze3d.vertex.VertexFormat;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.GameRenderer;
 import org.lwjgl.opengl.GL11;
 import org.mateof24.conditionalvideos.ConditionalVideos;
 import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
+import org.mateof24.conditionalvideos.debug.DebugLog;
 import org.watermedia.WaterMediaConfig;
 import org.watermedia.api.media.MRL;
 import org.watermedia.api.media.MediaAPI;
@@ -24,18 +26,21 @@ import java.net.URI;
 import java.util.Set;
 import java.util.concurrent.Executor;
 
+// Bridges one video source to a WaterMedia v3 player: acquires the MRL, starts/loops/seeks the
+// player, caps the upload resolution to the window, and renders its texture full-screen.
 public final class WaterMediaVideoBackend {
     private static final float DEFAULT_VIDEO_ASPECT_RATIO = 16.0F / 9.0F;
-    private static final int MRL_LOAD_TIMEOUT_TICKS = 20 * 60;
     private static final int MRL_ERROR_GRACE_TICKS = 20 * 30;
+    private static final int MRL_RELOAD_SPACING_TICKS = 40;
+    private static final int MAX_MRL_RELOAD_ATTEMPTS = 3;
     private static final long HOLD_AT_ZERO_THRESHOLD_MS = 100L;
+    private static final int QUALITY_SETTLE_TICKS = 40;
 
     private final URI source;
     private final float configuredVolume;
     private float volumeMultiplier = 1f;
     private boolean startPaused;
     private boolean resumeOnReady;
-    private boolean repeatRequested;
     private boolean holdAtZero;
 
     private MRL mrl;
@@ -51,7 +56,16 @@ public final class WaterMediaVideoBackend {
     private boolean playerStarted;
     private int mrlWaitTicks;
     private int mrlErrorTicks;
+    private int mrlReloadAttempts;
+    private int createPlayerFailTicks;
     private int appliedVolumeIntCache = Integer.MIN_VALUE;
+    private boolean loggedFirstFrame;
+    private MRL.Status lastLoggedStatus;
+    private int appliedMaxWidth = -1;
+    private int appliedMaxHeight = -1;
+    private MediaQuality lastRequestedQuality;
+    private boolean qualityCeilingReached;
+    private int qualitySettleTicks;
 
     public WaterMediaVideoBackend(URI source, float volume) {
         this.source = source;
@@ -67,13 +81,7 @@ public final class WaterMediaVideoBackend {
             return false;
         }
         try {
-            if (player.texture() <= 0) {
-                return false;
-            }
-            MediaPlayer.Status status = player.status();
-            return status == MediaPlayer.Status.PLAYING
-                    || status == MediaPlayer.Status.PAUSED
-                    || status == MediaPlayer.Status.BUFFERING;
+            return player.texture() > 0 && (player.playing() || player.paused() || player.buffering());
         } catch (Throwable t) {
             return false;
         }
@@ -103,6 +111,38 @@ public final class WaterMediaVideoBackend {
         return errored;
     }
 
+    // True while WaterMedia is still resolving the MRL or buffering toward the first frame. The screen
+    // uses this so a slow-but-progressing source (e.g. a long YouTube video) is never mistaken for a
+    // stall: only genuine inactivity or a terminal error gives up. Long loads stop being penalised.
+    public boolean isActivelyLoading() {
+        if (closed || errored) {
+            return false;
+        }
+        if (player != null) {
+            try {
+                return player.loading() || player.buffering() || player.waiting();
+            } catch (Throwable ignored) {
+                return false;
+            }
+        }
+        if (mrl == null) {
+            return true;
+        }
+        MRL.Status status;
+        try {
+            status = mrl.status();
+        } catch (Throwable ignored) {
+            return false;
+        }
+        return status == null || !(status == MRL.Status.ERROR || status == MRL.Status.BLOCKED);
+    }
+
+    // Configurable patience (seconds -> ticks) for resolving an MRL, shared with the screen's first-frame
+    // wait. Read live so config edits take effect on the next source without a restart.
+    private int loadTimeoutTicks() {
+        return ActiveConfigResolver.effectiveVideoLoadTimeoutSeconds() * 20;
+    }
+
     public void setForcedQuality(MediaQuality quality) {
         this.forcedQuality = quality;
     }
@@ -110,22 +150,6 @@ public final class WaterMediaVideoBackend {
     public void setStartPaused(boolean value) {
         this.startPaused = value;
         this.holdAtZero = value;
-    }
-
-    public void setRepeat(boolean value) {
-        this.repeatRequested = value;
-        applyRepeatIfPossible();
-    }
-
-    private void applyRepeatIfPossible() {
-        if (player == null || closed) {
-            return;
-        }
-        try {
-            player.repeat(repeatRequested);
-        } catch (Throwable t) {
-            ConditionalVideos.LOGGER.debug("player.repeat({}) failed for '{}': {}", repeatRequested, source, t.toString());
-        }
     }
 
     public void resumePlayback() {
@@ -202,8 +226,18 @@ public final class WaterMediaVideoBackend {
     }
 
     public void init() {
+        DebugLog.log(DebugLog.Area.BACKEND, "Initialising backend for '{}'.", source);
         applyMatureContentPolicy();
-        quietenFfmpegNativeLogging();
+        if (!createEngines()) {
+            return;
+        }
+        tryAcquireMrl();
+    }
+
+    // Builds a fresh GL/AL engine pair on the render thread. Called once at init and again whenever a
+    // multi-source playlist advances to its next video, so each source gets a clean player+engine pair
+    // (reusing a player across sources is what froze the texture; see the loop-freeze fix).
+    private boolean createEngines() {
         try {
             Thread renderThread = Thread.currentThread();
             Executor renderExecutor = (Runnable r) -> RenderSystem.recordRenderCall(r::run);
@@ -215,41 +249,20 @@ public final class WaterMediaVideoBackend {
                     .setDelTexture((int t) -> GL11.glDeleteTextures(t))
                     .build();
             sfx = ALEngine.buildDefault();
+            return true;
         } catch (Throwable throwable) {
             ConditionalVideos.LOGGER.warn("Failed to initialize WATERMeDIA v3 engines for '{}': {}", source, throwable.toString());
             errored = true;
             cleanup();
-            return;
+            return false;
         }
-
-        tryAcquireMrl();
     }
 
     private void applyMatureContentPolicy() {
         try {
-            WaterMediaConfig.media.platforms.allowMatureContent = !ActiveConfigResolver.effectiveBlockMatureContent();
+            WaterMediaConfig.platforms.allowMatureContent = !ActiveConfigResolver.effectiveBlockMatureContent();
         } catch (Throwable t) {
             ConditionalVideos.LOGGER.debug("Failed to apply mature-content policy to WaterMedia: {}", t.toString());
-        }
-    }
-
-    private static volatile boolean ffmpegLogLevelApplied;
-
-    private static void quietenFfmpegNativeLogging() {
-        if (ffmpegLogLevelApplied) {
-            return;
-        }
-        ffmpegLogLevelApplied = true;
-        // WaterMedia v3 streams through bundled bytedeco FFmpeg but never lowers its native
-        // log level, so HLS/HTTP/TLS demuxer chatter floods stdout at AV_LOG_INFO. Drop it to
-        // AV_LOG_ERROR (keeps real errors). Reflective so it degrades cleanly if FFMPEG is absent.
-        try {
-            Class<?> avutil = Class.forName("org.bytedeco.ffmpeg.global.avutil");
-            int errorLevel = avutil.getField("AV_LOG_ERROR").getInt(null);
-            avutil.getMethod("av_log_set_level", int.class).invoke(null, errorLevel);
-            ConditionalVideos.LOGGER.debug("Lowered FFmpeg native log level to AV_LOG_ERROR to silence stream demuxer chatter.");
-        } catch (Throwable t) {
-            ConditionalVideos.LOGGER.debug("Could not adjust FFmpeg native log level: {}", t.toString());
         }
     }
 
@@ -259,7 +272,7 @@ public final class WaterMediaVideoBackend {
         }
         try {
             mrl = MediaAPI.getMRL(source.toString());
-            if (mrl != null && mrl.expired()) {
+            if (mrl != null && mrl.status() == MRL.Status.EXPIRED) {
                 try {
                     mrl.reload();
                 } catch (Throwable t) {
@@ -268,15 +281,28 @@ public final class WaterMediaVideoBackend {
             }
             if (mrl != null) {
                 ConditionalVideos.LOGGER.info("Requested MRL load from WATERMeDIA v3: {}", source);
+                DebugLog.log(DebugLog.Area.SOURCE, "MRL acquired for '{}' (initial status {}).", source, safeStatus());
             }
         } catch (Throwable throwable) {
             ConditionalVideos.LOGGER.debug("MediaAPI.getMRL() not ready yet for '{}': {}", source, throwable.toString());
         }
     }
 
+    private MRL.Status safeStatus() {
+        try {
+            return mrl == null ? null : mrl.status();
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
     public void tick() {
         if (closed) {
             return;
+        }
+        if (!loggedFirstFrame && renderedAnyFrame) {
+            loggedFirstFrame = true;
+            DebugLog.log(DebugLog.Area.BACKEND, "First frame rendered for '{}'.", source);
         }
         if (player == null) {
             tickPreStart();
@@ -290,26 +316,92 @@ public final class WaterMediaVideoBackend {
         if (!playerStarted || player == null || closed) {
             return;
         }
+        reinforceQuality();
+        applyMaxSizeCap();
+    }
+
+    // Caps uploaded frame dimensions so videos larger than the window never waste VRAM/upload
+    // bandwidth. The cap preserves the native aspect ratio (a single scale to fit the window, never
+    // upscaled), so the frame is never distorted; it only applies once the native size is known.
+    private void applyMaxSizeCap() {
+        if (player == null || closed) {
+            return;
+        }
         try {
-            MediaQuality current = player.quality();
-            if (forcedQuality != null) {
-                if (desiredQuality != null && current != desiredQuality) {
-                    player.quality(desiredQuality);
-                }
-            } else if (current != null && current != MediaQuality.UNKNOWN
-                    && desiredQuality != null && desiredQuality != MediaQuality.UNKNOWN
-                    && current.threshold < desiredQuality.threshold) {
-                player.quality(desiredQuality);
+            Minecraft minecraft = Minecraft.getInstance();
+            if (minecraft == null) {
+                return;
             }
+            int winW = minecraft.getWindow().getWidth();
+            int winH = minecraft.getWindow().getHeight();
+            int srcW = player.sourceWidth();
+            int srcH = player.sourceHeight();
+            if (winW <= 0 || winH <= 0 || srcW <= 0 || srcH <= 0) {
+                return;
+            }
+            double scale = Math.min((double) winW / srcW, (double) winH / srcH);
+            int capW = scale >= 1.0 ? srcW : Math.max(1, (int) Math.round(srcW * scale));
+            int capH = scale >= 1.0 ? srcH : Math.max(1, (int) Math.round(srcH * scale));
+            if (capW == appliedMaxWidth && capH == appliedMaxHeight) {
+                return;
+            }
+            boolean downscaling = capW < srcW || capH < srcH;
+            boolean hadCap = appliedMaxWidth > 0 && (appliedMaxWidth < srcW || appliedMaxHeight < srcH);
+            appliedMaxWidth = capW;
+            appliedMaxHeight = capH;
+            if (!downscaling && !hadCap) {
+                return;
+            }
+            player.maxSize(capW, capH);
+            DebugLog.log(DebugLog.Area.BACKEND, "Capped upload size to {}x{} (source {}x{}) for '{}'.", capW, capH, srcW, srcH, source);
         } catch (Throwable ignored) {
         }
-        if (repeatRequested) {
-            try {
-                if (!player.repeat()) {
-                    player.repeat(true);
-                }
-            } catch (Throwable ignored) {
+    }
+
+    // Re-asserts the desired quality on multi-variant streams that drift below it, but with
+    // hysteresis: it requests the target once and, if the player cannot reach it within
+    // QUALITY_SETTLE_TICKS, marks a ceiling and stops re-requesting. Without this a target the source
+    // can never reach (e.g. HIGHEST on a 1080p stream) is re-requested every tick and keeps tearing
+    // down the decoder. Does nothing when quality is unmanaged (desiredQuality null).
+    private void reinforceQuality() {
+        if (desiredQuality == null || desiredQuality == MediaQuality.UNKNOWN) {
+            return;
+        }
+        MediaQuality current;
+        try {
+            current = player.quality();
+        } catch (Throwable ignored) {
+            return;
+        }
+        if (current == null) {
+            return;
+        }
+        boolean satisfied = forcedQuality != null
+                ? current == desiredQuality
+                : current != MediaQuality.UNKNOWN && current.threshold >= desiredQuality.threshold;
+        if (satisfied) {
+            qualitySettleTicks = 0;
+            lastRequestedQuality = null;
+            qualityCeilingReached = false;
+            return;
+        }
+        if (qualityCeilingReached) {
+            return;
+        }
+        if (desiredQuality.equals(lastRequestedQuality)) {
+            qualitySettleTicks++;
+            if (qualitySettleTicks >= QUALITY_SETTLE_TICKS) {
+                qualityCeilingReached = true;
+                DebugLog.log(DebugLog.Area.QUALITY, "Quality ceiling for '{}': stuck at {} below target {} after {} ticks; stop re-requesting.", source, current, desiredQuality, QUALITY_SETTLE_TICKS);
             }
+            return;
+        }
+        try {
+            player.quality(desiredQuality);
+            lastRequestedQuality = desiredQuality;
+            qualitySettleTicks = 0;
+            DebugLog.log(DebugLog.Area.QUALITY, "Requested quality {} for '{}' (was {}).", desiredQuality, source, current);
+        } catch (Throwable ignored) {
         }
     }
 
@@ -318,8 +410,7 @@ public final class WaterMediaVideoBackend {
             return;
         }
         try {
-            MediaPlayer.Status status = player.status();
-            if (status != MediaPlayer.Status.PLAYING) {
+            if (!player.playing()) {
                 return;
             }
             try { player.pause(); } catch (Throwable ignored) { }
@@ -339,8 +430,8 @@ public final class WaterMediaVideoBackend {
         }
         if (mrl == null) {
             mrlWaitTicks++;
-            if (mrlWaitTicks >= MRL_LOAD_TIMEOUT_TICKS) {
-                ConditionalVideos.LOGGER.warn("MediaAPI never produced an MRL for '{}' after {}s.", source, MRL_LOAD_TIMEOUT_TICKS / 20);
+            if (mrlWaitTicks >= loadTimeoutTicks()) {
+                ConditionalVideos.LOGGER.warn("MediaAPI never produced an MRL for '{}' after {}s.", source, loadTimeoutTicks() / 20);
                 errored = true;
                 cleanup();
                 return;
@@ -348,98 +439,90 @@ public final class WaterMediaVideoBackend {
             tryAcquireMrl();
             return;
         }
-        if (mrl.hasError()) {
-            mrlErrorTicks++;
-            if (mrlErrorTicks < MRL_ERROR_GRACE_TICKS) {
-                if (mrlErrorTicks % 20 == 0) {
-                    try {
-                        mrl.reload();
-                    } catch (Throwable t) {
-                        ConditionalVideos.LOGGER.debug("MRL.reload() failed for '{}': {}", source, t.toString());
-                    }
+        MRL.Status status;
+        try {
+            status = mrl.status();
+        } catch (Throwable ignored) {
+            status = null;
+        }
+        if (status != lastLoggedStatus) {
+            lastLoggedStatus = status;
+            DebugLog.log(DebugLog.Area.SOURCE, "MRL '{}' status -> {}.", source, status);
+        }
+        if (status == MRL.Status.ERROR) {
+            if (mrlReloadAttempts >= MAX_MRL_RELOAD_ATTEMPTS) {
+                Throwable cause = null;
+                try {
+                    cause = mrl.exception();
+                } catch (Throwable ignored) {
                 }
+                ConditionalVideos.LOGGER.warn("Source '{}' is invalid or unavailable (could not be resolved after {} attempt(s)); skipping it: {}", source, mrlReloadAttempts, cause != null ? cause.toString() : "unknown");
+                errored = true;
+                cleanup();
                 return;
             }
-            Throwable cause = null;
-            try {
-                cause = mrl.exception();
-            } catch (Throwable ignored) {
+            mrlErrorTicks++;
+            if (mrlErrorTicks >= MRL_RELOAD_SPACING_TICKS) {
+                mrlErrorTicks = 0;
+                mrlReloadAttempts++;
+                DebugLog.log(DebugLog.Area.SOURCE, "Retrying MRL '{}' (attempt {}/{}).", source, mrlReloadAttempts, MAX_MRL_RELOAD_ATTEMPTS);
+                try {
+                    mrl.reload();
+                } catch (Throwable t) {
+                    ConditionalVideos.LOGGER.debug("MRL.reload() failed for '{}': {}", source, t.toString());
+                }
             }
-            ConditionalVideos.LOGGER.warn("MRL persistently failed to load for '{}' after {}s: {}", source, MRL_ERROR_GRACE_TICKS / 20, cause != null ? cause.toString() : "unknown");
-            errored = true;
-            cleanup();
             return;
         }
         mrlErrorTicks = 0;
-        if (!mrl.ready()) {
+        if (status == MRL.Status.FORGOTTEN) {
+            mrl = null;
+            tryAcquireMrl();
+            return;
+        }
+        if (status == MRL.Status.EXPIRED) {
+            try {
+                mrl.reload();
+            } catch (Throwable t) {
+                ConditionalVideos.LOGGER.debug("MRL.reload() failed for '{}': {}", source, t.toString());
+            }
             mrlWaitTicks++;
-            if (mrlWaitTicks >= MRL_LOAD_TIMEOUT_TICKS) {
+            if (mrlWaitTicks >= loadTimeoutTicks()) {
                 ConditionalVideos.LOGGER.warn("Timed out waiting for MRL '{}' to resolve.", source);
                 errored = true;
                 cleanup();
             }
             return;
         }
-        boolean blocked;
-        try {
-            blocked = mrl.blocked();
-        } catch (Throwable ignored) {
-            blocked = false;
-        }
-        if (blocked) {
+        if (status == MRL.Status.BLOCKED) {
             ConditionalVideos.LOGGER.warn("MRL '{}' is blocked by WaterMedia (restricted/mature content); skipping.", source);
             errored = true;
             cleanup();
             return;
         }
-        try {
-            MRL.Source preferred = mrl.videoSource();
-            if (preferred == null) {
-                preferred = mrl.imageSource();
+        if (status != MRL.Status.LOADED) {
+            mrlWaitTicks++;
+            if (mrlWaitTicks >= loadTimeoutTicks()) {
+                ConditionalVideos.LOGGER.warn("Timed out waiting for MRL '{}' to resolve.", source);
+                errored = true;
+                cleanup();
             }
+            return;
+        }
+        try {
+            int videoIndex = resolveVideoSourceIndex();
+            MRL.Source preferred = resolveSourceAt(videoIndex);
             if (preferred == null) {
                 ConditionalVideos.LOGGER.warn("MRL '{}' resolved but reported no playable source.", source);
                 errored = true;
                 cleanup();
                 return;
             }
-            player = MediaAPI.createPlayer(mrl, () -> gfx, () -> sfx);
-            desiredQuality = pickBestQuality(preferred);
-            applyQualityIfPossible();
-            applyVolumeIfPossible();
-            applyRepeatIfPossible();
-            boolean willStartPaused = startPaused && !resumeOnReady;
-            if (willStartPaused) {
-                try {
-                    player.startPaused();
-                } catch (Throwable t) {
-                    ConditionalVideos.LOGGER.debug("startPaused() failed for '{}', falling back to start()+pause(): {}", source, t.toString());
-                    try {
-                        player.start();
-                        player.pause();
-                    } catch (Throwable t2) {
-                        ConditionalVideos.LOGGER.debug("start()+pause() fallback failed for '{}': {}", source, t2.toString());
-                    }
-                }
-                try {
-                    if (player.canSeek()) {
-                        player.seek(0L);
-                    }
-                } catch (Throwable ignored) {
-                }
-            } else {
-                holdAtZero = false;
-                player.start();
-            }
-            playerStarted = true;
-            resumeOnReady = false;
-            applyRepeatIfPossible();
-            ConditionalVideos.LOGGER.info("Started WATERMeDIA v3 player for '{}' (quality={}, startPaused={}, repeat={}, holdAtZero={}).",
-                    source, player.quality(), willStartPaused, repeatRequested, holdAtZero);
+            startSourcePlayer(preferred, videoIndex);
         } catch (Throwable throwable) {
             ConditionalVideos.LOGGER.warn("Failed to start WATERMeDIA v3 player for '{}': {}", source, throwable.toString());
-            mrlErrorTicks++;
-            if (mrlErrorTicks >= MRL_ERROR_GRACE_TICKS) {
+            createPlayerFailTicks++;
+            if (createPlayerFailTicks >= MRL_ERROR_GRACE_TICKS) {
                 errored = true;
                 cleanup();
             } else {
@@ -448,19 +531,109 @@ public final class WaterMediaVideoBackend {
         }
     }
 
-    private MediaQuality pickBestQuality(MRL.Source preferred) {
-        MediaQuality target = forcedQuality != null ? forcedQuality : MediaQuality.HIGHEST;
+    // Opens the player for the single resolved source. index >= 0 selects that source explicitly; -1
+    // falls back to WaterMedia's default video/image source.
+    private void startSourcePlayer(MRL.Source preferred, int index) {
+        player = index >= 0
+                ? MediaAPI.createPlayer(mrl, index, () -> gfx, () -> sfx)
+                : MediaAPI.createPlayer(mrl, () -> gfx, () -> sfx);
+        DebugLog.applyFfmpegLogLevel();
+        desiredQuality = resolveDesiredQuality(preferred);
+        appliedMaxWidth = -1;
+        appliedMaxHeight = -1;
+        appliedVolumeIntCache = Integer.MIN_VALUE;
+        lastRequestedQuality = null;
+        qualityCeilingReached = false;
+        qualitySettleTicks = 0;
+        applyQualityIfPossible();
+        applyVolumeIfPossible();
+        boolean willStartPaused = startPaused && !resumeOnReady;
+        if (willStartPaused) {
+            try {
+                player.startPaused();
+            } catch (Throwable t) {
+                ConditionalVideos.LOGGER.debug("startPaused() failed for '{}', falling back to start()+pause(): {}", source, t.toString());
+                try {
+                    player.start();
+                    player.pause();
+                } catch (Throwable t2) {
+                    ConditionalVideos.LOGGER.debug("start()+pause() fallback failed for '{}': {}", source, t2.toString());
+                }
+            }
+            try {
+                if (player.canSeek()) {
+                    player.seek(0L);
+                }
+            } catch (Throwable ignored) {
+            }
+        } else {
+            holdAtZero = false;
+            player.start();
+        }
+        playerStarted = true;
+        resumeOnReady = false;
+        ConditionalVideos.LOGGER.info("Started WATERMeDIA v3 player for '{}' (quality={}, startPaused={}, holdAtZero={}).",
+                source, player.quality(), willStartPaused, holdAtZero);
+    }
+
+    // Index (into mrl.sources()) of the FIRST video source, or -1 to fall back to the default
+    // video/image source. Only one source is ever played: whole-playlist MRLs (e.g. a YouTube playlist
+    // URL that resolves to many videos) are intentionally not supported, as their sequential playback
+    // stuttered, froze and skipped unreliably.
+    private int resolveVideoSourceIndex() {
         try {
-            Set<MediaQuality> available = preferred.availableQualities();
-            if (available != null && !available.isEmpty()) {
-                MediaQuality picked = MediaQuality.closest(available, target);
-                if (picked != null && picked != MediaQuality.UNKNOWN) {
-                    return picked;
+            int count = mrl.sourceCount();
+            for (int i = 0; i < count; i++) {
+                MRL.Source candidate = mrl.source(i);
+                if (candidate != null && candidate.isVideo()) {
+                    return i;
                 }
             }
         } catch (Throwable ignored) {
         }
-        return target;
+        return -1;
+    }
+
+    private MRL.Source resolveSourceAt(int index) {
+        try {
+            if (index >= 0) {
+                MRL.Source at = mrl.source(index);
+                if (at != null) {
+                    return at;
+                }
+            }
+            MRL.Source video = mrl.videoSource();
+            return video != null ? video : mrl.imageSource();
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    // Single-variant sources (local files, direct mp4) expose no real quality ladder. Forcing a
+    // quality on them makes reinforcePlayerSettings re-assert HIGHEST every tick, which re-opens the
+    // decode pipeline and freezes the first frame (the "first local video per launch" bug). Returning
+    // null leaves quality untouched for those; only genuinely multi-variant streams are managed.
+    private MediaQuality resolveDesiredQuality(MRL.Source preferred) {
+        Set<MediaQuality> available;
+        try {
+            available = preferred.availableQualities();
+        } catch (Throwable ignored) {
+            available = null;
+        }
+        if (available == null || available.size() <= 1) {
+            DebugLog.log(DebugLog.Area.QUALITY, "Single-variant source for '{}'; leaving quality unmanaged.", source);
+            return null;
+        }
+        MediaQuality target = forcedQuality != null ? forcedQuality : MediaQuality.HIGHEST;
+        try {
+            MediaQuality picked = MediaQuality.closest(available, target);
+            if (picked != null && picked != MediaQuality.UNKNOWN) {
+                DebugLog.log(DebugLog.Area.QUALITY, "Multi-variant source for '{}'; desired quality {} (target {}).", source, picked, target);
+                return picked;
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
     }
 
     private void applyQualityIfPossible() {
@@ -584,10 +757,7 @@ public final class WaterMediaVideoBackend {
             return false;
         }
         try {
-            MediaPlayer.Status status = player.status();
-            return status == MediaPlayer.Status.ERROR
-                    || status == MediaPlayer.Status.ENDED
-                    || status == MediaPlayer.Status.STOPPED;
+            return player.error() || player.ended() || player.stopped();
         } catch (Throwable t) {
             return false;
         }
@@ -647,8 +817,12 @@ public final class WaterMediaVideoBackend {
         if (player == null) {
             return DEFAULT_VIDEO_ASPECT_RATIO;
         }
-        int w = player.width();
-        int h = player.height();
+        int w = player.sourceWidth();
+        int h = player.sourceHeight();
+        if (w <= 0 || h <= 0) {
+            w = player.width();
+            h = player.height();
+        }
         if (w > 0 && h > 0) {
             return (float) w / (float) h;
         }

@@ -1,0 +1,20 @@
+{
+  "required": true,
+  "package": "org.mateof24.conditionalvideos.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "minVersion": "0.8",
+  "client": [
+    "ClientAdvancementsMixin",
+    "ClientPacketListenerMixin",
+    "PlayerAttackMixin",
+    "SoundManagerMixin",
+    "ToastComponentMixin"
+  ],
+  "mixins": [
+    "RecipeUnlockedMixin",
+    "TotemUsedMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

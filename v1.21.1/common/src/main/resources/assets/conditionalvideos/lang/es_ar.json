@@ -1,5 +1,6 @@
 {
   "screen.conditionalvideos.skip_hint": "Presioná %s para saltar",
+  "screen.conditionalvideos.release_to_skip": "Soltá %s para saltar la lista de reproducción",
   "screen.conditionalvideos.loading": "Cargando video...",
   "screen.conditionalvideos.loading.plural": "Cargando videos...",
   "command.conditionalvideos.play.invalid": "La condición '%s' no está configurada o no tiene videos. Fijate que esté bien escrita y que tenga al menos un video.",

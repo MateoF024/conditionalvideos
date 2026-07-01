@@ -19,6 +19,8 @@ import java.util.Deque;
 import java.util.List;
 import java.util.function.Function;
 
+// Entry point for every condition: resolves the source, enforces the firstJoin-first guard, queues
+// overlapping requests one-at-a-time, and opens the loading/playback screen.
 public final class ConditionVideoPlayer {
     private static final int LOADING_SCREEN_TIMEOUT_TICKS = 20 * 60;
     private static final int MAX_QUEUE_SIZE = 32;

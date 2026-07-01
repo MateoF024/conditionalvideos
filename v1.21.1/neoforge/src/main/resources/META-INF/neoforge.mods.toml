@@ -42,15 +42,8 @@ ordering = "AFTER"
 side = "CLIENT"
 
 [[dependencies.conditionalvideos]]
-modId = "wm_binaries"
+modId = "watermedia_binaries"
 type = "required"
-versionRange = "[3.0.0-alpha,4.0.0)"
-ordering = "AFTER"
-side = "CLIENT"
-
-[[dependencies.conditionalvideos]]
-modId = "watermedia_youtube_extension"
-type = "optional"
 versionRange = "[3.0.0-alpha,4.0.0)"
 ordering = "AFTER"
 side = "CLIENT"

@@ -69,6 +69,10 @@ public final class ActiveConfigResolver {
         return localCommonConfig().blockMatureContent();
     }
 
+    public static int effectiveVideoLoadTimeoutSeconds() {
+        return localCommonConfig().videoLoadTimeoutSeconds();
+    }
+
     public static ConditionalVideosConfig resolve(Minecraft minecraft) {
         if (!isMultiplayerSession(minecraft)) {
             long now = System.currentTimeMillis();

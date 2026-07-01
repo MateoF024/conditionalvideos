@@ -33,8 +33,10 @@ dependencies {
     shadowBundle project(path: ':common', configuration: 'transformProductionFabric')
 
     modLocalRuntime files("${rootProject.projectDir}/libs/watermedia-${rootProject.watermedia_api_version}.jar")
-    modLocalRuntime files("${rootProject.projectDir}/libs/wm_binaries-${rootProject.watermedia_binaries_version}.jar")
-    modLocalRuntime files("${rootProject.projectDir}/libs/watermedia_youtube_extension-${rootProject.watermedia_youtube_extension_version}.jar")
+    def binariesJar = file("${rootProject.projectDir}/libs/watermedia_binaries-${rootProject.watermedia_binaries_version}.jar")
+    if (binariesJar.exists()) {
+        modLocalRuntime files(binariesJar)
+    }
 }
 
 processResources {

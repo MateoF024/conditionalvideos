@@ -18,15 +18,27 @@ def minecraftVer = gradle.startParameter.projectProperties.containsKey('minecraf
     props.getProperty('minecraft_version')
 }
 
+// Each supported Minecraft version maps to its own source tree. 1.20.x keeps the legacy Forge layout
+// at the repo root; every 1.21.x version lives in its own v<version>/ tree (NeoForge + Fabric).
+def treeByVersion = [
+        '1.21.1' : 'v1.21.1',
+        '1.21.11': 'v1.21.11',
+]
+
 if (minecraftVer.startsWith("1.20")) {
     include 'common'
     include 'fabric'
     include 'forge'
-} else if (minecraftVer.startsWith("1.21")) {
+} else {
+    def treeDir = treeByVersion[minecraftVer]
+    if (treeDir == null) {
+        throw new GradleException("No source tree mapped for minecraft_version='${minecraftVer}'. " +
+                "Add it to treeByVersion in settings.gradle.")
+    }
     include 'common'
     include 'fabric'
     include 'neoforge'
-    project(':common').projectDir = file('v1.21.1/common')
-    project(':fabric').projectDir = file('v1.21.1/fabric')
-    project(':neoforge').projectDir = file('v1.21.1/neoforge')
+    project(':common').projectDir = file("${treeDir}/common")
+    project(':fabric').projectDir = file("${treeDir}/fabric")
+    project(':neoforge').projectDir = file("${treeDir}/neoforge")
 }

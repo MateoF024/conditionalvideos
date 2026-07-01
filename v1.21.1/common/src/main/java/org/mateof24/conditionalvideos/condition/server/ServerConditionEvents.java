@@ -91,19 +91,25 @@ public final class ServerConditionEvents {
     private static void onServerTick(MinecraftServer server) {
         ConditionalVideosConfig config = ServerConditionDispatcher.activeConfig(server);
         Map<String, ScoreboardConditionConfig> scoreboardConditions = config.scoreboard();
+        ConditionalVideosConfig.ConditionConfig bedSleep = config.bedSleep();
+        boolean bedSleepActive = bedSleep != null && !bedSleep.resolvedPlaylist().isEmpty();
+        boolean scoreboardActive = !scoreboardConditions.isEmpty();
+        if (!bedSleepActive && !scoreboardActive) {
+            return;
+        }
+
         Scoreboard scoreboard = server.getScoreboard();
-
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-            UUID uuid = player.getUUID();
-
-            boolean sleeping = player.isSleeping();
-            boolean wasSleeping = sleepingState.getOrDefault(uuid, false);
-            if (sleeping && !wasSleeping) {
-                ServerConditionDispatcher.fire(player, ConditionRegistry.KEY_BED_SLEEP);
+            if (bedSleepActive) {
+                UUID uuid = player.getUUID();
+                boolean sleeping = player.isSleeping();
+                boolean wasSleeping = sleepingState.getOrDefault(uuid, false);
+                if (sleeping && !wasSleeping) {
+                    ServerConditionDispatcher.fire(player, ConditionRegistry.KEY_BED_SLEEP);
+                }
+                sleepingState.put(uuid, sleeping);
             }
-            sleepingState.put(uuid, sleeping);
-
-            if (!scoreboardConditions.isEmpty()) {
+            if (scoreboardActive) {
                 evaluateScoreboard(scoreboard, player, scoreboardConditions);
             }
         }

@@ -16,7 +16,7 @@ import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig.VideoEntry;
 import org.mateof24.conditionalvideos.runtime.ConditionalVideosKeybinds;
 import org.mateof24.conditionalvideos.video.backend.WaterMediaVideoBackend;
-import org.watermedia.api.media.MRL;
+import org.watermedia.api.media.MediaAPI;
 import org.watermedia.api.util.MediaQuality;
 
 import java.net.URI;
@@ -24,6 +24,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Function;
 
+// Full-screen video player UI: drives the playlist (preload, crossfade/cut transitions, skip/hold),
+// renders the frame plus title/description overlays, and releases all backends on close.
 public final class VideoPlaybackScreen extends Screen {
     private static final int HINT_VISIBLE_TICKS = 120;
     private static final int HINT_FADE_IN_TICKS = 30;
@@ -36,8 +38,8 @@ public final class VideoPlaybackScreen extends Screen {
 
     private static final int CROSSFADE_TICKS = 40;
     private static final int CROSSFADE_WAIT_MAX_TICKS = 200;
-    private static final int FIRST_FRAME_TIMEOUT_TICKS = 20 * 90;
     private static final int ESC_LONG_PRESS_TICKS = 20;
+    private static final int SKIP_TAP_MAX_TICKS = 6;
     private static final int ESCAPE_KEY = 256;
     private static final int FULLSCREEN_KEYCODE = 300;
     private static final int CURSOR_HIDE_DELAY_TICKS = 100;
@@ -95,7 +97,7 @@ public final class VideoPlaybackScreen extends Screen {
 
     private boolean skipKeyDown;
     private int skipHoldTicks;
-    private boolean skipClosedByHold;
+    private boolean skipHoldArmed;
 
     private double lastMouseX = Double.NaN;
     private double lastMouseY = Double.NaN;
@@ -105,6 +107,7 @@ public final class VideoPlaybackScreen extends Screen {
     private boolean paused;
     private boolean skipKeyIsEsc = true;
     private Component skipHint = Component.translatable("screen.conditionalvideos.skip_hint", escDisplayName());
+    private Component skipReleaseHint = Component.translatable("screen.conditionalvideos.release_to_skip", escDisplayName());
 
     public VideoPlaybackScreen(
             ConditionalVideosConfig config,
@@ -146,9 +149,9 @@ public final class VideoPlaybackScreen extends Screen {
             return;
         }
         try {
-            MRL.preload(uris.toArray(new URI[0]));
+            MediaAPI.preloadMRL(uris.toArray(new URI[0]));
         } catch (Throwable t) {
-            ConditionalVideos.LOGGER.debug("MRL.preload failed: {}", t.toString());
+            ConditionalVideos.LOGGER.debug("preloadMRL failed: {}", t.toString());
         }
     }
 
@@ -200,6 +203,7 @@ public final class VideoPlaybackScreen extends Screen {
         skipKeyIsEsc = skip.isUnbound() || skip.matches(ESCAPE_KEY, -1);
         Component keyName = skipKeyIsEsc ? escDisplayName() : skip.getTranslatedKeyMessage();
         skipHint = Component.translatable("screen.conditionalvideos.skip_hint", keyName);
+        skipReleaseHint = Component.translatable("screen.conditionalvideos.release_to_skip", keyName);
     }
 
     private static Component escDisplayName() {
@@ -214,13 +218,41 @@ public final class VideoPlaybackScreen extends Screen {
     }
 
     private void tickSkipHold() {
-        if (!skipKeyDown || skipClosedByHold || !isCurrentSkippable()) {
+        if (!skipKeyDown || skipHoldArmed || !isCurrentSkippable()) {
             return;
         }
         skipHoldTicks++;
         if (skipHoldTicks >= ESC_LONG_PRESS_TICKS) {
-            skipClosedByHold = true;
-            onClose();
+            // Hold threshold reached: arm the whole-playlist skip but wait for the key to be RELEASED
+            // before closing. Closing mid-hold left the key still down, so the game then saw the held
+            // key (e.g. ESC) and flickered the pause menu. The progress bar is full at this point.
+            skipHoldArmed = true;
+        }
+    }
+
+    // White bar that fills while the skip key is held toward a whole-playlist skip. It only appears
+    // once the hold has outlasted a quick tap (a tap skips a single video and shows no bar); it is
+    // full when releasing now will skip the whole playlist.
+    private void renderSkipHoldBar(GuiGraphics guiGraphics) {
+        if (!skipKeyDown || !isCurrentSkippable() || state != State.PLAYING) {
+            return;
+        }
+        if (skipHoldTicks <= SKIP_TAP_MAX_TICKS) {
+            return;
+        }
+        float progress = Math.min(1f, (skipHoldTicks - SKIP_TAP_MAX_TICKS)
+                / (float) (ESC_LONG_PRESS_TICKS - SKIP_TAP_MAX_TICKS));
+        int barWidth = 80;
+        int barHeight = 3;
+        int x = (width - barWidth) / 2;
+        int y = height - 12;
+        int filled = Math.round(barWidth * progress);
+        if (filled > 0) {
+            guiGraphics.fill(x, y, x + filled, y + barHeight, 0xFFFFFFFF);
+        }
+        if (skipHoldArmed) {
+            // Bar is full: tell the player that releasing the key now skips the whole playlist.
+            guiGraphics.drawCenteredString(font, skipReleaseHint, width / 2, y - 14, 0xFFFFFFFF);
         }
     }
 
@@ -343,11 +375,16 @@ public final class VideoPlaybackScreen extends Screen {
             consecutiveFailures = 0;
         } else if (currentFirstFrameSeen) {
             currentEntryTicks++;
+        } else if (currentBackend.isActivelyLoading()) {
+            // Source is still resolving or buffering (long videos take longer the longer they are):
+            // keep waiting, the wall-clock never counts against a healthy-but-slow load.
+            firstFrameWaitTicks = 0;
         } else {
             firstFrameWaitTicks++;
-            if (firstFrameWaitTicks >= FIRST_FRAME_TIMEOUT_TICKS) {
-                ConditionalVideos.LOGGER.warn("Playlist entry '{}' produced no frame in {}s; advancing.",
-                        currentEntry.source(), FIRST_FRAME_TIMEOUT_TICKS / 20);
+            int timeout = firstFrameTimeoutTicks();
+            if (firstFrameWaitTicks >= timeout) {
+                ConditionalVideos.LOGGER.warn("Playlist entry '{}' produced no frame and showed no loading activity for {}s; advancing.",
+                        currentEntry.source(), timeout / 20);
                 advanceAfterFailure();
                 return;
             }
@@ -359,6 +396,12 @@ public final class VideoPlaybackScreen extends Screen {
             case OUTGOING_FADE -> handleOutgoingFade();
             case CLOSED -> { }
         }
+    }
+
+    // Patience for a source to show its first frame, counted only while it is NOT actively loading.
+    // Shares the configurable load-timeout knob so one value governs the whole start-up wait.
+    private int firstFrameTimeoutTicks() {
+        return ActiveConfigResolver.effectiveVideoLoadTimeoutSeconds() * 20;
     }
 
     private void handlePlaying() {
@@ -421,6 +464,12 @@ public final class VideoPlaybackScreen extends Screen {
                 promoteNextEntry();
                 return;
             }
+            if (nextBackend != null && nextBackend.hasError()) {
+                ConditionalVideos.LOGGER.warn("Next playlist entry '{}' is invalid or unavailable; skipping it.",
+                        nextEntry == null ? "<unresolved>" : nextEntry.source());
+                promoteNextEntry();
+                return;
+            }
             waitingForNextTicks++;
             if (waitingForNextTicks >= CROSSFADE_WAIT_MAX_TICKS) {
                 ConditionalVideos.LOGGER.warn("Next playlist entry '{}' did not load in time; promoting anyway.",
@@ -432,6 +481,12 @@ public final class VideoPlaybackScreen extends Screen {
 
         if (nextBackend != null && nextBackend.isReadyToRender()) {
             enterCrossfading();
+            return;
+        }
+        if (nextBackend != null && nextBackend.hasError()) {
+            ConditionalVideos.LOGGER.warn("Next playlist entry '{}' is invalid or unavailable; skipping it.",
+                    nextEntry == null ? "<unresolved>" : nextEntry.source());
+            promoteNextEntry();
             return;
         }
         waitingForNextTicks++;
@@ -665,12 +720,18 @@ public final class VideoPlaybackScreen extends Screen {
 
         int hintAlpha = calculateHintAlpha();
         if (hintAlpha > 0 && state != State.OUTGOING_FADE) {
-            int x = width / 2;
-            int y = height - 24;
-            int color = (hintAlpha << 24) | 0x00FFFFFF;
-            guiGraphics.drawCenteredString(font, skipHint, x, y, color);
+            // Only advertise the skip key when the current video can actually be skipped; otherwise
+            // the hint contradicts the behaviour.
+            if (isCurrentSkippable()) {
+                int x = width / 2;
+                int y = height - 24;
+                int color = (hintAlpha << 24) | 0x00FFFFFF;
+                guiGraphics.drawCenteredString(font, skipHint, x, y, color);
+            }
             renderVideoMetadata(guiGraphics, hintAlpha);
         }
+
+        renderSkipHoldBar(guiGraphics);
 
         if (state == State.OUTGOING_FADE) {
             float progress = Math.min(1f, crossfadeTicks / (float) CROSSFADE_TICKS);
@@ -814,7 +875,7 @@ public final class VideoPlaybackScreen extends Screen {
             if (!skipKeyDown) {
                 skipKeyDown = true;
                 skipHoldTicks = 0;
-                skipClosedByHold = false;
+                skipHoldArmed = false;
             }
             return true;
         }
@@ -825,13 +886,20 @@ public final class VideoPlaybackScreen extends Screen {
     @Override
     public boolean keyReleased(int keyCode, int scanCode, int modifiers) {
         if (isSkipKey(keyCode, scanCode) && skipKeyDown) {
-            boolean closedByHold = skipClosedByHold;
+            boolean armed = skipHoldArmed;
+            int heldTicks = skipHoldTicks;
             skipKeyDown = false;
             skipHoldTicks = 0;
-            skipClosedByHold = false;
-            if (!closedByHold && state == State.PLAYING && !paused && isCurrentSkippable()) {
+            skipHoldArmed = false;
+            if (armed) {
+                // Held until the progress bar filled, now released: skip the whole playlist.
+                onClose();
+            } else if (heldTicks <= SKIP_TAP_MAX_TICKS
+                    && state == State.PLAYING && !paused && isCurrentSkippable()) {
+                // Quick tap: skip just the current video to the next entry.
                 skipToNextEntry();
             }
+            // Released mid-hold (past a tap but before the bar filled): cancel, skip nothing.
             return true;
         }
         return super.keyReleased(keyCode, scanCode, modifiers);

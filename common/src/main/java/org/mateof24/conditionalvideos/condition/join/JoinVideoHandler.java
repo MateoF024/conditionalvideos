@@ -5,6 +5,7 @@ import org.mateof24.conditionalvideos.*;
 import org.mateof24.conditionalvideos.condition.shared.ConditionVideoPlayer;
 import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
+import org.mateof24.conditionalvideos.debug.DebugLog;
 import org.mateof24.conditionalvideos.network.ConfigSyncNetworking;
 
 
@@ -21,6 +22,8 @@ public final class JoinVideoHandler {
             return true;
         }
 
+        DebugLog.log(DebugLog.Area.JOIN, "firstJoin matched: {} playlist entr(ies); requesting playback.",
+                firstJoin.resolvedPlaylist().size());
         ConfigSyncNetworking.notifyFirstJoinVideoState(true);
         boolean started = ConditionVideoPlayer.play(
                 minecraft,
@@ -30,6 +33,7 @@ public final class JoinVideoHandler {
                 "first join",
                 () -> ConfigSyncNetworking.notifyFirstJoinVideoState(false)
         );
+        DebugLog.log(DebugLog.Area.JOIN, "firstJoin playback request returned started={}.", started);
         if (!started) {
             ConfigSyncNetworking.notifyFirstJoinVideoState(false);
         }

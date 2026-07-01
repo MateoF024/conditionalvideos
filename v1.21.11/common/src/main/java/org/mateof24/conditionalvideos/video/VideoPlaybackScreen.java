@@ -1,0 +1,1115 @@
+package org.mateof24.conditionalvideos.video;
+
+import com.mojang.blaze3d.platform.InputConstants;
+import net.minecraft.client.KeyMapping;
+import net.minecraft.client.input.KeyEvent;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.network.chat.Component;
+import net.minecraft.util.FormattedCharSequence;
+import org.joml.Matrix3x2fStack;
+import org.lwjgl.glfw.GLFW;
+import org.mateof24.conditionalvideos.ConditionalVideos;
+import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
+import org.mateof24.conditionalvideos.config.CommonConfig;
+import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
+import org.mateof24.conditionalvideos.config.ConditionalVideosConfig.VideoEntry;
+import org.mateof24.conditionalvideos.runtime.ConditionalVideosKeybinds;
+import org.mateof24.conditionalvideos.video.backend.WaterMediaVideoBackend;
+import org.watermedia.api.media.MediaAPI;
+import org.watermedia.api.util.MediaQuality;
+
+import java.net.URI;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.function.Function;
+
+// Full-screen video player UI: drives the playlist (preload, crossfade/cut transitions, skip/hold),
+// renders the frame plus title/description overlays, and releases all backends on close.
+public final class VideoPlaybackScreen extends Screen {
+    private static final int HINT_VISIBLE_TICKS = 120;
+    private static final int HINT_FADE_IN_TICKS = 30;
+    private static final int HINT_FADE_OUT_TICKS = 40;
+    private static final int TEXT_BOX_WIDTH = 220;
+    private static final int TEXT_BOX_PADDING = 6;
+    private static final int TEXT_BOX_MARGIN = 10;
+    private static final int LINE_SPACING = 2;
+    private static final int LEGACY_BOX_ALPHA_CAP = 100;
+
+    private static final int CROSSFADE_TICKS = 40;
+    private static final int CROSSFADE_WAIT_MAX_TICKS = 200;
+    private static final int ESC_LONG_PRESS_TICKS = 20;
+    private static final int SKIP_TAP_MAX_TICKS = 6;
+    private static final int ESCAPE_KEY = 256;
+    private static final int FULLSCREEN_KEYCODE = 300;
+    private static final int CURSOR_HIDE_DELAY_TICKS = 100;
+    private static final int LOOP_PRELOAD_LEAD_TICKS = 20 * 20;
+    private static final int PRE_RESUME_LEAD_TICKS = 5;
+    private static final int TRAILING_MAX_TICKS = 40;
+    private static final double TRAILING_RELEASE_POSITION_SECONDS = 0.04;
+
+    private final ConditionalVideosConfig config;
+    private final List<VideoEntry> playlist;
+    private final Function<VideoEntry, URI> sourceResolver;
+    private final boolean playlistLoop;
+    private final String conditionKey;
+    private final Runnable onPlaylistEnd;
+    private final MediaQuality forcedQuality;
+
+    private State state = State.PLAYING;
+
+    private int currentIndex;
+    private VideoEntry currentEntry;
+    private WaterMediaVideoBackend currentBackend;
+    private boolean currentFirstFrameSeen;
+    private int currentEntryTicks;
+    private int hintTicks;
+
+    private Component currentTitle;
+    private TextAnchor currentTitleAnchor;
+    private float currentTitleScale;
+    private Component currentDescription;
+    private TextAnchor currentDescriptionAnchor;
+    private float currentDescriptionScale;
+    private float currentTextBoxOpacity;
+    private boolean currentEnableBackground;
+    private int currentBackgroundColor;
+
+    private int nextIndex = -1;
+    private VideoEntry nextEntry;
+    private WaterMediaVideoBackend nextBackend;
+    private int waitingForNextTicks;
+
+    private int skipNextIndex = -1;
+    private VideoEntry skipNextEntry;
+    private WaterMediaVideoBackend skipNextBackend;
+
+    private WaterMediaVideoBackend trailingBackend;
+    private int trailingBackendTicks;
+    private WaterMediaVideoBackend preResumedBackend;
+
+    private int crossfadeTicks;
+
+    private boolean closed;
+    private boolean currentBackendInitialised;
+    private int firstFrameWaitTicks;
+    private int consecutiveFailures;
+
+    private boolean skipKeyDown;
+    private int skipHoldTicks;
+    private boolean skipHoldArmed;
+
+    private double lastMouseX = Double.NaN;
+    private double lastMouseY = Double.NaN;
+    private int ticksSinceMouseMoved;
+    private boolean cursorHidden;
+    private boolean alwaysShowCursor;
+    private boolean paused;
+    private boolean skipKeyIsEsc = true;
+    private Component skipHint = Component.translatable("screen.conditionalvideos.skip_hint", escDisplayName());
+    private Component skipReleaseHint = Component.translatable("screen.conditionalvideos.release_to_skip", escDisplayName());
+
+    public VideoPlaybackScreen(
+            ConditionalVideosConfig config,
+            ConditionalVideosConfig.ConditionConfig conditionConfig,
+            List<VideoEntry> playlist,
+            Function<VideoEntry, URI> sourceResolver,
+            URI firstSourceUri,
+            String conditionKey,
+            Runnable onPlaylistEnd
+    ) {
+        super(Component.literal("Conditional Video"));
+        this.config = config;
+        this.playlist = playlist;
+        this.sourceResolver = sourceResolver;
+        this.playlistLoop = conditionConfig.resolvedPlaylistLoop();
+        this.conditionKey = conditionKey;
+        this.onPlaylistEnd = onPlaylistEnd == null ? () -> { } : onPlaylistEnd;
+        this.forcedQuality = resolveForcedQuality(ActiveConfigResolver.effectiveVideoQuality(Minecraft.getInstance()));
+
+        this.currentIndex = 0;
+        this.currentEntry = playlist.get(0);
+        applyCurrentEntryVisuals();
+        this.currentBackend = new WaterMediaVideoBackend(firstSourceUri, currentEntry.resolvedVolume());
+        this.currentBackend.setForcedQuality(forcedQuality);
+
+        warmAllPlaylistMrls(firstSourceUri);
+    }
+
+    private void warmAllPlaylistMrls(URI firstSourceUri) {
+        List<URI> uris = new ArrayList<>(playlist.size());
+        uris.add(firstSourceUri);
+        for (int i = 1; i < playlist.size(); i++) {
+            URI uri = sourceResolver.apply(playlist.get(i));
+            if (uri != null) {
+                uris.add(uri);
+            }
+        }
+        if (uris.isEmpty()) {
+            return;
+        }
+        try {
+            MediaAPI.preloadMRL(uris.toArray(new URI[0]));
+        } catch (Throwable t) {
+            ConditionalVideos.LOGGER.debug("preloadMRL failed: {}", t.toString());
+        }
+    }
+
+    private void applyCurrentEntryVisuals() {
+        currentTitle = LegacyFormatParser.parse(currentEntry.resolvedVideoTitle());
+        currentTitleAnchor = TextAnchor.fromConfig(currentEntry.resolvedVideoTitlePosition());
+        currentTitleScale = currentEntry.resolvedTitleScale();
+        currentDescription = LegacyFormatParser.parse(currentEntry.resolvedVideoDescription());
+        currentDescriptionAnchor = TextAnchor.fromConfig(currentEntry.resolvedVideoDescriptionPosition());
+        currentDescriptionScale = currentEntry.resolvedDescriptionScale();
+        currentTextBoxOpacity = currentEntry.resolvedTextBoxOpacity();
+        currentEnableBackground = currentEntry.resolvedEnableBackground();
+        currentBackgroundColor = config.resolveBackgroundColor(currentEntry, 0xFF000000);
+    }
+
+    @Override
+    protected void init() {
+        if (!currentBackendInitialised) {
+            ensureBackendInitialised(currentBackend);
+            currentBackendInitialised = true;
+        }
+        boolean allowSounds = ActiveConfigResolver.effectiveAllowGameSounds(minecraft);
+        alwaysShowCursor = ActiveConfigResolver.effectiveAlwaysShowCursor(minecraft);
+        VideoAudioState.setAllowGameSounds(allowSounds);
+        VideoAudioState.setVideoPlaying(true);
+        if (minecraft != null && !allowSounds) {
+            minecraft.getSoundManager().stop();
+        }
+        resolveSkipBinding();
+    }
+
+    private static MediaQuality resolveForcedQuality(String value) {
+        if (value == null || value.isBlank() || CommonConfig.QUALITY_AUTO.equalsIgnoreCase(value.trim())) {
+            return null;
+        }
+        try {
+            return MediaQuality.valueOf(value.trim().toUpperCase(java.util.Locale.ROOT));
+        } catch (IllegalArgumentException exception) {
+            ConditionalVideos.LOGGER.warn("Unknown videoQuality '{}' in common config; falling back to AUTO.", value);
+            return null;
+        }
+    }
+
+    // The "skip key" is a single key: ESC when the keybind is unbound (or bound to ESC), otherwise
+    // the assigned key. That key does tap = skip / hold = close. Whatever isn't the skip key
+    // (e.g. ESC once another key is assigned) does nothing — only one key is ever active.
+    private void resolveSkipBinding() {
+        KeyMapping skip = ConditionalVideosKeybinds.SKIP;
+        skipKeyIsEsc = skip.isUnbound() || skip.matches(new KeyEvent(ESCAPE_KEY, -1, 0));
+        Component keyName = skipKeyIsEsc ? escDisplayName() : skip.getTranslatedKeyMessage();
+        skipHint = Component.translatable("screen.conditionalvideos.skip_hint", keyName);
+        skipReleaseHint = Component.translatable("screen.conditionalvideos.release_to_skip", keyName);
+    }
+
+    private static Component escDisplayName() {
+        return InputConstants.getKey(new KeyEvent(ESCAPE_KEY, -1, 0)).getDisplayName();
+    }
+
+    private boolean isSkipKey(KeyEvent event) {
+        if (skipKeyIsEsc) {
+            return event.key() == ESCAPE_KEY;
+        }
+        return ConditionalVideosKeybinds.SKIP.matches(event);
+    }
+
+    private void tickSkipHold() {
+        if (!skipKeyDown || skipHoldArmed || !isCurrentSkippable()) {
+            return;
+        }
+        skipHoldTicks++;
+        if (skipHoldTicks >= ESC_LONG_PRESS_TICKS) {
+            // Hold threshold reached: arm the whole-playlist skip but wait for the key to be RELEASED
+            // before closing. Closing mid-hold left the key still down, so the game then saw the held
+            // key (e.g. ESC) and flickered the pause menu. The progress bar is full at this point.
+            skipHoldArmed = true;
+        }
+    }
+
+    // White bar that fills while the skip key is held toward a whole-playlist skip. It only appears
+    // once the hold has outlasted a quick tap (a tap skips a single video and shows no bar); it is
+    // full when releasing now will skip the whole playlist.
+    private void renderSkipHoldBar(GuiGraphics guiGraphics) {
+        if (!skipKeyDown || !isCurrentSkippable() || state != State.PLAYING) {
+            return;
+        }
+        if (skipHoldTicks <= SKIP_TAP_MAX_TICKS) {
+            return;
+        }
+        float progress = Math.min(1f, (skipHoldTicks - SKIP_TAP_MAX_TICKS)
+                / (float) (ESC_LONG_PRESS_TICKS - SKIP_TAP_MAX_TICKS));
+        int barWidth = 80;
+        int barHeight = 3;
+        int x = (width - barWidth) / 2;
+        int y = height - 12;
+        int filled = Math.round(barWidth * progress);
+        if (filled > 0) {
+            guiGraphics.fill(x, y, x + filled, y + barHeight, 0xFFFFFFFF);
+        }
+        if (skipHoldArmed) {
+            // Bar is full: tell the player that releasing the key now skips the whole playlist.
+            guiGraphics.drawCenteredString(font, skipReleaseHint, width / 2, y - 14, 0xFFFFFFFF);
+        }
+    }
+
+    private void advanceAfterFailure() {
+        firstFrameWaitTicks = 0;
+        consecutiveFailures++;
+        if (consecutiveFailures >= playlist.size()) {
+            ConditionalVideos.LOGGER.warn("All playlist entries failed to play; closing playback.");
+            onClose();
+            return;
+        }
+        int target = computeSkipTargetIndex();
+        if (target < 0) {
+            onClose();
+            return;
+        }
+        if (nextBackend != null && nextIndex != target) {
+            nextBackend.close();
+            nextBackend = null;
+            nextEntry = null;
+            nextIndex = -1;
+            waitingForNextTicks = 0;
+        }
+        if (nextBackend == null) {
+            startPreload(target);
+        }
+        if (nextBackend == null) {
+            onClose();
+            return;
+        }
+        promoteNextEntry();
+    }
+
+    private void skipToNextEntry() {
+        int target = computeSkipTargetIndex();
+        if (target < 0) {
+            onClose();
+            return;
+        }
+        if (skipNextBackend != null && skipNextIndex == target) {
+            if (nextBackend != null && nextBackend != skipNextBackend) {
+                nextBackend.close();
+            }
+            nextBackend = skipNextBackend;
+            nextEntry = skipNextEntry;
+            nextIndex = skipNextIndex;
+            skipNextBackend = null;
+            skipNextEntry = null;
+            skipNextIndex = -1;
+            waitingForNextTicks = 0;
+        } else if (nextBackend == null || nextIndex != target) {
+            if (nextBackend != null) {
+                nextBackend.close();
+                nextBackend = null;
+                nextEntry = null;
+                nextIndex = -1;
+            }
+            waitingForNextTicks = 0;
+            startPreload(target);
+        }
+        if (nextBackend == null) {
+            onClose();
+            return;
+        }
+        promoteNextEntry();
+    }
+
+    private int computeSkipTargetIndex() {
+        int candidate;
+        if (currentIndex + 1 < playlist.size()) {
+            candidate = currentIndex + 1;
+        } else if (playlistLoop) {
+            candidate = 0;
+        } else {
+            return -1;
+        }
+        if (candidate == currentIndex) {
+            return -1;
+        }
+        return candidate;
+    }
+
+    @Override
+    public void tick() {
+        if (closed) {
+            return;
+        }
+
+        tickSkipHold();
+        if (closed) {
+            return;
+        }
+
+        tickCursorAutoHide();
+
+        if (paused) {
+            return;
+        }
+
+        currentBackend.tick();
+        if (nextBackend != null) {
+            nextBackend.tick();
+        }
+        if (skipNextBackend != null && skipNextBackend != nextBackend) {
+            skipNextBackend.tick();
+        }
+        tickTrailingBackend();
+
+        if (currentBackend.hasError()) {
+            ConditionalVideos.LOGGER.warn("Playlist entry '{}' reported error; advancing.", currentEntry.source());
+            advanceAfterFailure();
+            return;
+        }
+
+        hintTicks++;
+        if (!currentFirstFrameSeen && currentBackend.hasRenderedAnyFrame()) {
+            currentFirstFrameSeen = true;
+            currentEntryTicks = 0;
+            firstFrameWaitTicks = 0;
+            consecutiveFailures = 0;
+        } else if (currentFirstFrameSeen) {
+            currentEntryTicks++;
+        } else if (currentBackend.isActivelyLoading()) {
+            // Source is still resolving or buffering (long videos take longer the longer they are):
+            // keep waiting, the wall-clock never counts against a healthy-but-slow load.
+            firstFrameWaitTicks = 0;
+        } else {
+            firstFrameWaitTicks++;
+            int timeout = firstFrameTimeoutTicks();
+            if (firstFrameWaitTicks >= timeout) {
+                ConditionalVideos.LOGGER.warn("Playlist entry '{}' produced no frame and showed no loading activity for {}s; advancing.",
+                        currentEntry.source(), timeout / 20);
+                advanceAfterFailure();
+                return;
+            }
+        }
+
+        switch (state) {
+            case PLAYING -> handlePlaying();
+            case CROSSFADING -> handleCrossfading();
+            case OUTGOING_FADE -> handleOutgoingFade();
+            case CLOSED -> { }
+        }
+    }
+
+    // Patience for a source to show its first frame, counted only while it is NOT actively loading.
+    // Shares the configurable load-timeout knob so one value governs the whole start-up wait.
+    private int firstFrameTimeoutTicks() {
+        return ActiveConfigResolver.effectiveVideoLoadTimeoutSeconds() * 20;
+    }
+
+    private void handlePlaying() {
+        int nextIdx = computeNextIndex();
+        boolean hasNext = nextIdx >= 0;
+        boolean isLoopIteration = hasNext && nextIdx == currentIndex;
+        boolean isFade = hasNext && isFadeTransition(nextIdx);
+        int endTick = computeCurrentEndTick();
+
+        boolean inPreloadWindow;
+        if (isLoopIteration) {
+            inPreloadWindow = endTick > 0 && currentEntryTicks >= endTick - LOOP_PRELOAD_LEAD_TICKS;
+        } else {
+            inPreloadWindow = currentFirstFrameSeen;
+        }
+
+        if (hasNext && nextBackend == null && inPreloadWindow) {
+            startPreload(nextIdx);
+        }
+        if (currentFirstFrameSeen) {
+            ensureSkipPreload();
+        }
+
+        if (hasNext && !isFade && nextBackend != null && preResumedBackend != nextBackend
+                && endTick > 0 && currentEntryTicks >= endTick - PRE_RESUME_LEAD_TICKS
+                && nextBackend.hasTextureValid()) {
+            nextBackend.resumePlayback();
+            nextBackend.setVolumeMultiplier(0f);
+            preResumedBackend = nextBackend;
+        }
+
+        if (!hasNext) {
+            boolean naturallyEnded = currentBackend.hasFinished();
+            boolean cueReached = endTick > 0 && currentEntryTicks >= endTick;
+            if (naturallyEnded || cueReached) {
+                state = State.OUTGOING_FADE;
+                crossfadeTicks = 0;
+            }
+            return;
+        }
+
+        boolean reachedTransitionWindow;
+        if (endTick > 0) {
+            int triggerTick = endTick - (isFade ? CROSSFADE_TICKS : 0);
+            reachedTransitionWindow = currentEntryTicks >= triggerTick;
+        } else {
+            reachedTransitionWindow = currentBackend.hasFinished();
+        }
+
+        if (!reachedTransitionWindow) {
+            return;
+        }
+
+        if (nextBackend == null) {
+            startPreload(nextIdx);
+        }
+
+        if (!isFade) {
+            if (nextBackend != null && nextBackend.hasTextureValid()) {
+                promoteNextEntry();
+                return;
+            }
+            if (nextBackend != null && nextBackend.hasError()) {
+                ConditionalVideos.LOGGER.warn("Next playlist entry '{}' is invalid or unavailable; skipping it.",
+                        nextEntry == null ? "<unresolved>" : nextEntry.source());
+                promoteNextEntry();
+                return;
+            }
+            waitingForNextTicks++;
+            if (waitingForNextTicks >= CROSSFADE_WAIT_MAX_TICKS) {
+                ConditionalVideos.LOGGER.warn("Next playlist entry '{}' did not load in time; promoting anyway.",
+                        nextEntry == null ? "<unresolved>" : nextEntry.source());
+                promoteNextEntry();
+            }
+            return;
+        }
+
+        if (nextBackend != null && nextBackend.isReadyToRender()) {
+            enterCrossfading();
+            return;
+        }
+        if (nextBackend != null && nextBackend.hasError()) {
+            ConditionalVideos.LOGGER.warn("Next playlist entry '{}' is invalid or unavailable; skipping it.",
+                    nextEntry == null ? "<unresolved>" : nextEntry.source());
+            promoteNextEntry();
+            return;
+        }
+        waitingForNextTicks++;
+        if (waitingForNextTicks >= CROSSFADE_WAIT_MAX_TICKS) {
+            ConditionalVideos.LOGGER.warn("Next playlist entry '{}' did not produce a frame in time; cutting without fade.",
+                    nextEntry == null ? "<unresolved>" : nextEntry.source());
+            promoteNextEntry();
+        }
+    }
+
+    private void handleCrossfading() {
+        crossfadeTicks++;
+        float progress = Math.min(1f, crossfadeTicks / (float) CROSSFADE_TICKS);
+        currentBackend.setVolumeMultiplier(1f - progress);
+        if (nextBackend != null) {
+            nextBackend.setVolumeMultiplier(progress);
+        }
+        if (crossfadeTicks >= CROSSFADE_TICKS) {
+            promoteNextEntry();
+        }
+    }
+
+    private void handleOutgoingFade() {
+        crossfadeTicks++;
+        float progress = Math.min(1f, crossfadeTicks / (float) CROSSFADE_TICKS);
+        currentBackend.setVolumeMultiplier(1f - progress);
+        if (crossfadeTicks >= CROSSFADE_TICKS) {
+            onClose();
+        }
+    }
+
+    private void ensureSkipPreload() {
+        int target = computeSkipTargetIndex();
+        if (target < 0) {
+            disposeSkipPreload();
+            return;
+        }
+        if (nextBackend != null && nextIndex == target) {
+            disposeSkipPreload();
+            return;
+        }
+        if (skipNextBackend != null && skipNextIndex == target) {
+            return;
+        }
+        disposeSkipPreload();
+        VideoEntry entry = playlist.get(target);
+        URI uri = sourceResolver.apply(entry);
+        if (uri == null) {
+            return;
+        }
+        skipNextIndex = target;
+        skipNextEntry = entry;
+        skipNextBackend = new WaterMediaVideoBackend(uri, entry.resolvedVolume());
+        skipNextBackend.setForcedQuality(forcedQuality);
+        skipNextBackend.setVolumeMultiplier(0f);
+        skipNextBackend.setStartPaused(true);
+        ensureBackendInitialised(skipNextBackend);
+    }
+
+    private void disposeSkipPreload() {
+        if (skipNextBackend != null) {
+            try {
+                skipNextBackend.close();
+            } catch (Throwable ignored) {
+            }
+            skipNextBackend = null;
+        }
+        skipNextEntry = null;
+        skipNextIndex = -1;
+    }
+
+    private void startPreload(int targetIndex) {
+        VideoEntry entry = playlist.get(targetIndex);
+        URI uri = sourceResolver.apply(entry);
+        if (uri == null) {
+            ConditionalVideos.LOGGER.warn("Cannot preload playlist entry {} ('{}'): source not resolvable. Skipping.",
+                    targetIndex, entry.source());
+            int skipNext = computeNextIndexAfter(targetIndex);
+            if (skipNext < 0 || skipNext == targetIndex) {
+                return;
+            }
+            startPreload(skipNext);
+            return;
+        }
+        nextIndex = targetIndex;
+        nextEntry = entry;
+        nextBackend = new WaterMediaVideoBackend(uri, entry.resolvedVolume());
+        nextBackend.setForcedQuality(forcedQuality);
+        nextBackend.setVolumeMultiplier(0f);
+        nextBackend.setStartPaused(true);
+        ensureBackendInitialised(nextBackend);
+    }
+
+    private void enterCrossfading() {
+        if (nextBackend != null) {
+            nextBackend.resumePlayback();
+        }
+        state = State.CROSSFADING;
+        crossfadeTicks = 0;
+        waitingForNextTicks = 0;
+    }
+
+    private void promoteNextEntry() {
+        boolean fromCrossfade = state == State.CROSSFADING;
+        performSwap(fromCrossfade);
+    }
+
+    private void performSwap(boolean fromCrossfade) {
+        boolean loopSwap = nextIndex == currentIndex;
+
+        WaterMediaVideoBackend previous = currentBackend;
+
+        if (nextBackend == null) {
+            if (previous != null) {
+                try { previous.close(); } catch (Throwable ignored) { }
+            }
+            onClose();
+            return;
+        }
+
+        boolean wasPreResumed = preResumedBackend == nextBackend;
+        if (!wasPreResumed && !fromCrossfade) {
+            nextBackend.resumePlayback();
+        }
+        preResumedBackend = null;
+
+        currentBackend = nextBackend;
+        currentEntry = nextEntry;
+        currentIndex = nextIndex;
+        if (!loopSwap) {
+            applyCurrentEntryVisuals();
+            hintTicks = 0;
+        }
+        currentFirstFrameSeen = currentBackend.hasRenderedAnyFrame() || currentBackend.hasTextureValid();
+        currentEntryTicks = 0;
+        firstFrameWaitTicks = 0;
+        currentBackend.setVolumeMultiplier(1f);
+
+        if (trailingBackend != null && trailingBackend != previous) {
+            try { trailingBackend.close(); } catch (Throwable ignored) { }
+        }
+        if (previous != null && previous != currentBackend) {
+            trailingBackend = previous;
+            trailingBackendTicks = 0;
+            try { trailingBackend.setVolumeMultiplier(0f); } catch (Throwable ignored) { }
+        } else {
+            trailingBackend = null;
+        }
+
+        nextBackend = null;
+        nextEntry = null;
+        nextIndex = -1;
+        waitingForNextTicks = 0;
+
+        state = State.PLAYING;
+        crossfadeTicks = 0;
+    }
+
+    private boolean isFadeTransition(int nextIdx) {
+        return ConditionalVideosConfig.TRANSITION_FADE.equals(playlist.get(nextIdx).resolvedTransition());
+    }
+
+    private int computeNextIndex() {
+        if (currentEntry != null && currentEntry.resolvedVideoLoop()) {
+            return currentIndex;
+        }
+        if (currentIndex + 1 < playlist.size()) {
+            return currentIndex + 1;
+        }
+        if (playlistLoop) {
+            return 0;
+        }
+        return -1;
+    }
+
+    private int computeNextIndexAfter(int idx) {
+        if (idx + 1 < playlist.size()) {
+            return idx + 1;
+        }
+        if (playlistLoop) {
+            return 0;
+        }
+        return -1;
+    }
+
+    private int computeCurrentEndTick() {
+        Float nextAt = currentEntry.resolvedNextAt();
+        if (nextAt != null) {
+            return Math.round(nextAt * 20f);
+        }
+        double duration = currentBackend.durationSeconds();
+        if (duration > 0d) {
+            return (int) Math.round(duration * 20d);
+        }
+        return -1;
+    }
+
+    private void ensureBackendInitialised(WaterMediaVideoBackend backend) {
+        try {
+            backend.init();
+        } catch (Throwable throwable) {
+            ConditionalVideos.LOGGER.warn("Failed to init backend for '{}': {}", backend.source(), throwable.toString());
+        }
+    }
+
+    @Override
+    public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
+        WaterMediaVideoBackend renderTarget = chooseRenderTarget();
+
+        if (!currentFirstFrameSeen && renderTarget == currentBackend) {
+            if (currentBackend.hasRenderedAnyFrame() && currentEnableBackground) {
+                guiGraphics.fill(0, 0, width, height, currentBackgroundColor);
+            } else {
+                VideoLoadingOverlay.render(guiGraphics, font, width, height, playlist.size());
+            }
+            currentBackend.render(guiGraphics, width, height, 1f);
+            return;
+        }
+
+        if (currentEnableBackground) {
+            guiGraphics.fill(0, 0, width, height, currentBackgroundColor);
+        }
+
+        if (state == State.CROSSFADING && nextBackend != null) {
+            float progress = Math.min(1f, crossfadeTicks / (float) CROSSFADE_TICKS);
+            currentBackend.render(guiGraphics, width, height, 1f - progress);
+            nextBackend.render(guiGraphics, width, height, progress);
+        } else {
+            renderTarget.render(guiGraphics, width, height, 1f);
+        }
+
+        int hintAlpha = calculateHintAlpha();
+        if (hintAlpha > 0 && state != State.OUTGOING_FADE) {
+            // Only advertise the skip key when the current video can actually be skipped; otherwise
+            // the hint contradicts the behaviour.
+            if (isCurrentSkippable()) {
+                int x = width / 2;
+                int y = height - 24;
+                int color = (hintAlpha << 24) | 0x00FFFFFF;
+                guiGraphics.drawCenteredString(font, skipHint, x, y, color);
+            }
+            renderVideoMetadata(guiGraphics, hintAlpha);
+        }
+
+        renderSkipHoldBar(guiGraphics);
+
+        if (state == State.OUTGOING_FADE) {
+            float progress = Math.min(1f, crossfadeTicks / (float) CROSSFADE_TICKS);
+            int alpha = Math.round(255f * progress);
+            if (alpha > 0) {
+                guiGraphics.fill(0, 0, width, height, (alpha << 24));
+            }
+        }
+
+        if (paused) {
+            drawPauseIcon(guiGraphics);
+        }
+    }
+
+    private void drawPauseIcon(GuiGraphics guiGraphics) {
+        int barWidth = 6;
+        int barHeight = 22;
+        int gap = 6;
+        int margin = 12;
+        int color = 0xCCFFFFFF;
+        int right = width - margin;
+        int top = margin;
+        guiGraphics.fill(right - (barWidth * 2) - gap, top, right - barWidth - gap, top + barHeight, color);
+        guiGraphics.fill(right - barWidth, top, right, top + barHeight, color);
+    }
+
+    private void renderVideoMetadata(GuiGraphics guiGraphics, int alpha) {
+        boolean hasTitle = !currentTitle.getString().isBlank();
+        boolean hasDescription = !currentDescription.getString().isBlank();
+        if (!hasTitle && !hasDescription) {
+            return;
+        }
+
+        if (hasTitle && hasDescription && currentTitleAnchor == currentDescriptionAnchor) {
+            drawCombinedTextBlock(guiGraphics, alpha);
+            return;
+        }
+
+        if (hasTitle) {
+            drawTextBlock(guiGraphics, currentTitle, currentTitleAnchor, currentTitleScale, alpha);
+        }
+        if (hasDescription) {
+            drawTextBlock(guiGraphics, currentDescription, currentDescriptionAnchor, currentDescriptionScale, alpha);
+        }
+    }
+
+    private void drawTextBlock(GuiGraphics guiGraphics, Component text, TextAnchor anchor, float scale, int alpha) {
+        int innerWidth = Math.max(1, Math.round((TEXT_BOX_WIDTH - TEXT_BOX_PADDING * 2) / scale));
+        List<FormattedCharSequence> lines = font.split(text, innerWidth);
+        if (lines.isEmpty()) {
+            return;
+        }
+
+        int baseTextHeight = lines.size() * (font.lineHeight + LINE_SPACING) - LINE_SPACING;
+        int scaledTextHeight = Math.round(baseTextHeight * scale);
+        int boxHeight = scaledTextHeight + TEXT_BOX_PADDING * 2;
+
+        int x = anchor.isRightAligned()
+                ? width - TEXT_BOX_MARGIN - TEXT_BOX_WIDTH
+                : TEXT_BOX_MARGIN;
+        int y = anchor.resolveY(height, boxHeight);
+
+        fillTextBox(guiGraphics, x, y, x + TEXT_BOX_WIDTH, y + boxHeight, alpha);
+
+        drawScaledLines(guiGraphics, lines, x + TEXT_BOX_PADDING, y + TEXT_BOX_PADDING, scale, alpha);
+    }
+
+    private void drawCombinedTextBlock(GuiGraphics guiGraphics, int alpha) {
+        int titleInnerWidth = Math.max(1, Math.round((TEXT_BOX_WIDTH - TEXT_BOX_PADDING * 2) / currentTitleScale));
+        int descInnerWidth = Math.max(1, Math.round((TEXT_BOX_WIDTH - TEXT_BOX_PADDING * 2) / currentDescriptionScale));
+        List<FormattedCharSequence> titleLines = font.split(currentTitle, titleInnerWidth);
+        List<FormattedCharSequence> descLines = font.split(currentDescription, descInnerWidth);
+
+        int titleBlockHeight = Math.round((titleLines.size() * (font.lineHeight + LINE_SPACING) - LINE_SPACING) * currentTitleScale);
+        int descBlockHeight = Math.round((descLines.size() * (font.lineHeight + LINE_SPACING) - LINE_SPACING) * currentDescriptionScale);
+        int gap = Math.round((font.lineHeight + LINE_SPACING) * Math.max(currentTitleScale, currentDescriptionScale));
+        int boxHeight = titleBlockHeight + gap + descBlockHeight + TEXT_BOX_PADDING * 2;
+
+        int x = currentTitleAnchor.isRightAligned()
+                ? width - TEXT_BOX_MARGIN - TEXT_BOX_WIDTH
+                : TEXT_BOX_MARGIN;
+        int y = currentTitleAnchor.resolveY(height, boxHeight);
+
+        fillTextBox(guiGraphics, x, y, x + TEXT_BOX_WIDTH, y + boxHeight, alpha);
+
+        drawScaledLines(guiGraphics, titleLines, x + TEXT_BOX_PADDING, y + TEXT_BOX_PADDING, currentTitleScale, alpha);
+        int descTopY = y + TEXT_BOX_PADDING + titleBlockHeight + gap;
+        drawScaledLines(guiGraphics, descLines, x + TEXT_BOX_PADDING, descTopY, currentDescriptionScale, alpha);
+    }
+
+    private void drawScaledLines(GuiGraphics guiGraphics, List<FormattedCharSequence> lines, int originX, int originY, float scale, int alpha) {
+        int textColor = (alpha << 24) | 0x00FFFFFF;
+        int unscaledLineHeight = font.lineHeight + LINE_SPACING;
+        Matrix3x2fStack pose = guiGraphics.pose();
+        pose.pushMatrix();
+        pose.translate(originX, originY);
+        pose.scale(scale, scale);
+        for (int i = 0; i < lines.size(); i++) {
+            guiGraphics.drawString(font, lines.get(i), 0, i * unscaledLineHeight, textColor);
+        }
+        pose.popMatrix();
+    }
+
+    private void fillTextBox(GuiGraphics guiGraphics, int left, int top, int right, int bottom, int textAlpha) {
+        int boxAlpha = resolveBoxAlpha(textAlpha);
+        if (boxAlpha <= 0) {
+            return;
+        }
+        guiGraphics.fill(left, top, right, bottom, boxAlpha << 24);
+    }
+
+    private int resolveBoxAlpha(int textAlpha) {
+        if (currentTextBoxOpacity < 0f) {
+            return Math.min(textAlpha, LEGACY_BOX_ALPHA_CAP);
+        }
+        int cap = Math.round(currentTextBoxOpacity * 255f);
+        return Math.min(textAlpha, cap);
+    }
+
+    private int calculateHintAlpha() {
+        if (hintTicks >= HINT_VISIBLE_TICKS) {
+            return 0;
+        }
+        if (hintTicks < HINT_FADE_IN_TICKS) {
+            return (int) (255.0F * hintTicks / HINT_FADE_IN_TICKS);
+        }
+        int fadeOutStartTick = HINT_VISIBLE_TICKS - HINT_FADE_OUT_TICKS;
+        if (hintTicks >= fadeOutStartTick) {
+            int ticksIntoFadeOut = hintTicks - fadeOutStartTick;
+            return (int) (255.0F * (HINT_FADE_OUT_TICKS - ticksIntoFadeOut) / HINT_FADE_OUT_TICKS);
+        }
+        return 255;
+    }
+
+    @Override
+    public boolean keyPressed(KeyEvent event) {
+        if (event.key() == FULLSCREEN_KEYCODE) {
+            return super.keyPressed(event);
+        }
+        if (isSkipKey(event)) {
+            if (!skipKeyDown) {
+                skipKeyDown = true;
+                skipHoldTicks = 0;
+                skipHoldArmed = false;
+            }
+            return true;
+        }
+        // Any other key (including ESC once a separate skip key is bound) does nothing.
+        return true;
+    }
+
+    @Override
+    public boolean keyReleased(KeyEvent event) {
+        if (isSkipKey(event) && skipKeyDown) {
+            boolean armed = skipHoldArmed;
+            int heldTicks = skipHoldTicks;
+            skipKeyDown = false;
+            skipHoldTicks = 0;
+            skipHoldArmed = false;
+            if (armed) {
+                // Held until the progress bar filled, now released: skip the whole playlist.
+                onClose();
+            } else if (heldTicks <= SKIP_TAP_MAX_TICKS
+                    && state == State.PLAYING && !paused && isCurrentSkippable()) {
+                // Quick tap: skip just the current video to the next entry.
+                skipToNextEntry();
+            }
+            // Released mid-hold (past a tap but before the bar filled): cancel, skip nothing.
+            return true;
+        }
+        return super.keyReleased(event);
+    }
+
+    @Override
+    public void mouseMoved(double mouseX, double mouseY) {
+        super.mouseMoved(mouseX, mouseY);
+        if (Double.isNaN(lastMouseX) || mouseX != lastMouseX || mouseY != lastMouseY) {
+            lastMouseX = mouseX;
+            lastMouseY = mouseY;
+            ticksSinceMouseMoved = 0;
+            if (cursorHidden) {
+                setCursorVisibility(true);
+            }
+        }
+    }
+
+    private void tickTrailingBackend() {
+        if (trailingBackend == null) {
+            return;
+        }
+        trailingBackend.tick();
+        trailingBackendTicks++;
+        boolean newReady = false;
+        try {
+            double pos = currentBackend.positionSeconds();
+            newReady = pos >= TRAILING_RELEASE_POSITION_SECONDS;
+        } catch (Throwable ignored) {
+        }
+        if (newReady || trailingBackendTicks >= TRAILING_MAX_TICKS) {
+            try {
+                trailingBackend.close();
+            } catch (Throwable ignored) {
+            }
+            trailingBackend = null;
+        }
+    }
+
+    private WaterMediaVideoBackend chooseRenderTarget() {
+        if (trailingBackend == null) {
+            return currentBackend;
+        }
+        boolean newHasTexture = currentBackend.hasTextureValid();
+        boolean newHasContent;
+        try {
+            newHasContent = currentBackend.positionSeconds() >= TRAILING_RELEASE_POSITION_SECONDS;
+        } catch (Throwable ignored) {
+            newHasContent = false;
+        }
+        if (newHasTexture && newHasContent) {
+            return currentBackend;
+        }
+        if (trailingBackend.hasTextureValid()) {
+            return trailingBackend;
+        }
+        return currentBackend;
+    }
+
+    private void tickCursorAutoHide() {
+        if (alwaysShowCursor) {
+            if (cursorHidden) {
+                setCursorVisibility(true);
+            }
+            return;
+        }
+        if (cursorHidden) {
+            return;
+        }
+        ticksSinceMouseMoved++;
+        if (ticksSinceMouseMoved >= CURSOR_HIDE_DELAY_TICKS) {
+            setCursorVisibility(false);
+        }
+    }
+
+    private void setCursorVisibility(boolean visible) {
+        if (minecraft == null) {
+            return;
+        }
+        long window = minecraft.getWindow().handle();
+        int mode = visible ? GLFW.GLFW_CURSOR_NORMAL : GLFW.GLFW_CURSOR_HIDDEN;
+        try {
+            GLFW.glfwSetInputMode(window, GLFW.GLFW_CURSOR, mode);
+        } catch (Throwable t) {
+            ConditionalVideos.LOGGER.debug("Failed to set cursor visibility ({}): {}", visible, t.toString());
+            return;
+        }
+        cursorHidden = !visible;
+    }
+
+    @Override
+    public boolean shouldCloseOnEsc() {
+        return false;
+    }
+
+    private boolean isCurrentSkippable() {
+        return currentEntry.resolvedSkippable();
+    }
+
+    public boolean isPaused() {
+        return paused;
+    }
+
+    public void togglePause() {
+        setPaused(!paused);
+    }
+
+    public void setPaused(boolean value) {
+        if (paused == value) {
+            return;
+        }
+        paused = value;
+        if (currentBackend != null) {
+            if (paused) {
+                currentBackend.pause();
+            } else {
+                currentBackend.resume();
+            }
+        }
+    }
+
+    @Override
+    public void onClose() {
+        if (closed) {
+            return;
+        }
+        finishPlayback();
+        if (minecraft != null && minecraft.screen == this) {
+            minecraft.setScreen(null);
+        }
+        org.mateof24.conditionalvideos.condition.shared.ConditionVideoPlayer.playNextInQueue(minecraft);
+    }
+
+    @Override
+    public void removed() {
+        // If this screen is replaced without going through onClose() (e.g. another screen takes
+        // over), Minecraft only calls removed(). Release native resources and fire the end event
+        // here too so WaterMedia backends never leak. The queue is intentionally NOT resumed:
+        // something else is deliberately taking the screen.
+        if (closed) {
+            return;
+        }
+        finishPlayback();
+    }
+
+    private void finishPlayback() {
+        closed = true;
+        state = State.CLOSED;
+        if (cursorHidden) {
+            setCursorVisibility(true);
+        }
+        if (currentBackend != null) {
+            currentBackend.close();
+        }
+        if (nextBackend != null) {
+            nextBackend.close();
+            nextBackend = null;
+        }
+        if (trailingBackend != null) {
+            try { trailingBackend.close(); } catch (Throwable ignored) { }
+            trailingBackend = null;
+        }
+        disposeSkipPreload();
+        VideoAudioState.setVideoPlaying(false);
+        org.mateof24.conditionalvideos.runtime.PlaybackEvents.notifyEnded(conditionKey);
+        onPlaylistEnd.run();
+    }
+
+    @Override
+    public boolean isPauseScreen() {
+        return false;
+    }
+
+    private enum State {
+        PLAYING,
+        CROSSFADING,
+        OUTGOING_FADE,
+        CLOSED
+    }
+
+    private enum TextAnchor {
+        TOP_LEFT,
+        TOP_RIGHT,
+        BOTTOM_LEFT,
+        BOTTOM_RIGHT;
+
+        static TextAnchor fromConfig(String value) {
+            if (value == null) {
+                return BOTTOM_LEFT;
+            }
+            return switch (value.trim().toLowerCase()) {
+                case "topleft" -> TOP_LEFT;
+                case "topright" -> TOP_RIGHT;
+                case "bottomright" -> BOTTOM_RIGHT;
+                default -> BOTTOM_LEFT;
+            };
+        }
+
+        boolean isRightAligned() {
+            return this == TOP_RIGHT || this == BOTTOM_RIGHT;
+        }
+
+        int resolveY(int screenHeight, int boxHeight) {
+            if (this == TOP_LEFT || this == TOP_RIGHT) {
+                return TEXT_BOX_MARGIN;
+            }
+            int skipHintTopY = screenHeight - 24;
+            int bottomLimit = skipHintTopY - TEXT_BOX_MARGIN;
+            return Math.max(TEXT_BOX_MARGIN, bottomLimit - boxHeight);
+        }
+    }
+}
