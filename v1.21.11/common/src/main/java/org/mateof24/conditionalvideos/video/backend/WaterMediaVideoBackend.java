@@ -20,6 +20,7 @@ import org.lwjgl.opengl.GL33;
 import org.mateof24.conditionalvideos.ConditionalVideos;
 import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
 import org.mateof24.conditionalvideos.debug.DebugLog;
+import org.mateof24.conditionalvideos.debug.VideoDiagnostics;
 import org.watermedia.WaterMedia;
 import org.watermedia.WaterMediaConfig;
 import org.watermedia.api.media.MRL;
@@ -48,6 +49,8 @@ public final class WaterMediaVideoBackend {
 
     private final URI source;
     private final float configuredVolume;
+    private final VideoDiagnostics diagnostics = new VideoDiagnostics();
+    private final AtomicInteger glUploadCount = new AtomicInteger();
     private float volumeMultiplier = 1f;
     private boolean startPaused;
     private boolean resumeOnReady;
@@ -81,7 +84,6 @@ public final class WaterMediaVideoBackend {
     private static final AtomicInteger TEXTURE_SEQ = new AtomicInteger();
     private VideoFrameTexture frameTexture;
     private Identifier frameTextureId;
-    private long lastDebugSampleNanos;
 
     public WaterMediaVideoBackend(URI source, float volume) {
         this.source = source;
@@ -271,7 +273,12 @@ public final class WaterMediaVideoBackend {
             // the GL state it touches, so the work is invisible to MC. This mirrors what 1.21.1's
             // immediate-mode renderer did implicitly by re-establishing state every draw.
             Minecraft minecraft = Minecraft.getInstance();
-            Executor renderExecutor = (Runnable task) -> minecraft.execute(() -> runIsolatedGl(task));
+            Executor renderExecutor = (Runnable task) -> minecraft.execute(() -> {
+                if (DebugLog.enabled()) {
+                    glUploadCount.incrementAndGet();
+                }
+                runIsolatedGl(task);
+            });
             gfx = MediaAPI.glEngine(renderThread, renderExecutor);
             sfx = MediaAPI.alEngine();
             return true;
@@ -862,52 +869,6 @@ public final class WaterMediaVideoBackend {
         render(guiGraphics, width, height, 1f);
     }
 
-    // Diagnostic (debug only, ~1/s): reads the centre texel of WaterMedia's converted frame texture.
-    // A (0,77,0)-ish centre is the exact BT.709 conversion of all-zero YUV, i.e. an unconverted (green)
-    // frame. WaterMedia 3.0.0.22 owns the GL upload/convert pipeline internally with no host bind hooks,
-    // so per-plane read-back is no longer available; the converted centre is the green-frame check.
-    private void debugSampleTexture(int texId, int texW, int texH) {
-        long now = System.nanoTime();
-        if (now - lastDebugSampleNanos < 1_000_000_000L) {
-            return;
-        }
-        lastDebugSampleNanos = now;
-        int prevDrawFbo = GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
-        int prevReadFbo = GL11.glGetInteger(GL30.GL_READ_FRAMEBUFFER_BINDING);
-        int prevReadBuffer = GL11.glGetInteger(GL11.GL_READ_BUFFER);
-        int fbo = GL30.glGenFramebuffers();
-        try {
-            GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, fbo);
-            GL11.glReadBuffer(GL30.GL_COLOR_ATTACHMENT0);
-            String frame = readTexelRGBA(texId, texW / 2, texH / 2);
-            DebugLog.log(DebugLog.Area.BACKEND, "frame tex={} {}x{} centreRGBA={} for '{}'",
-                    texId, texW, texH, frame, source);
-        } catch (Throwable t) {
-            DebugLog.log(DebugLog.Area.BACKEND, "debugSampleTexture failed: {}", t.toString());
-        } finally {
-            GL30.glFramebufferTexture2D(GL30.GL_READ_FRAMEBUFFER, GL30.GL_COLOR_ATTACHMENT0, GL11.GL_TEXTURE_2D, 0, 0);
-            GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, prevReadFbo);
-            GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, prevDrawFbo);
-            GL11.glReadBuffer(prevReadBuffer);
-            GL30.glDeleteFramebuffers(fbo);
-        }
-    }
-
-    // Attaches texId to the already-bound read-FBO (GL_READ_FRAMEBUFFER, read buffer COLOR_ATTACHMENT0)
-    // and reads one texel as RGBA. Single-channel plane textures (R8/RG8) report their data in R/RG with
-    // the rest defaulted, which is enough to tell a populated plane (real luma/chroma) from an all-zero
-    // one. Returns the RGBA tuple, or the FBO status if the attachment is not readable.
-    private static String readTexelRGBA(int texId, int x, int y) {
-        GL30.glFramebufferTexture2D(GL30.GL_READ_FRAMEBUFFER, GL30.GL_COLOR_ATTACHMENT0, GL11.GL_TEXTURE_2D, texId, 0);
-        int status = GL30.glCheckFramebufferStatus(GL30.GL_READ_FRAMEBUFFER);
-        if (status != GL30.GL_FRAMEBUFFER_COMPLETE) {
-            return "fbo0x" + Integer.toHexString(status);
-        }
-        java.nio.ByteBuffer buf = org.lwjgl.BufferUtils.createByteBuffer(4);
-        GL11.glReadPixels(x, y, 1, 1, GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, buf);
-        return "(" + (buf.get(0) & 0xFF) + "," + (buf.get(1) & 0xFF) + "," + (buf.get(2) & 0xFF) + "," + (buf.get(3) & 0xFF) + ")";
-    }
-
     // 1.21.5+ rewrote the GUI to a deferred pipeline: GuiGraphics calls only record draws that are
     // flushed (in submission order) after the screen's render() returns. Doing raw immediate-mode GL
     // here would draw out of order with the text/background and corrupt the pipeline's state cache
@@ -928,10 +889,7 @@ public final class WaterMediaVideoBackend {
             return;
         }
         renderedAnyFrame = true;
-
-        if (DebugLog.enabled()) {
-            debugSampleTexture((int) texId, texW, texH);
-        }
+        diagnostics.sample(source, player, gfx, texId, glUploadCount);
 
         RenderBounds bounds = calculateRenderBounds(width, height);
         float clampedAlpha = Math.max(0f, Math.min(1f, alpha));

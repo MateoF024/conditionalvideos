@@ -11,6 +11,7 @@ import net.minecraft.client.renderer.GameRenderer;
 import org.mateof24.conditionalvideos.ConditionalVideos;
 import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
 import org.mateof24.conditionalvideos.debug.DebugLog;
+import org.mateof24.conditionalvideos.debug.VideoDiagnostics;
 import org.watermedia.WaterMedia;
 import org.watermedia.WaterMediaConfig;
 import org.watermedia.api.media.MRL;
@@ -25,6 +26,7 @@ import java.net.URI;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicInteger;
 
 // Bridges one video source to a WaterMedia v3 player: acquires the MRL, starts/loops/seeks the
 // player, caps the upload resolution to the window, and renders its texture full-screen.
@@ -38,6 +40,8 @@ public final class WaterMediaVideoBackend {
 
     private final URI source;
     private final float configuredVolume;
+    private final VideoDiagnostics diagnostics = new VideoDiagnostics();
+    private final AtomicInteger glUploadCount = new AtomicInteger();
     private float volumeMultiplier = 1f;
     private boolean startPaused;
     private boolean resumeOnReady;
@@ -241,7 +245,12 @@ public final class WaterMediaVideoBackend {
     private boolean createEngines() {
         try {
             Thread renderThread = Thread.currentThread();
-            Executor renderExecutor = (Runnable r) -> RenderSystem.recordRenderCall(r::run);
+            Executor renderExecutor = (Runnable r) -> RenderSystem.recordRenderCall(() -> {
+                if (DebugLog.enabled()) {
+                    glUploadCount.incrementAndGet();
+                }
+                r.run();
+            });
             gfx = MediaAPI.glEngine(renderThread, renderExecutor);
             sfx = MediaAPI.alEngine();
             return true;
@@ -744,6 +753,7 @@ public final class WaterMediaVideoBackend {
             return;
         }
         renderedAnyFrame = true;
+        diagnostics.sample(source, player, gfx, texId, glUploadCount);
 
         RenderBounds bounds = calculateRenderBounds(width, height);
         float clampedAlpha = Math.max(0f, Math.min(1f, alpha));
