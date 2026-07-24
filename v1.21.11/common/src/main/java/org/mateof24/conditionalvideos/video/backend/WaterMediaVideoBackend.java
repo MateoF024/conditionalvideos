@@ -20,6 +20,7 @@ import org.lwjgl.opengl.GL33;
 import org.mateof24.conditionalvideos.ConditionalVideos;
 import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
 import org.mateof24.conditionalvideos.debug.DebugLog;
+import org.watermedia.WaterMedia;
 import org.watermedia.WaterMediaConfig;
 import org.watermedia.api.media.MRL;
 import org.watermedia.api.media.MediaAPI;
@@ -30,6 +31,7 @@ import org.watermedia.api.util.MediaQuality;
 import org.watermedia.api.util.MediaType;
 
 import java.net.URI;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -649,6 +651,12 @@ public final class WaterMediaVideoBackend {
                 cleanup();
                 return;
             }
+            if (preferred.type() == MediaType.VIDEO && ffmpegErrored()) {
+                reportFfmpegUnavailable();
+                errored = true;
+                cleanup();
+                return;
+            }
             startSourcePlayer(preferred, videoIndex);
         } catch (Throwable throwable) {
             ConditionalVideos.LOGGER.warn("Failed to start WATERMeDIA v3 player for '{}': {}", source, throwable.toString());
@@ -669,7 +677,9 @@ public final class WaterMediaVideoBackend {
                 ? MediaAPI.createPlayer(mrl, index, () -> gfx, () -> sfx)
                 : MediaAPI.createPlayer(mrl, () -> gfx, () -> sfx);
         registerStatusListener();
-        DebugLog.applyFfmpegLogLevel();
+        if (ffmpegLoaded()) {
+            DebugLog.applyFfmpegLogLevel();
+        }
         desiredQuality = resolveDesiredQuality(preferred);
         appliedMaxWidth = -1;
         appliedMaxHeight = -1;
@@ -719,6 +729,36 @@ public final class WaterMediaVideoBackend {
         }
         try {
             playerStatus = player.status();
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static boolean ffmpegLoaded() {
+        try {
+            return MediaAPI.ffmpegLoaded();
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static boolean ffmpegErrored() {
+        try {
+            return MediaAPI.ffmpegError();
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    // Logs a clear reason (plus WaterMedia's non-fatal boot failures) when FFmpeg failed to load, so a
+    // broken native backend surfaces as an explicit message instead of a generic timeout or silent stall.
+    private void reportFfmpegUnavailable() {
+        ConditionalVideos.LOGGER.warn("Cannot play video '{}': WaterMedia's FFmpeg backend failed to load; "
+                + "video playback is unavailable. Verify the WaterMedia and WaterMedia Binaries installation.", source);
+        try {
+            List<WaterMedia.Failure> failures = WaterMedia.failures();
+            for (WaterMedia.Failure failure : failures) {
+                ConditionalVideos.LOGGER.warn("  WaterMedia boot failure: api={}, step={}", failure.api(), failure.step());
+            }
         } catch (Throwable ignored) {
         }
     }
