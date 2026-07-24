@@ -43,6 +43,7 @@ public final class WaterMediaVideoBackend {
 
     private MRL mrl;
     private MediaPlayer player;
+    private volatile MediaPlayer.Status playerStatus;
     private GFXEngine gfx;
     private SFXEngine sfx;
     private MediaQuality desiredQuality = MediaQuality.HIGHEST;
@@ -79,7 +80,9 @@ public final class WaterMediaVideoBackend {
             return false;
         }
         try {
-            return player.texture() > 0 && (player.playing() || player.paused() || player.buffering());
+            return player.texture() > 0 && (playerStatus == MediaPlayer.Status.PLAYING
+                    || playerStatus == MediaPlayer.Status.PAUSED
+                    || playerStatus == MediaPlayer.Status.BUFFERING);
         } catch (Throwable t) {
             return false;
         }
@@ -117,11 +120,9 @@ public final class WaterMediaVideoBackend {
             return false;
         }
         if (player != null) {
-            try {
-                return player.loading() || player.buffering() || player.waiting();
-            } catch (Throwable ignored) {
-                return false;
-            }
+            return playerStatus == MediaPlayer.Status.LOADING
+                    || playerStatus == MediaPlayer.Status.BUFFERING
+                    || playerStatus == MediaPlayer.Status.WAITING;
         }
         if (mrl == null) {
             return true;
@@ -402,7 +403,7 @@ public final class WaterMediaVideoBackend {
             return;
         }
         try {
-            if (!player.playing()) {
+            if (playerStatus != MediaPlayer.Status.PLAYING) {
                 return;
             }
             try { player.pause(); } catch (Throwable ignored) { }
@@ -529,6 +530,7 @@ public final class WaterMediaVideoBackend {
         player = index >= 0
                 ? MediaAPI.createPlayer(mrl, index, () -> gfx, () -> sfx)
                 : MediaAPI.createPlayer(mrl, () -> gfx, () -> sfx);
+        registerStatusListener();
         DebugLog.applyFfmpegLogLevel();
         desiredQuality = resolveDesiredQuality(preferred);
         appliedMaxWidth = -1;
@@ -566,6 +568,21 @@ public final class WaterMediaVideoBackend {
         resumeOnReady = false;
         ConditionalVideos.LOGGER.info("Started WATERMeDIA v3 player for '{}' (quality={}, startPaused={}, holdAtZero={}).",
                 source, player.quality(), willStartPaused, holdAtZero);
+    }
+
+    // Caches the player status from WaterMedia's event callback so the per-tick state queries read one
+    // volatile field instead of polling several native getters each tick. Seeded once in case no early
+    // transition fires; the callback may run on a WaterMedia thread, hence the volatile field.
+    private void registerStatusListener() {
+        try {
+            player.onStatus((previous, current) -> playerStatus = current);
+        } catch (Throwable t) {
+            ConditionalVideos.LOGGER.debug("onStatus() registration failed for '{}': {}", source, t.toString());
+        }
+        try {
+            playerStatus = player.status();
+        } catch (Throwable ignored) {
+        }
     }
 
     // Index (into mrl.sources()) of the FIRST video source, or -1 to fall back to the default
@@ -749,7 +766,9 @@ public final class WaterMediaVideoBackend {
             return false;
         }
         try {
-            return player.error() || player.ended() || player.stopped();
+            return playerStatus == MediaPlayer.Status.ERROR
+                    || playerStatus == MediaPlayer.Status.ENDED
+                    || playerStatus == MediaPlayer.Status.STOPPED;
         } catch (Throwable t) {
             return false;
         }
