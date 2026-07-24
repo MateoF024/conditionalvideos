@@ -8,19 +8,17 @@ import com.mojang.blaze3d.vertex.Tesselator;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.GameRenderer;
-import org.lwjgl.opengl.GL11;
 import org.mateof24.conditionalvideos.ConditionalVideos;
 import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
 import org.mateof24.conditionalvideos.debug.DebugLog;
 import org.watermedia.WaterMediaConfig;
 import org.watermedia.api.media.MRL;
 import org.watermedia.api.media.MediaAPI;
-import org.watermedia.api.media.engines.ALEngine;
 import org.watermedia.api.media.engines.GFXEngine;
-import org.watermedia.api.media.engines.GLEngine;
 import org.watermedia.api.media.engines.SFXEngine;
 import org.watermedia.api.media.players.MediaPlayer;
 import org.watermedia.api.util.MediaQuality;
+import org.watermedia.api.util.MediaType;
 
 import java.net.URI;
 import java.util.Set;
@@ -245,14 +243,8 @@ public final class WaterMediaVideoBackend {
         try {
             Thread renderThread = Thread.currentThread();
             Executor renderExecutor = (Runnable r) -> RenderSystem.recordRenderCall(r::run);
-            gfx = new GLEngine.Builder(renderThread, renderExecutor)
-                    .setGenTexture(() -> GL11.glGenTextures())
-                    .setBindTexture(GL11::glBindTexture)
-                    .setTexParameter(GL11::glTexParameteri)
-                    .setPixelStore(GL11::glPixelStorei)
-                    .setDelTexture((int t) -> GL11.glDeleteTextures(t))
-                    .build();
-            sfx = ALEngine.buildDefault();
+            gfx = MediaAPI.glEngine(renderThread, renderExecutor);
+            sfx = MediaAPI.alEngine();
             return true;
         } catch (Throwable throwable) {
             ConditionalVideos.LOGGER.warn("Failed to initialize WATERMeDIA v3 engines for '{}': {}", source, throwable.toString());
@@ -275,7 +267,7 @@ public final class WaterMediaVideoBackend {
             return;
         }
         try {
-            mrl = MediaAPI.getMRL(source.toString());
+            mrl = MediaAPI.mrl(source);
             if (mrl != null && mrl.status() == MRL.Status.EXPIRED) {
                 try {
                     mrl.reload();
@@ -288,7 +280,7 @@ public final class WaterMediaVideoBackend {
                 DebugLog.log(DebugLog.Area.SOURCE, "MRL acquired for '{}' (initial status {}).", source, safeStatus());
             }
         } catch (Throwable throwable) {
-            ConditionalVideos.LOGGER.debug("MediaAPI.getMRL() not ready yet for '{}': {}", source, throwable.toString());
+            ConditionalVideos.LOGGER.debug("MediaAPI.mrl() not ready yet for '{}': {}", source, throwable.toString());
         }
     }
 
@@ -589,7 +581,7 @@ public final class WaterMediaVideoBackend {
             int count = mrl.sourceCount();
             for (int i = 0; i < count; i++) {
                 MRL.Source candidate = mrl.source(i);
-                if (candidate != null && candidate.isVideo()) {
+                if (candidate != null && candidate.type() == MediaType.VIDEO) {
                     return i;
                 }
             }
@@ -606,8 +598,8 @@ public final class WaterMediaVideoBackend {
                     return at;
                 }
             }
-            MRL.Source video = mrl.videoSource();
-            return video != null ? video : mrl.imageSource();
+            MRL.Source video = mrl.sourceByType(MediaType.VIDEO);
+            return video != null ? video : mrl.sourceByType(MediaType.IMAGE);
         } catch (Throwable ignored) {
             return null;
         }
@@ -620,7 +612,7 @@ public final class WaterMediaVideoBackend {
     private MediaQuality resolveDesiredQuality(MRL.Source preferred) {
         Set<MediaQuality> available;
         try {
-            available = preferred.availableQualities();
+            available = preferred.qualities().keySet();
         } catch (Throwable ignored) {
             available = null;
         }

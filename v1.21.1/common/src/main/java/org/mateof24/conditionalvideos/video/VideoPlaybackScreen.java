@@ -149,9 +149,9 @@ public final class VideoPlaybackScreen extends Screen {
             return;
         }
         try {
-            MediaAPI.preloadMRL(uris.toArray(new URI[0]));
+            MediaAPI.preload(uris.toArray(new URI[0]));
         } catch (Throwable t) {
-            ConditionalVideos.LOGGER.debug("preloadMRL failed: {}", t.toString());
+            ConditionalVideos.LOGGER.debug("preload failed: {}", t.toString());
         }
     }
 

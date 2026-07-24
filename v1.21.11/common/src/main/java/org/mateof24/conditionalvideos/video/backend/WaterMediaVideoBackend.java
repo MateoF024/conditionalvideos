@@ -23,12 +23,11 @@ import org.mateof24.conditionalvideos.debug.DebugLog;
 import org.watermedia.WaterMediaConfig;
 import org.watermedia.api.media.MRL;
 import org.watermedia.api.media.MediaAPI;
-import org.watermedia.api.media.engines.ALEngine;
 import org.watermedia.api.media.engines.GFXEngine;
-import org.watermedia.api.media.engines.GLEngine;
 import org.watermedia.api.media.engines.SFXEngine;
 import org.watermedia.api.media.players.MediaPlayer;
 import org.watermedia.api.util.MediaQuality;
+import org.watermedia.api.util.MediaType;
 
 import java.net.URI;
 import java.util.Set;
@@ -80,14 +79,6 @@ public final class WaterMediaVideoBackend {
     private VideoFrameTexture frameTexture;
     private Identifier frameTextureId;
     private long lastDebugSampleNanos;
-
-    // Diagnostic capture of the textures/buffers WaterMedia actually binds during its GL tasks, so the
-    // render-thread sampler can read back the YUV plane textures themselves (not just the converted
-    // output) and tell whether the decoded data ever lands. Touched only on the render thread.
-    private static final int WM_TEX_CAPACITY = 8;
-    private static final int[] WM_BOUND_TEXTURES = new int[WM_TEX_CAPACITY];
-    private static int wmBoundTextureCount;
-    private static int wmLastUnpackBuffer;
 
     public WaterMediaVideoBackend(URI source, float volume) {
         this.source = source;
@@ -278,18 +269,8 @@ public final class WaterMediaVideoBackend {
             // immediate-mode renderer did implicitly by re-establishing state every draw.
             Minecraft minecraft = Minecraft.getInstance();
             Executor renderExecutor = (Runnable task) -> minecraft.execute(() -> runIsolatedGl(task));
-            gfx = new GLEngine.Builder(renderThread, renderExecutor)
-                    .setGenTexture(GL11::glGenTextures)
-                    .setBindTexture(WaterMediaVideoBackend::bindTextureRecording)
-                    .setTexParameter(GL11::glTexParameteri)
-                    .setPixelStore(GL11::glPixelStorei)
-                    .setDelTexture(GL11::glDeleteTextures)
-                    .setActiveTexture(GL13::glActiveTexture)
-                    .setBindVertexArray(GL30::glBindVertexArray)
-                    .setBindFrameBuffer(WaterMediaVideoBackend::bindFramebufferLogged)
-                    .setBindBuffer(WaterMediaVideoBackend::bindBufferRecording)
-                    .build();
-            sfx = ALEngine.buildDefault();
+            gfx = MediaAPI.glEngine(renderThread, renderExecutor);
+            sfx = MediaAPI.alEngine();
             return true;
         } catch (Throwable throwable) {
             ConditionalVideos.LOGGER.warn("Failed to initialize WATERMeDIA v3 engines for '{}': {}", source, throwable.toString());
@@ -407,53 +388,6 @@ public final class WaterMediaVideoBackend {
         }
     }
 
-    // WaterMedia's framebuffer bind callback, instrumented: when debug logging is on, reports the
-    // completeness of the FBO it binds for its YUV->RGB conversion (an incomplete FBO is drawn into a
-    // void and leaves the frame texture unconverted = solid green).
-    private static int loggedFboCompleteness;
-
-    private static void bindFramebufferLogged(int target, int framebuffer) {
-        GL30.glBindFramebuffer(target, framebuffer);
-        if (!DebugLog.enabled() || framebuffer == 0) {
-            return;
-        }
-        int status = GL30.glCheckFramebufferStatus(target);
-        if (status != loggedFboCompleteness) {
-            loggedFboCompleteness = status;
-            DebugLog.log(DebugLog.Area.BACKEND, "WaterMedia bound FBO {} (target 0x{}) status=0x{} ({})",
-                    framebuffer, Integer.toHexString(target), Integer.toHexString(status),
-                    status == GL30.GL_FRAMEBUFFER_COMPLETE ? "COMPLETE" : "INCOMPLETE");
-        }
-    }
-
-    // WaterMedia's texture-bind callback (raw), additionally recording the distinct 2D texture ids it
-    // binds so the debug sampler can read the plane textures back. Only WaterMedia routes through here,
-    // so every captured id is one of its own (planes / managed / frame textures).
-    private static void bindTextureRecording(int target, int id) {
-        GL11.glBindTexture(target, id);
-        if (!DebugLog.enabled() || target != GL11.GL_TEXTURE_2D || id == 0) {
-            return;
-        }
-        for (int i = 0; i < wmBoundTextureCount; i++) {
-            if (WM_BOUND_TEXTURES[i] == id) {
-                return;
-            }
-        }
-        if (wmBoundTextureCount < WM_TEX_CAPACITY) {
-            WM_BOUND_TEXTURES[wmBoundTextureCount++] = id;
-        }
-    }
-
-    // WaterMedia's buffer-bind callback (raw), recording the last non-zero pixel-unpack buffer it binds.
-    // A non-zero value means the upload is coming through the persistent ring / legacy PBO path rather
-    // than a direct client-memory upload.
-    private static void bindBufferRecording(int target, int id) {
-        GL15.glBindBuffer(target, id);
-        if (target == GL21.GL_PIXEL_UNPACK_BUFFER && id != 0) {
-            wmLastUnpackBuffer = id;
-        }
-    }
-
     private void applyMatureContentPolicy() {
         try {
             WaterMediaConfig.platforms.allowMatureContent = !ActiveConfigResolver.effectiveBlockMatureContent();
@@ -467,7 +401,7 @@ public final class WaterMediaVideoBackend {
             return;
         }
         try {
-            mrl = MediaAPI.getMRL(source.toString());
+            mrl = MediaAPI.mrl(source);
             if (mrl != null && mrl.status() == MRL.Status.EXPIRED) {
                 try {
                     mrl.reload();
@@ -480,7 +414,7 @@ public final class WaterMediaVideoBackend {
                 DebugLog.log(DebugLog.Area.SOURCE, "MRL acquired for '{}' (initial status {}).", source, safeStatus());
             }
         } catch (Throwable throwable) {
-            ConditionalVideos.LOGGER.debug("MediaAPI.getMRL() not ready yet for '{}': {}", source, throwable.toString());
+            ConditionalVideos.LOGGER.debug("MediaAPI.mrl() not ready yet for '{}': {}", source, throwable.toString());
         }
     }
 
@@ -781,7 +715,7 @@ public final class WaterMediaVideoBackend {
             int count = mrl.sourceCount();
             for (int i = 0; i < count; i++) {
                 MRL.Source candidate = mrl.source(i);
-                if (candidate != null && candidate.isVideo()) {
+                if (candidate != null && candidate.type() == MediaType.VIDEO) {
                     return i;
                 }
             }
@@ -798,8 +732,8 @@ public final class WaterMediaVideoBackend {
                     return at;
                 }
             }
-            MRL.Source video = mrl.videoSource();
-            return video != null ? video : mrl.imageSource();
+            MRL.Source video = mrl.sourceByType(MediaType.VIDEO);
+            return video != null ? video : mrl.sourceByType(MediaType.IMAGE);
         } catch (Throwable ignored) {
             return null;
         }
@@ -812,7 +746,7 @@ public final class WaterMediaVideoBackend {
     private MediaQuality resolveDesiredQuality(MRL.Source preferred) {
         Set<MediaQuality> available;
         try {
-            available = preferred.availableQualities();
+            available = preferred.qualities().keySet();
         } catch (Throwable ignored) {
             available = null;
         }
@@ -871,12 +805,10 @@ public final class WaterMediaVideoBackend {
         render(guiGraphics, width, height, 1f);
     }
 
-    // Diagnostic (debug only, ~1/s): reads the centre texel of WaterMedia's converted frame texture
-    // AND of every plane/managed texture WaterMedia bound this interval. A (0,77,0)-ish converted centre
-    // is the exact BT.709 conversion of all-zero YUV, so the decisive question is the planes: if the
-    // plane textures (Y/UV) also read ~0 the decoded data never reached them (upload fault); if the
-    // planes hold real luma/chroma the fault is downstream (conversion/sampling). Also logs the
-    // pixel-unpack buffer id so the active upload path (ring/PBO vs direct) is visible.
+    // Diagnostic (debug only, ~1/s): reads the centre texel of WaterMedia's converted frame texture.
+    // A (0,77,0)-ish centre is the exact BT.709 conversion of all-zero YUV, i.e. an unconverted (green)
+    // frame. WaterMedia 3.0.0.22 owns the GL upload/convert pipeline internally with no host bind hooks,
+    // so per-plane read-back is no longer available; the converted centre is the green-frame check.
     private void debugSampleTexture(int texId, int texW, int texH) {
         long now = System.nanoTime();
         if (now - lastDebugSampleNanos < 1_000_000_000L) {
@@ -891,16 +823,8 @@ public final class WaterMediaVideoBackend {
             GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, fbo);
             GL11.glReadBuffer(GL30.GL_COLOR_ATTACHMENT0);
             String frame = readTexelRGBA(texId, texW / 2, texH / 2);
-            StringBuilder planes = new StringBuilder();
-            for (int i = 0; i < wmBoundTextureCount; i++) {
-                int id = WM_BOUND_TEXTURES[i];
-                if (id == texId) {
-                    continue;
-                }
-                planes.append(' ').append(id).append('=').append(readTexelRGBA(id, 1, 1));
-            }
-            DebugLog.log(DebugLog.Area.BACKEND, "frame tex={} {}x{} centreRGBA={} | unpackBuf={} planes[{}]:{} for '{}'",
-                    texId, texW, texH, frame, wmLastUnpackBuffer, wmBoundTextureCount, planes.toString(), source);
+            DebugLog.log(DebugLog.Area.BACKEND, "frame tex={} {}x{} centreRGBA={} for '{}'",
+                    texId, texW, texH, frame, source);
         } catch (Throwable t) {
             DebugLog.log(DebugLog.Area.BACKEND, "debugSampleTexture failed: {}", t.toString());
         } finally {
@@ -909,7 +833,6 @@ public final class WaterMediaVideoBackend {
             GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, prevDrawFbo);
             GL11.glReadBuffer(prevReadBuffer);
             GL30.glDeleteFramebuffers(fbo);
-            wmBoundTextureCount = 0;
         }
     }
 
