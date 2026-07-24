@@ -6,7 +6,6 @@ import org.mateof24.conditionalvideos.condition.join.SessionKeyResolver;
 import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig.VideoEntry;
-import org.mateof24.conditionalvideos.config.MatureContentFilter;
 import org.mateof24.conditionalvideos.video.VideoLoadingScreen;
 import org.mateof24.conditionalvideos.video.VideoPlaybackScreen;
 import org.mateof24.conditionalvideos.video.path.VideoPathResolver;
@@ -284,10 +283,6 @@ public final class ConditionVideoPlayer {
             URI uri = VideoSourceResolver.parseUri(configuredPath);
             if (uri == null) {
                 ConditionalVideos.LOGGER.warn("Invalid URL '{}' in {} condition. Ignoring.", configuredPath, logName);
-                return null;
-            }
-            if (ActiveConfigResolver.effectiveBlockMatureContent() && MatureContentFilter.isMatureUrl(uri)) {
-                ConditionalVideos.LOGGER.warn("Blocked mature-content URL '{}' in {} condition (blockMatureContent=true).", configuredPath, logName);
                 return null;
             }
             return uri;
