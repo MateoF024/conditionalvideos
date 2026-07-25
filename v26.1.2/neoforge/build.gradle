@@ -51,9 +51,10 @@ processResources {
     }
 }
 
-// Unobfuscated Minecraft needs no remapping, so the shadow jar is the final artifact directly.
+// Unobfuscated Minecraft needs no remapping, so the shadow jar is the final artifact directly. The
+// plain jar is an intermediate: the 'dev' classifier keeps it out of the distributable output folder.
 jar {
-    archiveClassifier = 'raw'
+    archiveClassifier = 'dev-raw'
 }
 
 shadowJar {
