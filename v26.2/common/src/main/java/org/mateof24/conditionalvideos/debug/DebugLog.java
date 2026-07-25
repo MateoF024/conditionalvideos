@@ -70,6 +70,14 @@ public final class DebugLog {
         log(Area.ENV, "=== ConditionalVideos diagnostics snapshot ===");
         log(Area.ENV, "OS: {} {} | Java {}", System.getProperty("os.name"), System.getProperty("os.arch"), System.getProperty("java.version"));
         log(Area.ENV, "Minecraft: {}", minecraftVersion());
+        // 26.2 can run OpenGL or Vulkan; the backend decides whether video playback is possible at all.
+        try {
+            com.mojang.blaze3d.systems.DeviceInfo info = com.mojang.blaze3d.systems.RenderSystem.getDevice().getDeviceInfo();
+            log(Area.ENV, "Renderer: backend='{}' device='{}' vendor='{}' driver='{}'",
+                    info.backendName(), info.name(), info.vendorName(), info.driverInfo());
+        } catch (Throwable t) {
+            log(Area.ENV, "Renderer: <unavailable> ({})", t.toString());
+        }
         try {
             log(Area.ENV, "GL: vendor='{}' renderer='{}' version='{}'",
                     GL11.glGetString(GL11.GL_VENDOR), GL11.glGetString(GL11.GL_RENDERER), GL11.glGetString(GL11.GL_VERSION));

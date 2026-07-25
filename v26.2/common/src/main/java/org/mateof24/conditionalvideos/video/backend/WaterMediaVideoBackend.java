@@ -232,8 +232,28 @@ public final class WaterMediaVideoBackend {
         tryAcquireMrl();
     }
 
+    // Name of the active Blaze3D backend ("GL" or "Vulkan"), or null when it cannot be determined.
+    private static String rendererBackend() {
+        try {
+            return RenderSystem.getDevice().getDeviceInfo().backendName();
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
     // Fresh GL/AL engine per source: reusing a player across sources froze the texture (loop-freeze fix).
     private boolean createEngines() {
+        // 26.2 ships an opt-in Vulkan renderer, but playback uploads frames through OpenGL. Refuse with a
+        // clear reason instead of failing later inside the GL path. An unknown backend is not blocked.
+        String backend = rendererBackend();
+        if (backend != null && !"GL".equalsIgnoreCase(backend)) {
+            ConditionalVideos.LOGGER.warn("Cannot play video '{}': Minecraft is running the {} renderer, but "
+                    + "video playback requires the OpenGL one. Switch the renderer to OpenGL in Video Settings.",
+                    source, backend);
+            errored = true;
+            cleanup();
+            return false;
+        }
         try {
             Thread renderThread = Thread.currentThread();
             // WaterMedia runs GL from its own thread, so tasks are marshalled to the render thread via
