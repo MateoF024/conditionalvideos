@@ -11,7 +11,8 @@
     "SoundManagerMixin",
     "ToastComponentMixin",
     "VulkanDeviceMixin",
-    "VulkanGpuTextureViewAccessor"
+    "VulkanGpuTextureViewAccessor",
+    "VulkanQueueSubmissionMixin"
   ],
   "mixins": [
     "RecipeUnlockedMixin",

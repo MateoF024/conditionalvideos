@@ -10,6 +10,7 @@ import org.lwjgl.vulkan.VkInstance;
 import org.lwjgl.vulkan.VkPhysicalDevice;
 import org.lwjgl.vulkan.VkPhysicalDeviceMemoryProperties;
 import org.lwjgl.vulkan.VkQueue;
+import org.mateof24.conditionalvideos.video.backend.VulkanQueueLock;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
@@ -50,11 +51,11 @@ public abstract class VulkanDeviceMixin implements VKContext {
         return this.graphicsQueue().queueFamilyIndex();
     }
 
-    // The device itself is the submission lock: WaterMedia and the game must not record onto the same
-    // queue concurrently.
+    // Both sides must serialize on the SAME object: Minecraft's own submissions are routed through this
+    // lock by VulkanQueueSubmissionMixin, so WaterMedia never submits to the queue at the same time.
     @Override
     public Object queueLock() {
-        return this;
+        return VulkanQueueLock.INSTANCE;
     }
 
     @Override
