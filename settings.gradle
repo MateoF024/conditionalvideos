@@ -24,6 +24,7 @@ def treeByVersion = [
         '1.21.1' : 'v1.21.1',
         '1.21.11': 'v1.21.11',
         '26.1.2' : 'v26.1.2',
+        '26.2'   : 'v26.2',
 ]
 
 if (minecraftVer.startsWith("1.20")) {

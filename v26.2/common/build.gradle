@@ -8,6 +8,6 @@ repositories {
 
 dependencies {
     implementation "net.fabricmc:fabric-loader:$rootProject.fabric_loader_version"
-    implementation "dev.architectury:architectury:${rootProject.architectury_api_v2612}"
+    implementation "dev.architectury:architectury:${rootProject.architectury_api_v262}"
     compileOnly files("${rootProject.projectDir}/libs/watermedia-${rootProject.watermedia_api_version}.jar")
 }
