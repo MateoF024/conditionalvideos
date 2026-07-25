@@ -3,7 +3,7 @@ plugins {
     // Unobfuscated Minecraft (26.1+) builds through the no-remap variant of Loom.
     id 'dev.architectury.loom-no-remap' version '1.17-SNAPSHOT' apply false
     id 'architectury-plugin' version '3.5-SNAPSHOT'
-    id 'com.github.johnrengelman.shadow' version '8.1.1' apply false
+    id 'com.gradleup.shadow' version '9.4.3' apply false
 }
 
 architectury {
