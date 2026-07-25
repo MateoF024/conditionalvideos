@@ -6,7 +6,6 @@ import com.mojang.blaze3d.vertex.BufferUploader;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.Tesselator;
 import com.mojang.blaze3d.vertex.VertexFormat;
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.GameRenderer;
 import org.mateof24.conditionalvideos.ConditionalVideos;
 import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
@@ -28,8 +27,7 @@ import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicInteger;
 
-// Bridges one video source to a WaterMedia v3 player: acquires the MRL, starts/loops/seeks the
-// player, caps the upload resolution to the window, and renders its texture full-screen.
+// Bridges one video source to a WaterMedia v3 player and renders its texture full-screen.
 public final class WaterMediaVideoBackend {
     private static final float DEFAULT_VIDEO_ASPECT_RATIO = 16.0F / 9.0F;
     private static final int MRL_ERROR_GRACE_TICKS = 20 * 30;
@@ -66,8 +64,6 @@ public final class WaterMediaVideoBackend {
     private int appliedVolumeIntCache = Integer.MIN_VALUE;
     private boolean loggedFirstFrame;
     private MRL.Status lastLoggedStatus;
-    private int appliedMaxWidth = -1;
-    private int appliedMaxHeight = -1;
     private MediaQuality lastRequestedQuality;
     private boolean qualityCeilingReached;
     private int qualitySettleTicks;
@@ -118,9 +114,8 @@ public final class WaterMediaVideoBackend {
         return errored;
     }
 
-    // True while WaterMedia is still resolving the MRL or buffering toward the first frame. The screen
-    // uses this so a slow-but-progressing source (e.g. a long YouTube video) is never mistaken for a
-    // stall: only genuine inactivity or a terminal error gives up. Long loads stop being penalised.
+    // True while still resolving the MRL or buffering, so a slow-but-progressing source is not mistaken
+    // for a stall.
     public boolean isActivelyLoading() {
         if (closed || errored) {
             return false;
@@ -142,8 +137,6 @@ public final class WaterMediaVideoBackend {
         return status == null || !(status == MRL.Status.ERROR || status == MRL.Status.BLOCKED);
     }
 
-    // Configurable patience (seconds -> ticks) for resolving an MRL, shared with the screen's first-frame
-    // wait. Read live so config edits take effect on the next source without a restart.
     private int loadTimeoutTicks() {
         return ActiveConfigResolver.effectiveVideoLoadTimeoutSeconds() * 20;
     }
@@ -212,21 +205,6 @@ public final class WaterMediaVideoBackend {
             player.resume();
         } catch (Throwable t) {
             ConditionalVideos.LOGGER.debug("resume() failed for '{}': {}", source, t.toString());
-        }
-    }
-
-    public boolean seekToStart() {
-        if (player == null || closed) {
-            return false;
-        }
-        try {
-            if (!player.canSeek()) {
-                return false;
-            }
-            return player.seek(0L);
-        } catch (Throwable t) {
-            ConditionalVideos.LOGGER.debug("seek(0) failed for '{}': {}", source, t.toString());
-            return false;
         }
     }
 
@@ -312,63 +290,16 @@ public final class WaterMediaVideoBackend {
             tickPreStart();
             return;
         }
-        reinforcePlayerSettings();
+        reinforceQuality();
         enforceHoldAtZero();
     }
 
-    private void reinforcePlayerSettings() {
-        if (!playerStarted || player == null || closed) {
-            return;
-        }
-        reinforceQuality();
-        applyMaxSizeCap();
-    }
-
-    // Caps uploaded frame dimensions so videos larger than the window never waste VRAM/upload
-    // bandwidth. The cap preserves the native aspect ratio (a single scale to fit the window, never
-    // upscaled), so the frame is never distorted; it only applies once the native size is known.
-    private void applyMaxSizeCap() {
-        if (player == null || closed) {
-            return;
-        }
-        try {
-            Minecraft minecraft = Minecraft.getInstance();
-            if (minecraft == null) {
-                return;
-            }
-            int winW = minecraft.getWindow().getWidth();
-            int winH = minecraft.getWindow().getHeight();
-            int srcW = player.sourceWidth();
-            int srcH = player.sourceHeight();
-            if (winW <= 0 || winH <= 0 || srcW <= 0 || srcH <= 0) {
-                return;
-            }
-            double scale = Math.min((double) winW / srcW, (double) winH / srcH);
-            int capW = scale >= 1.0 ? srcW : Math.max(1, (int) Math.round(srcW * scale));
-            int capH = scale >= 1.0 ? srcH : Math.max(1, (int) Math.round(srcH * scale));
-            if (capW == appliedMaxWidth && capH == appliedMaxHeight) {
-                return;
-            }
-            boolean downscaling = capW < srcW || capH < srcH;
-            boolean hadCap = appliedMaxWidth > 0 && (appliedMaxWidth < srcW || appliedMaxHeight < srcH);
-            appliedMaxWidth = capW;
-            appliedMaxHeight = capH;
-            if (!downscaling && !hadCap) {
-                return;
-            }
-            player.maxSize(capW, capH);
-            DebugLog.log(DebugLog.Area.BACKEND, "Capped upload size to {}x{} (source {}x{}) for '{}'.", capW, capH, srcW, srcH, source);
-        } catch (Throwable ignored) {
-        }
-    }
-
-    // Re-asserts the desired quality on multi-variant streams that drift below it, but with
-    // hysteresis: it requests the target once and, if the player cannot reach it within
-    // QUALITY_SETTLE_TICKS, marks a ceiling and stops re-requesting. Without this a target the source
-    // can never reach (e.g. HIGHEST on a 1080p stream) is re-requested every tick and keeps tearing
-    // down the decoder. Does nothing when quality is unmanaged (desiredQuality null).
+    // Re-asserts desiredQuality on multi-variant streams with hysteresis: once the player can't reach the
+    // target within QUALITY_SETTLE_TICKS it stops re-requesting, so an unreachable target does not re-open
+    // the decoder every tick (first-local-video freeze).
     private void reinforceQuality() {
-        if (desiredQuality == null || desiredQuality == MediaQuality.UNKNOWN) {
+        if (!playerStarted || player == null || closed
+                || desiredQuality == null || desiredQuality == MediaQuality.UNKNOWN) {
             return;
         }
         MediaQuality current;
@@ -541,8 +472,7 @@ public final class WaterMediaVideoBackend {
         }
     }
 
-    // Opens the player for the single resolved source. index >= 0 selects that source explicitly; -1
-    // falls back to WaterMedia's default video/image source.
+    // index >= 0 selects that source explicitly; -1 falls back to WaterMedia's default source.
     private void startSourcePlayer(MRL.Source preferred, int index) {
         player = index >= 0
                 ? MediaAPI.createPlayer(mrl, index, () -> gfx, () -> sfx)
@@ -552,8 +482,6 @@ public final class WaterMediaVideoBackend {
             DebugLog.applyFfmpegLogLevel();
         }
         desiredQuality = resolveDesiredQuality(preferred);
-        appliedMaxWidth = -1;
-        appliedMaxHeight = -1;
         appliedVolumeIntCache = Integer.MIN_VALUE;
         lastRequestedQuality = null;
         qualityCeilingReached = false;
@@ -589,9 +517,8 @@ public final class WaterMediaVideoBackend {
                 source, player.quality(), willStartPaused, holdAtZero);
     }
 
-    // Caches the player status from WaterMedia's event callback so the per-tick state queries read one
-    // volatile field instead of polling several native getters each tick. Seeded once in case no early
-    // transition fires; the callback may run on a WaterMedia thread, hence the volatile field.
+    // Caches player status from the onStatus event (seeded once) so per-tick queries read one volatile
+    // field instead of several native getters; the callback may run off-thread, hence volatile.
     private void registerStatusListener() {
         try {
             player.onStatus((previous, current) -> playerStatus = current);
@@ -620,8 +547,8 @@ public final class WaterMediaVideoBackend {
         }
     }
 
-    // Logs a clear reason (plus WaterMedia's non-fatal boot failures) when FFmpeg failed to load, so a
-    // broken native backend surfaces as an explicit message instead of a generic timeout or silent stall.
+    // Surfaces a clear reason (plus WaterMedia boot failures) when FFmpeg failed to load, instead of a
+    // generic timeout.
     private void reportFfmpegUnavailable() {
         ConditionalVideos.LOGGER.warn("Cannot play video '{}': WaterMedia's FFmpeg backend failed to load; "
                 + "video playback is unavailable. Verify the WaterMedia and WaterMedia Binaries installation.", source);
@@ -634,10 +561,8 @@ public final class WaterMediaVideoBackend {
         }
     }
 
-    // Index (into mrl.sources()) of the FIRST video source, or -1 to fall back to the default
-    // video/image source. Only one source is ever played: whole-playlist MRLs (e.g. a YouTube playlist
-    // URL that resolves to many videos) are intentionally not supported, as their sequential playback
-    // stuttered, froze and skipped unreliably.
+    // First video source, or -1 for WaterMedia's default. Only one source is played; playlist MRLs are
+    // intentionally unsupported (their sequential playback stuttered and froze).
     private int resolveVideoSourceIndex() {
         try {
             int count = mrl.sourceCount();
@@ -667,10 +592,8 @@ public final class WaterMediaVideoBackend {
         }
     }
 
-    // Single-variant sources (local files, direct mp4) expose no real quality ladder. Forcing a
-    // quality on them makes reinforcePlayerSettings re-assert HIGHEST every tick, which re-opens the
-    // decode pipeline and freezes the first frame (the "first local video per launch" bug). Returning
-    // null leaves quality untouched for those; only genuinely multi-variant streams are managed.
+    // Returns null (quality left unmanaged) for single-variant sources (local files, direct mp4): forcing
+    // a quality on them re-opens the decoder every tick and freezes the first local video.
     private MediaQuality resolveDesiredQuality(MRL.Source preferred) {
         Set<MediaQuality> available;
         try {

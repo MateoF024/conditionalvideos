@@ -37,8 +37,7 @@ import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicInteger;
 
-// Bridges one video source to a WaterMedia v3 player: acquires the MRL, starts/loops/seeks the
-// player, caps the upload resolution to the window, and renders its texture full-screen.
+// Bridges one video source to a WaterMedia v3 player and renders its texture full-screen.
 public final class WaterMediaVideoBackend {
     private static final float DEFAULT_VIDEO_ASPECT_RATIO = 16.0F / 9.0F;
     private static final int MRL_ERROR_GRACE_TICKS = 20 * 30;
@@ -75,8 +74,6 @@ public final class WaterMediaVideoBackend {
     private int appliedVolumeIntCache = Integer.MIN_VALUE;
     private boolean loggedFirstFrame;
     private MRL.Status lastLoggedStatus;
-    private int appliedMaxWidth = -1;
-    private int appliedMaxHeight = -1;
     private MediaQuality lastRequestedQuality;
     private boolean qualityCeilingReached;
     private int qualitySettleTicks;
@@ -131,9 +128,8 @@ public final class WaterMediaVideoBackend {
         return errored;
     }
 
-    // True while WaterMedia is still resolving the MRL or buffering toward the first frame. The screen
-    // uses this so a slow-but-progressing source (e.g. a long YouTube video) is never mistaken for a
-    // stall: only genuine inactivity or a terminal error gives up. Long loads stop being penalised.
+    // True while still resolving the MRL or buffering, so a slow-but-progressing source is not mistaken
+    // for a stall.
     public boolean isActivelyLoading() {
         if (closed || errored) {
             return false;
@@ -155,8 +151,6 @@ public final class WaterMediaVideoBackend {
         return status == null || !(status == MRL.Status.ERROR || status == MRL.Status.BLOCKED);
     }
 
-    // Configurable patience (seconds -> ticks) for resolving an MRL, shared with the screen's first-frame
-    // wait. Read live so config edits take effect on the next source without a restart.
     private int loadTimeoutTicks() {
         return ActiveConfigResolver.effectiveVideoLoadTimeoutSeconds() * 20;
     }
@@ -228,21 +222,6 @@ public final class WaterMediaVideoBackend {
         }
     }
 
-    public boolean seekToStart() {
-        if (player == null || closed) {
-            return false;
-        }
-        try {
-            if (!player.canSeek()) {
-                return false;
-            }
-            return player.seek(0L);
-        } catch (Throwable t) {
-            ConditionalVideos.LOGGER.debug("seek(0) failed for '{}': {}", source, t.toString());
-            return false;
-        }
-    }
-
     public void init() {
         DebugLog.log(DebugLog.Area.BACKEND, "Initialising backend for '{}'.", source);
         applyMatureContentPolicy();
@@ -252,26 +231,13 @@ public final class WaterMediaVideoBackend {
         tryAcquireMrl();
     }
 
-    // Builds a fresh GL/AL engine pair on the render thread. Called once at init and again whenever a
-    // multi-source playlist advances to its next video, so each source gets a clean player+engine pair
-    // (reusing a player across sources is what froze the texture; see the loop-freeze fix).
+    // Fresh GL/AL engine per source: reusing a player across sources froze the texture (loop-freeze fix).
     private boolean createEngines() {
         try {
             Thread renderThread = Thread.currentThread();
-            // WaterMedia calls this executor from its demux thread to run GL work; it must be marshalled
-            // to the render (main) thread. queueFencedTask would assert here because it creates a GL
-            // fence immediately, so we hand off to Minecraft's main-thread task queue instead.
-            // WaterMedia uploads YUV planes and renders its own YUV->RGB FBO pass with raw OpenGL. MC's
-            // 1.21.5+ GpuDevice pipeline keeps part of its GL state in GlStateManager's cache and binds
-            // the rest (sampler textures) raw without updating that cache, so the cache is unreliable.
-            // Routing WaterMedia's binds through GlStateManager makes them no-op against a stale cache
-            // (the converted frame stays solid green); routing them raw corrupts MC's cached-path
-            // textures (flickering UI text). Neither single routing works.
-            //
-            // Instead we give WaterMedia fully raw callbacks (every bind takes effect, so its upload and
-            // conversion are always correct) and run each of its GL tasks inside a snapshot/restore of
-            // the GL state it touches, so the work is invisible to MC. This mirrors what 1.21.1's
-            // immediate-mode renderer did implicitly by re-establishing state every draw.
+            // WaterMedia runs GL from its own thread, so tasks are marshalled to the render thread via
+            // Minecraft#execute and wrapped in runIsolatedGl (snapshot/restore) so its raw GL stays
+            // invisible to MC's unreliable GlStateManager cache (1.21.5+).
             Minecraft minecraft = Minecraft.getInstance();
             Executor renderExecutor = (Runnable task) -> minecraft.execute(() -> {
                 if (DebugLog.enabled()) {
@@ -290,11 +256,9 @@ public final class WaterMediaVideoBackend {
         }
     }
 
-    // Runs one of WaterMedia's GL tasks on the render thread bracketed by a snapshot and restore of
-    // every GL binding it can touch, so its raw OpenGL leaves MC's actual GL state exactly as it was.
-    // Texture content (the uploaded/converted frame) survives - only bindings are restored. Restores
-    // are raw (forcing): MC keeps some of this state in GlStateManager's cache which we never touch, so
-    // restoring the actual value back to the pre-task value keeps cache and reality consistent.
+    // Runs a WaterMedia GL task bracketed by a snapshot/restore of every binding it touches, so its raw
+    // GL leaves MC's state (and GlStateManager's cache) exactly as it was. Only bindings restore; the
+    // uploaded frame content survives.
     private static final int TEXTURE_UNITS_TO_PRESERVE = 8;
 
     private static void runIsolatedGl(Runnable task) {
@@ -305,12 +269,9 @@ public final class WaterMediaVideoBackend {
             GL13.glActiveTexture(GL13.GL_TEXTURE0 + i);
             textureBindings[i] = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
             samplerBindings[i] = GL11.glGetInteger(GL33.GL_SAMPLER_BINDING);
-            // Detach MC's sampler object so WaterMedia's YUV->RGB conversion samples its plane textures
-            // with their OWN parameters (LINEAR, no mipmaps). MC 1.21.5+ binds mipmap-expecting sampler
-            // objects to these units and leaves them bound; a bound sampler overrides the texture's
-            // parameters, and WaterMedia's mip-less plane textures are then incomplete and sample as
-            // zero -> the conversion reads empty planes and writes a solid green frame. The plane
-            // textures hold correct luma/chroma (verified by FBO read-back); only the sampling was wrong.
+            // GREEN-SCREEN FIX: detach MC's bound sampler so WaterMedia's mip-less plane textures sample
+            // with their own params. A bound mipmap sampler makes them sample as zero and the conversion
+            // writes a solid green frame.
             GL33.glBindSampler(i, 0);
         }
         int unpackAlignment = GL11.glGetInteger(GL11.GL_UNPACK_ALIGNMENT);
@@ -326,10 +287,8 @@ public final class WaterMediaVideoBackend {
         int[] viewport = new int[4];
         GL11.glGetIntegerv(GL11.GL_VIEWPORT, viewport);
 
-        // Per-fragment/rasterizer state that can silently clip or mask WaterMedia's YUV->RGB conversion
-        // draw. The conversion runs via Minecraft#execute mid-GUI-state, where MC leaves SCISSOR enabled
-        // (and depth/blend/stencil/cull in GUI state); we hand the conversion a clean draw state and
-        // restore the previous one afterwards so its quad is never scissored, masked or blended away.
+        // Clean draw state for the conversion pass: MC leaves SCISSOR/depth/blend/etc. enabled mid-GUI,
+        // which would clip or mask WaterMedia's quad. Saved and restored below.
         boolean scissor = GL11.glIsEnabled(GL11.GL_SCISSOR_TEST);
         boolean depthTest = GL11.glIsEnabled(GL11.GL_DEPTH_TEST);
         boolean blend = GL11.glIsEnabled(GL11.GL_BLEND);
@@ -448,63 +407,16 @@ public final class WaterMediaVideoBackend {
             tickPreStart();
             return;
         }
-        reinforcePlayerSettings();
+        reinforceQuality();
         enforceHoldAtZero();
     }
 
-    private void reinforcePlayerSettings() {
-        if (!playerStarted || player == null || closed) {
-            return;
-        }
-        reinforceQuality();
-        applyMaxSizeCap();
-    }
-
-    // Caps uploaded frame dimensions so videos larger than the window never waste VRAM/upload
-    // bandwidth. The cap preserves the native aspect ratio (a single scale to fit the window, never
-    // upscaled), so the frame is never distorted; it only applies once the native size is known.
-    private void applyMaxSizeCap() {
-        if (player == null || closed) {
-            return;
-        }
-        try {
-            Minecraft minecraft = Minecraft.getInstance();
-            if (minecraft == null) {
-                return;
-            }
-            int winW = minecraft.getWindow().getWidth();
-            int winH = minecraft.getWindow().getHeight();
-            int srcW = player.sourceWidth();
-            int srcH = player.sourceHeight();
-            if (winW <= 0 || winH <= 0 || srcW <= 0 || srcH <= 0) {
-                return;
-            }
-            double scale = Math.min((double) winW / srcW, (double) winH / srcH);
-            int capW = scale >= 1.0 ? srcW : Math.max(1, (int) Math.round(srcW * scale));
-            int capH = scale >= 1.0 ? srcH : Math.max(1, (int) Math.round(srcH * scale));
-            if (capW == appliedMaxWidth && capH == appliedMaxHeight) {
-                return;
-            }
-            boolean downscaling = capW < srcW || capH < srcH;
-            boolean hadCap = appliedMaxWidth > 0 && (appliedMaxWidth < srcW || appliedMaxHeight < srcH);
-            appliedMaxWidth = capW;
-            appliedMaxHeight = capH;
-            if (!downscaling && !hadCap) {
-                return;
-            }
-            player.maxSize(capW, capH);
-            DebugLog.log(DebugLog.Area.BACKEND, "Capped upload size to {}x{} (source {}x{}) for '{}'.", capW, capH, srcW, srcH, source);
-        } catch (Throwable ignored) {
-        }
-    }
-
-    // Re-asserts the desired quality on multi-variant streams that drift below it, but with
-    // hysteresis: it requests the target once and, if the player cannot reach it within
-    // QUALITY_SETTLE_TICKS, marks a ceiling and stops re-requesting. Without this a target the source
-    // can never reach (e.g. HIGHEST on a 1080p stream) is re-requested every tick and keeps tearing
-    // down the decoder. Does nothing when quality is unmanaged (desiredQuality null).
+    // Re-asserts desiredQuality on multi-variant streams with hysteresis: once the player can't reach the
+    // target within QUALITY_SETTLE_TICKS it stops re-requesting, so an unreachable target does not re-open
+    // the decoder every tick (first-local-video freeze).
     private void reinforceQuality() {
-        if (desiredQuality == null || desiredQuality == MediaQuality.UNKNOWN) {
+        if (!playerStarted || player == null || closed
+                || desiredQuality == null || desiredQuality == MediaQuality.UNKNOWN) {
             return;
         }
         MediaQuality current;
@@ -677,8 +589,7 @@ public final class WaterMediaVideoBackend {
         }
     }
 
-    // Opens the player for the single resolved source. index >= 0 selects that source explicitly; -1
-    // falls back to WaterMedia's default video/image source.
+    // index >= 0 selects that source explicitly; -1 falls back to WaterMedia's default source.
     private void startSourcePlayer(MRL.Source preferred, int index) {
         player = index >= 0
                 ? MediaAPI.createPlayer(mrl, index, () -> gfx, () -> sfx)
@@ -688,8 +599,6 @@ public final class WaterMediaVideoBackend {
             DebugLog.applyFfmpegLogLevel();
         }
         desiredQuality = resolveDesiredQuality(preferred);
-        appliedMaxWidth = -1;
-        appliedMaxHeight = -1;
         appliedVolumeIntCache = Integer.MIN_VALUE;
         lastRequestedQuality = null;
         qualityCeilingReached = false;
@@ -725,9 +634,8 @@ public final class WaterMediaVideoBackend {
                 source, player.quality(), willStartPaused, holdAtZero);
     }
 
-    // Caches the player status from WaterMedia's event callback so the per-tick state queries read one
-    // volatile field instead of polling several native getters each tick. Seeded once in case no early
-    // transition fires; the callback may run on a WaterMedia thread, hence the volatile field.
+    // Caches player status from the onStatus event (seeded once) so per-tick queries read one volatile
+    // field instead of several native getters; the callback may run off-thread, hence volatile.
     private void registerStatusListener() {
         try {
             player.onStatus((previous, current) -> playerStatus = current);
@@ -756,8 +664,8 @@ public final class WaterMediaVideoBackend {
         }
     }
 
-    // Logs a clear reason (plus WaterMedia's non-fatal boot failures) when FFmpeg failed to load, so a
-    // broken native backend surfaces as an explicit message instead of a generic timeout or silent stall.
+    // Surfaces a clear reason (plus WaterMedia boot failures) when FFmpeg failed to load, instead of a
+    // generic timeout.
     private void reportFfmpegUnavailable() {
         ConditionalVideos.LOGGER.warn("Cannot play video '{}': WaterMedia's FFmpeg backend failed to load; "
                 + "video playback is unavailable. Verify the WaterMedia and WaterMedia Binaries installation.", source);
@@ -770,10 +678,8 @@ public final class WaterMediaVideoBackend {
         }
     }
 
-    // Index (into mrl.sources()) of the FIRST video source, or -1 to fall back to the default
-    // video/image source. Only one source is ever played: whole-playlist MRLs (e.g. a YouTube playlist
-    // URL that resolves to many videos) are intentionally not supported, as their sequential playback
-    // stuttered, froze and skipped unreliably.
+    // First video source, or -1 for WaterMedia's default. Only one source is played; playlist MRLs are
+    // intentionally unsupported (their sequential playback stuttered and froze).
     private int resolveVideoSourceIndex() {
         try {
             int count = mrl.sourceCount();
@@ -803,10 +709,8 @@ public final class WaterMediaVideoBackend {
         }
     }
 
-    // Single-variant sources (local files, direct mp4) expose no real quality ladder. Forcing a
-    // quality on them makes reinforcePlayerSettings re-assert HIGHEST every tick, which re-opens the
-    // decode pipeline and freezes the first frame (the "first local video per launch" bug). Returning
-    // null leaves quality untouched for those; only genuinely multi-variant streams are managed.
+    // Returns null (quality left unmanaged) for single-variant sources (local files, direct mp4): forcing
+    // a quality on them re-opens the decoder every tick and freezes the first local video.
     private MediaQuality resolveDesiredQuality(MRL.Source preferred) {
         Set<MediaQuality> available;
         try {
@@ -869,11 +773,8 @@ public final class WaterMediaVideoBackend {
         render(guiGraphics, width, height, 1f);
     }
 
-    // 1.21.5+ rewrote the GUI to a deferred pipeline: GuiGraphics calls only record draws that are
-    // flushed (in submission order) after the screen's render() returns. Doing raw immediate-mode GL
-    // here would draw out of order with the text/background and corrupt the pipeline's state cache
-    // (black video + flickering text). So we push the frame through the same pipeline: wrap
-    // WaterMedia's GL texture id as a Blaze3D texture, register it, and blit it like any GUI sprite.
+    // 1.21.5+ uses a deferred GUI pipeline, so raw immediate-mode GL here would draw out of order. Instead
+    // wrap WaterMedia's GL texture as a Blaze3D texture and blit it like any GUI sprite.
     public void render(GuiGraphics guiGraphics, int width, int height, float alpha) {
         long texId = currentTextureId();
         if (texId <= 0) {
@@ -962,8 +863,8 @@ public final class WaterMediaVideoBackend {
         return 0;
     }
 
-    // Lazily registers a TextureManager entry backed by WaterMedia's live frame texture and refreshes
-    // its wrapped id/size when they change, returning the Identifier GuiGraphics.blit resolves against.
+    // Lazily registers a TextureManager entry wrapping WaterMedia's live frame texture; refreshes the
+    // wrapped id/size on change. Returns the Identifier for GuiGraphics.blit.
     private Identifier ensureRegisteredTexture(int glId, int texW, int texH) {
         try {
             Minecraft minecraft = Minecraft.getInstance();
@@ -1000,8 +901,8 @@ public final class WaterMediaVideoBackend {
         frameTexture = null;
     }
 
-    // Wraps a foreign (WaterMedia-owned) GL texture id as a Blaze3D GlTexture so it flows through the
-    // deferred GUI pipeline. close() never deletes the GL texture: WaterMedia owns and frees it.
+    // Wraps a WaterMedia-owned GL texture as a Blaze3D GlTexture. close() never deletes it: WaterMedia
+    // owns and frees the GL texture.
     private static final class ForeignGlTexture extends GlTexture {
         private boolean disposed;
 
@@ -1021,8 +922,8 @@ public final class WaterMediaVideoBackend {
         }
     }
 
-    // AbstractTexture whose GPU texture wraps WaterMedia's live GL frame. Rebuilt only when the id or
-    // frame size changes; disposal frees the view/sampler but never the foreign GL texture.
+    // AbstractTexture wrapping WaterMedia's live GL frame; rebuilt only when the id/size changes. Disposal
+    // frees the view/sampler, never the foreign GL texture.
     private static final class VideoFrameTexture extends AbstractTexture {
         private int wrappedGlId = -1;
         private int wrappedWidth = -1;
