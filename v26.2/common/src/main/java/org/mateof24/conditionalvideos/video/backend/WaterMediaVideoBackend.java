@@ -6,6 +6,8 @@ import com.mojang.blaze3d.textures.FilterMode;
 import com.mojang.blaze3d.textures.GpuTexture;
 import com.mojang.blaze3d.GpuFormat;
 import com.mojang.blaze3d.opengl.FrameBufferCache;
+import com.mojang.blaze3d.systems.GpuDeviceBackend;
+import com.mojang.blaze3d.textures.GpuTextureView;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.renderer.RenderPipelines;
@@ -22,12 +24,15 @@ import org.mateof24.conditionalvideos.ConditionalVideos;
 import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
 import org.mateof24.conditionalvideos.debug.DebugLog;
 import org.mateof24.conditionalvideos.debug.VideoDiagnostics;
+import org.mateof24.conditionalvideos.mixin.GpuDeviceAccessor;
+import org.mateof24.conditionalvideos.mixin.VulkanGpuTextureViewAccessor;
 import org.watermedia.WaterMedia;
 import org.watermedia.WaterMediaConfig;
 import org.watermedia.api.media.MRL;
 import org.watermedia.api.media.MediaAPI;
 import org.watermedia.api.media.engines.GFXEngine;
 import org.watermedia.api.media.engines.SFXEngine;
+import org.watermedia.api.media.engines.vk.VKContext;
 import org.watermedia.api.media.players.MediaPlayer;
 import org.watermedia.api.util.MediaQuality;
 import org.watermedia.api.util.MediaType;
@@ -82,6 +87,7 @@ public final class WaterMediaVideoBackend {
     private static final AtomicInteger TEXTURE_SEQ = new AtomicInteger();
     private VideoFrameTexture frameTexture;
     private Identifier frameTextureId;
+    private boolean vulkanBackend;
 
     public WaterMediaVideoBackend(URI source, float volume) {
         this.source = source;
@@ -232,6 +238,30 @@ public final class WaterMediaVideoBackend {
         tryAcquireMrl();
     }
 
+    // Vulkan path: WaterMedia renders into its own image and hands back a VkImageView, sharing the game's
+    // device through the VKContext implemented on it. Support is experimental, hence the notice.
+    private boolean createVulkanEngines() {
+        try {
+            GpuDeviceBackend backend = ((GpuDeviceAccessor) RenderSystem.getDevice()).conditionalvideos$backend();
+            if (!(backend instanceof VKContext context)) {
+                ConditionalVideos.LOGGER.warn("Cannot play video '{}': the Vulkan device does not expose a "
+                        + "WaterMedia context.", source);
+                errored = true;
+                cleanup();
+                return false;
+            }
+            ConditionalVideos.LOGGER.info("Using the Vulkan renderer for '{}' (experimental video support).", source);
+            gfx = MediaAPI.vkEngine(context);
+            sfx = MediaAPI.alEngine();
+            return true;
+        } catch (Throwable throwable) {
+            ConditionalVideos.LOGGER.warn("Failed to initialize WATERMeDIA v3 Vulkan engines for '{}': {}", source, throwable.toString());
+            errored = true;
+            cleanup();
+            return false;
+        }
+    }
+
     // Name of the active Blaze3D backend ("GL" or "Vulkan"), or null when it cannot be determined.
     private static String rendererBackend() {
         try {
@@ -241,18 +271,12 @@ public final class WaterMediaVideoBackend {
         }
     }
 
-    // Fresh GL/AL engine per source: reusing a player across sources froze the texture (loop-freeze fix).
+    // Fresh engine pair per source: reusing a player across sources froze the texture (loop-freeze fix).
+    // 26.2 can run either renderer, so the video engine follows whichever backend the game is using.
     private boolean createEngines() {
-        // 26.2 ships an opt-in Vulkan renderer, but playback uploads frames through OpenGL. Refuse with a
-        // clear reason instead of failing later inside the GL path. An unknown backend is not blocked.
-        String backend = rendererBackend();
-        if (backend != null && !"GL".equalsIgnoreCase(backend)) {
-            ConditionalVideos.LOGGER.warn("Cannot play video '{}': Minecraft is running the {} renderer, but "
-                    + "video playback requires the OpenGL one. Switch the renderer to OpenGL in Video Settings.",
-                    source, backend);
-            errored = true;
-            cleanup();
-            return false;
+        vulkanBackend = "Vulkan".equalsIgnoreCase(rendererBackend());
+        if (vulkanBackend) {
+            return createVulkanEngines();
         }
         try {
             Thread renderThread = Thread.currentThread();
@@ -806,7 +830,7 @@ public final class WaterMediaVideoBackend {
         if (texW <= 0 || texH <= 0) {
             return;
         }
-        Identifier id = ensureRegisteredTexture((int) texId, texW, texH);
+        Identifier id = ensureRegisteredTexture(texId, texW, texH);
         if (id == null) {
             return;
         }
@@ -886,19 +910,19 @@ public final class WaterMediaVideoBackend {
 
     // Lazily registers a TextureManager entry wrapping WaterMedia's live frame texture; refreshes the
     // wrapped id/size on change. Returns the Identifier for GuiGraphicsExtractor.blit.
-    private Identifier ensureRegisteredTexture(int glId, int texW, int texH) {
+    private Identifier ensureRegisteredTexture(long handle, int texW, int texH) {
         try {
             Minecraft minecraft = Minecraft.getInstance();
             if (minecraft == null) {
                 return null;
             }
             if (frameTexture == null) {
-                frameTexture = new VideoFrameTexture();
+                frameTexture = new VideoFrameTexture(vulkanBackend);
                 frameTextureId = Identifier.fromNamespaceAndPath(
                         ConditionalVideos.MOD_ID, "video_frame/" + TEXTURE_SEQ.incrementAndGet());
                 minecraft.getTextureManager().register(frameTextureId, frameTexture);
             }
-            if (!frameTexture.update(glId, texW, texH)) {
+            if (!frameTexture.update(handle, texW, texH)) {
                 return null;
             }
             return frameTextureId;
@@ -950,26 +974,47 @@ public final class WaterMediaVideoBackend {
     // AbstractTexture wrapping WaterMedia's live GL frame; rebuilt only when the id/size changes. Disposal
     // frees the view/sampler, never the foreign GL texture.
     private static final class VideoFrameTexture extends AbstractTexture {
-        private int wrappedGlId = -1;
+        private final boolean vulkan;
+        private long wrappedHandle = -1L;
         private int wrappedWidth = -1;
         private int wrappedHeight = -1;
+        // Image view Minecraft created for its own texture, put back before closing so it destroys that
+        // one and never WaterMedia's.
+        private long replacedImageView;
 
-        boolean update(int glId, int width, int height) {
-            if (texture != null && glId == wrappedGlId && width == wrappedWidth && height == wrappedHeight) {
+        VideoFrameTexture(boolean vulkan) {
+            this.vulkan = vulkan;
+        }
+
+        boolean update(long handle, int width, int height) {
+            if (texture != null && handle == wrappedHandle && width == wrappedWidth && height == wrappedHeight) {
                 return true;
             }
             disposeGpu();
             try {
-                ForeignGlTexture wrapped = new ForeignGlTexture(glId, width, height);
-                this.texture = wrapped;
+                if (vulkan) {
+                    // WaterMedia owns the image; Minecraft only needs a view of it, so a real texture and
+                    // view are created and the view is pointed at WaterMedia's frame.
+                    GpuTexture owned = RenderSystem.getDevice().createTexture("conditionalvideos-video",
+                            GpuTexture.USAGE_TEXTURE_BINDING, GpuFormat.RGBA8_UNORM, width, height, 1, 1);
+                    GpuTextureView view = RenderSystem.getDevice().createTextureView(owned);
+                    VulkanGpuTextureViewAccessor accessor = (VulkanGpuTextureViewAccessor) view;
+                    replacedImageView = accessor.conditionalvideos$imageView();
+                    accessor.conditionalvideos$setImageView(handle);
+                    this.texture = owned;
+                    this.textureView = view;
+                } else {
+                    ForeignGlTexture wrapped = new ForeignGlTexture((int) handle, width, height);
+                    this.texture = wrapped;
+                    this.textureView = RenderSystem.getDevice().createTextureView(wrapped);
+                }
                 this.sampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR);
-                this.textureView = RenderSystem.getDevice().createTextureView(wrapped);
-                wrappedGlId = glId;
+                wrappedHandle = handle;
                 wrappedWidth = width;
                 wrappedHeight = height;
                 return true;
             } catch (Throwable t) {
-                ConditionalVideos.LOGGER.error("Failed to wrap video GL texture {}: {}", glId, t.toString());
+                ConditionalVideos.LOGGER.error("Failed to wrap video frame {}: {}", handle, t.toString());
                 disposeGpu();
                 return false;
             }
@@ -978,6 +1023,9 @@ public final class WaterMediaVideoBackend {
         private void disposeGpu() {
             if (textureView != null) {
                 try {
+                    if (vulkan && replacedImageView != 0L) {
+                        ((VulkanGpuTextureViewAccessor) textureView).conditionalvideos$setImageView(replacedImageView);
+                    }
                     textureView.close();
                 } catch (Throwable ignored) {
                 }
@@ -991,7 +1039,8 @@ public final class WaterMediaVideoBackend {
                 texture = null;
             }
             sampler = null;
-            wrappedGlId = -1;
+            replacedImageView = 0L;
+            wrappedHandle = -1L;
             wrappedWidth = -1;
             wrappedHeight = -1;
         }

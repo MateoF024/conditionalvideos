@@ -10,7 +10,8 @@
     "PlayerAttackMixin",
     "SoundManagerMixin",
     "ToastComponentMixin",
-    "VulkanDeviceMixin"
+    "VulkanDeviceMixin",
+    "VulkanGpuTextureViewAccessor"
   ],
   "mixins": [
     "RecipeUnlockedMixin",
