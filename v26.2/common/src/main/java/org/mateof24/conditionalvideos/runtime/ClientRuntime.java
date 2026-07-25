@@ -134,7 +134,7 @@ public final class ClientRuntime {
             return;
         }
 
-        if (minecraft.screen != null) {
+        if (minecraft.gui.screen() != null) {
             return;
         }
 

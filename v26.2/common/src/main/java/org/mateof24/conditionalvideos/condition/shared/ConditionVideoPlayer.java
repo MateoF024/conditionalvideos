@@ -61,8 +61,8 @@ public final class ConditionVideoPlayer {
 
     private static boolean isVideoActive(Minecraft minecraft) {
         return minecraft != null
-                && (minecraft.screen instanceof VideoPlaybackScreen
-                || minecraft.screen instanceof VideoLoadingScreen);
+                && (minecraft.gui.screen() instanceof VideoPlaybackScreen
+                || minecraft.gui.screen() instanceof VideoLoadingScreen);
     }
 
     private static void enqueue(QueuedPlayback item) {
@@ -162,7 +162,7 @@ public final class ConditionVideoPlayer {
         if (firstSourceUri == null) {
             String configuredPath = firstEntry.source();
             if (isDownloadPending(minecraft, configuredPath)) {
-                if (minecraft.screen instanceof VideoLoadingScreen) {
+                if (minecraft.gui.screen() instanceof VideoLoadingScreen) {
                     return true;
                 }
                 openLoadingScreen(minecraft, config, conditionConfig, conditionId, sessionKey,
@@ -197,8 +197,8 @@ public final class ConditionVideoPlayer {
                     if (readyUri == null) {
                         ConditionalVideos.LOGGER.warn("{} video '{}' was reported ready but its URI could not be resolved.",
                                 logName, configuredPath);
-                        if (minecraft.screen instanceof VideoLoadingScreen) {
-                            minecraft.setScreen(null);
+                        if (minecraft.gui.screen() instanceof VideoLoadingScreen) {
+                            minecraft.gui.setScreen(null);
                         }
                         if (onCloseCallback != null) {
                             onCloseCallback.run();
@@ -211,8 +211,8 @@ public final class ConditionVideoPlayer {
                 },
                 () -> {
                     ConditionalVideos.LOGGER.warn("Timed out waiting for {} video '{}'.", logName, configuredPath);
-                    if (minecraft.screen instanceof VideoLoadingScreen) {
-                        minecraft.setScreen(null);
+                    if (minecraft.gui.screen() instanceof VideoLoadingScreen) {
+                        minecraft.gui.setScreen(null);
                     }
                     if (onCloseCallback != null) {
                         onCloseCallback.run();
@@ -222,7 +222,7 @@ public final class ConditionVideoPlayer {
                 LOADING_SCREEN_TIMEOUT_TICKS,
                 playlist.size()
         );
-        minecraft.setScreen(screen);
+        minecraft.gui.setScreen(screen);
     }
 
     private static void startPlayback(Minecraft minecraft,
@@ -252,7 +252,7 @@ public final class ConditionVideoPlayer {
         }
 
         Runnable playlistEnd = onCloseCallback == null ? () -> {} : onCloseCallback;
-        minecraft.setScreen(new VideoPlaybackScreen(
+        minecraft.gui.setScreen(new VideoPlaybackScreen(
                 config,
                 conditionConfig,
                 playlist,

@@ -45,17 +45,15 @@ public final class LegacyFormatParser {
             return Style.EMPTY;
         }
 
-        if (formatting.isColor()) {
-            return style.withColor(formatting);
-        }
-
+        // ChatFormatting no longer exposes isColor(); every entry that is not one of the style flags
+        // handled below (and not RESET, handled above) is a colour.
         return switch (formatting) {
             case BOLD -> style.withBold(true);
             case ITALIC -> style.withItalic(true);
             case UNDERLINE -> style.withUnderlined(true);
             case STRIKETHROUGH -> style.withStrikethrough(true);
             case OBFUSCATED -> style.withObfuscated(true);
-            default -> style;
+            default -> style.withColor(formatting);
         };
     }
 }

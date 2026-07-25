@@ -1028,8 +1028,8 @@ public final class VideoPlaybackScreen extends Screen {
             return;
         }
         finishPlayback();
-        if (minecraft != null && minecraft.screen == this) {
-            minecraft.setScreen(null);
+        if (minecraft != null && minecraft.gui.screen() == this) {
+            minecraft.gui.setScreen(null);
         }
         org.mateof24.conditionalvideos.condition.shared.ConditionVideoPlayer.playNextInQueue(minecraft);
     }

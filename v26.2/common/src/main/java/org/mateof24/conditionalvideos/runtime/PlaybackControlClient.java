@@ -26,14 +26,14 @@ public final class PlaybackControlClient {
     public static void stop() {
         Minecraft minecraft = Minecraft.getInstance();
         ConditionVideoPlayer.clearQueue();
-        if (minecraft.screen instanceof VideoPlaybackScreen screen) {
+        if (minecraft.gui.screen() instanceof VideoPlaybackScreen screen) {
             screen.onClose();
         }
     }
 
     public static void togglePause() {
         Minecraft minecraft = Minecraft.getInstance();
-        if (minecraft.screen instanceof VideoPlaybackScreen screen) {
+        if (minecraft.gui.screen() instanceof VideoPlaybackScreen screen) {
             screen.togglePause();
         }
     }

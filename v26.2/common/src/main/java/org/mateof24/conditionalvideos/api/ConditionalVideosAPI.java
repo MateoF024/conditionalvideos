@@ -180,7 +180,7 @@ public final class ConditionalVideosAPI {
      * @return {@code true} if a video is currently playing on this client.
      */
     public static boolean isPlaying() {
-        return isClient() && Minecraft.getInstance().screen instanceof VideoPlaybackScreen;
+        return isClient() && Minecraft.getInstance().gui.screen() instanceof VideoPlaybackScreen;
     }
 
     /**
@@ -188,7 +188,7 @@ public final class ConditionalVideosAPI {
      */
     public static boolean isPaused() {
         return isClient()
-                && Minecraft.getInstance().screen instanceof VideoPlaybackScreen screen
+                && Minecraft.getInstance().gui.screen() instanceof VideoPlaybackScreen screen
                 && screen.isPaused();
     }
 

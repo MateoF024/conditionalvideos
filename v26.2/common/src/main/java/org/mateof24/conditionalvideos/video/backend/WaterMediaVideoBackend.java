@@ -4,7 +4,8 @@ import com.mojang.blaze3d.opengl.GlTexture;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.FilterMode;
 import com.mojang.blaze3d.textures.GpuTexture;
-import com.mojang.blaze3d.textures.TextureFormat;
+import com.mojang.blaze3d.GpuFormat;
+import com.mojang.blaze3d.opengl.FrameBufferCache;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.renderer.RenderPipelines;
@@ -904,11 +905,15 @@ public final class WaterMediaVideoBackend {
     // Wraps a WaterMedia-owned GL texture as a Blaze3D GlTexture. close() never deletes it: WaterMedia
     // owns and frees the GL texture.
     private static final class ForeignGlTexture extends GlTexture {
+        // The wrapped frame is only ever sampled, never used as a render target, so it needs no shared
+        // framebuffer cache; an own empty one keeps this decoupled from the GL device.
+        private static final FrameBufferCache FRAME_BUFFER_CACHE = new FrameBufferCache();
+
         private boolean disposed;
 
         ForeignGlTexture(int glId, int width, int height) {
-            super(GpuTexture.USAGE_TEXTURE_BINDING, "conditionalvideos-video", TextureFormat.RGBA8,
-                    width, height, 1, 1, glId);
+            super(GpuTexture.USAGE_TEXTURE_BINDING, "conditionalvideos-video", GpuFormat.RGBA8_UNORM,
+                    width, height, 1, 1, glId, FRAME_BUFFER_CACHE);
         }
 
         @Override

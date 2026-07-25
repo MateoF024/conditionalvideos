@@ -19,7 +19,7 @@ public abstract class ToastComponentMixin {
     // are shown once playback ends (postponed, not lost).
     @Inject(method = "extractRenderState", at = @At("HEAD"), cancellable = true)
     private void conditionalvideos$suppressToastsDuringVideo(GuiGraphicsExtractor guiGraphics, CallbackInfo ci) {
-        Screen screen = Minecraft.getInstance().screen;
+        Screen screen = Minecraft.getInstance().gui.screen();
         if (screen instanceof VideoPlaybackScreen || screen instanceof VideoLoadingScreen) {
             ci.cancel();
         }

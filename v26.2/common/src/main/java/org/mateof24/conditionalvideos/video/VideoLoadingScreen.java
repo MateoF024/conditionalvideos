@@ -57,8 +57,8 @@ public final class VideoLoadingScreen extends Screen {
         if (timeoutTicks > 0 && elapsedTicks >= timeoutTicks) {
             settled = true;
             onTimeout.run();
-            if (minecraft != null && minecraft.screen == this) {
-                minecraft.setScreen(null);
+            if (minecraft != null && minecraft.gui.screen() == this) {
+                minecraft.gui.setScreen(null);
             }
         }
     }

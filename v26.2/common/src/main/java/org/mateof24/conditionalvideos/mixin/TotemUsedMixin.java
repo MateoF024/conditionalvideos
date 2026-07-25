@@ -1,6 +1,6 @@
 package org.mateof24.conditionalvideos.mixin;
 
-import net.minecraft.advancements.criterion.UsedTotemTrigger;
+import net.minecraft.advancements.triggers.UsedTotemTrigger;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.ItemStack;
 import org.mateof24.conditionalvideos.condition.server.ServerConditionDispatcher;
