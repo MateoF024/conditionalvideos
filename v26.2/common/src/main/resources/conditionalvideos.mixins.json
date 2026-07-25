@@ -6,9 +6,11 @@
   "client": [
     "ClientAdvancementsMixin",
     "ClientPacketListenerMixin",
+    "GpuDeviceAccessor",
     "PlayerAttackMixin",
     "SoundManagerMixin",
-    "ToastComponentMixin"
+    "ToastComponentMixin",
+    "VulkanDeviceMixin"
   ],
   "mixins": [
     "RecipeUnlockedMixin",
