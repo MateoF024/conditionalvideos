@@ -19,10 +19,11 @@ def minecraftVer = gradle.startParameter.projectProperties.containsKey('minecraf
 }
 
 // Each supported Minecraft version maps to its own source tree. 1.20.x keeps the legacy Forge layout
-// at the repo root; every 1.21.x version lives in its own v<version>/ tree (NeoForge + Fabric).
+// at the repo root; every other version lives in its own v<version>/ tree (NeoForge + Fabric).
 def treeByVersion = [
         '1.21.1' : 'v1.21.1',
         '1.21.11': 'v1.21.11',
+        '26.1.2' : 'v26.1.2',
 ]
 
 if (minecraftVer.startsWith("1.20")) {

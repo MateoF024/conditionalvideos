@@ -1,0 +1,64 @@
+plugins {
+    id 'com.github.johnrengelman.shadow'
+}
+
+architectury {
+    platformSetupLoomIde()
+    neoForge()
+}
+
+configurations {
+    common {
+        canBeResolved = true
+        canBeConsumed = false
+    }
+    compileClasspath.extendsFrom common
+    runtimeClasspath.extendsFrom common
+    developmentNeoForge.extendsFrom common
+
+    shadowBundle {
+        canBeResolved = true
+        canBeConsumed = false
+    }
+}
+
+repositories {
+    maven {
+        name = 'NeoForged'
+        url = 'https://maven.neoforged.net/releases'
+    }
+}
+
+dependencies {
+    neoForge "net.neoforged:neoforge:$rootProject.neoforge_version_v2612"
+    implementation"dev.architectury:architectury-neoforge:${rootProject.architectury_api_v2612}"
+
+    common(project(path: ':common', configuration: 'namedElements')) { transitive false }
+    shadowBundle project(path: ':common', configuration: 'transformProductionNeoForge')
+
+    runtimeOnly files("${rootProject.projectDir}/libs/watermedia-${rootProject.watermedia_api_version}.jar")
+    def binariesJar = file("${rootProject.projectDir}/libs/watermedia_binaries-${rootProject.watermedia_binaries_version}.jar")
+    if (binariesJar.exists()) {
+        runtimeOnly files(binariesJar)
+    }
+}
+
+processResources {
+    inputs.property 'version', project.version
+
+    filesMatching('META-INF/neoforge.mods.toml') {
+        expand version: project.version
+    }
+}
+
+// Unobfuscated Minecraft needs no remapping, so the shadow jar is the final artifact directly.
+jar {
+    archiveClassifier = 'raw'
+}
+
+shadowJar {
+    configurations = [project.configurations.shadowBundle]
+    archiveClassifier = ''
+}
+
+assemble.dependsOn shadowJar

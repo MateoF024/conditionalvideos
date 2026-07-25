@@ -1,0 +1,58 @@
+plugins {
+    id 'com.github.johnrengelman.shadow'
+}
+
+architectury {
+    platformSetupLoomIde()
+    fabric()
+}
+
+configurations {
+    common {
+        canBeResolved = true
+        canBeConsumed = false
+    }
+    compileClasspath.extendsFrom common
+    runtimeClasspath.extendsFrom common
+    developmentFabric.extendsFrom common
+
+    shadowBundle {
+        canBeResolved = true
+        canBeConsumed = false
+    }
+}
+
+dependencies {
+    implementation"net.fabricmc:fabric-loader:$rootProject.fabric_loader_version"
+    implementation"net.fabricmc.fabric-api:fabric-api:${rootProject.fabric_api_v2612}"
+    implementation"dev.architectury:architectury-fabric:${rootProject.architectury_api_v2612}"
+
+    common(project(path: ':common', configuration: 'namedElements')) { transitive false }
+    shadowBundle project(path: ':common', configuration: 'transformProductionFabric')
+
+    runtimeOnly files("${rootProject.projectDir}/libs/watermedia-${rootProject.watermedia_api_version}.jar")
+    def binariesJar = file("${rootProject.projectDir}/libs/watermedia_binaries-${rootProject.watermedia_binaries_version}.jar")
+    if (binariesJar.exists()) {
+        runtimeOnly files(binariesJar)
+    }
+}
+
+processResources {
+    inputs.property 'version', project.version
+
+    filesMatching('fabric.mod.json') {
+        expand version: project.version
+    }
+}
+
+// Unobfuscated Minecraft needs no remapping, so the shadow jar is the final artifact directly.
+jar {
+    archiveClassifier = 'raw'
+}
+
+shadowJar {
+    configurations = [project.configurations.shadowBundle]
+    archiveClassifier = ''
+}
+
+assemble.dependsOn shadowJar
