@@ -33,7 +33,7 @@ dependencies {
     neoForge "net.neoforged:neoforge:$rootProject.neoforge_version_v2612"
     implementation"dev.architectury:architectury-neoforge:${rootProject.architectury_api_v2612}"
 
-    common(project(path: ':common', configuration: 'namedElements')) { transitive false }
+    common(project(path: ':common')) { transitive false }
     shadowBundle project(path: ':common', configuration: 'transformProductionNeoForge')
 
     runtimeOnly files("${rootProject.projectDir}/libs/watermedia-${rootProject.watermedia_api_version}.jar")

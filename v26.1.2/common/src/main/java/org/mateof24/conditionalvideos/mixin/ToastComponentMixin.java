@@ -1,7 +1,7 @@
 package org.mateof24.conditionalvideos.mixin;
 
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.toasts.ToastManager;
 import net.minecraft.client.gui.screens.Screen;
 import org.mateof24.conditionalvideos.video.VideoLoadingScreen;
@@ -17,8 +17,8 @@ public abstract class ToastComponentMixin {
     // Toasts are drawn after the active screen, so they appear on top of the video and obstruct it.
     // While a video screen is showing we skip rendering them entirely; the toasts stay queued and
     // are shown once playback ends (postponed, not lost).
-    @Inject(method = "render", at = @At("HEAD"), cancellable = true)
-    private void conditionalvideos$suppressToastsDuringVideo(GuiGraphics guiGraphics, CallbackInfo ci) {
+    @Inject(method = "extractRenderState", at = @At("HEAD"), cancellable = true)
+    private void conditionalvideos$suppressToastsDuringVideo(GuiGraphicsExtractor guiGraphics, CallbackInfo ci) {
         Screen screen = Minecraft.getInstance().screen;
         if (screen instanceof VideoPlaybackScreen || screen instanceof VideoLoadingScreen) {
             ci.cancel();

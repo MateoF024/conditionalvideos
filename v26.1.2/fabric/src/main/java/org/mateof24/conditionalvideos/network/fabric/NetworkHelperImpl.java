@@ -16,8 +16,8 @@ public final class NetworkHelperImpl {
     public static void registerPackets(
             Map<Identifier, NetworkHelper.S2CPacketHandler> s2cHandlers,
             Map<Identifier, NetworkHelper.C2SPacketHandler> c2sHandlers) {
-        PayloadTypeRegistry.playS2C().register(NetworkHelper.RawS2C.TYPE, NetworkHelper.RawS2C.CODEC);
-        PayloadTypeRegistry.playC2S().register(NetworkHelper.RawC2S.TYPE, NetworkHelper.RawC2S.CODEC);
+        PayloadTypeRegistry.clientboundPlay().register(NetworkHelper.RawS2C.TYPE, NetworkHelper.RawS2C.CODEC);
+        PayloadTypeRegistry.serverboundPlay().register(NetworkHelper.RawC2S.TYPE, NetworkHelper.RawC2S.CODEC);
 
         ServerPlayNetworking.registerGlobalReceiver(NetworkHelper.RawC2S.TYPE, (payload, context) -> {
             NetworkHelper.C2SPacketHandler handler = c2sHandlers.get(payload.id());

@@ -6,7 +6,7 @@ import com.mojang.blaze3d.textures.FilterMode;
 import com.mojang.blaze3d.textures.GpuTexture;
 import com.mojang.blaze3d.textures.TextureFormat;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.client.renderer.texture.AbstractTexture;
 import net.minecraft.resources.Identifier;
@@ -769,13 +769,13 @@ public final class WaterMediaVideoBackend {
         }
     }
 
-    public void render(GuiGraphics guiGraphics, int width, int height) {
+    public void render(GuiGraphicsExtractor guiGraphics, int width, int height) {
         render(guiGraphics, width, height, 1f);
     }
 
     // 1.21.5+ uses a deferred GUI pipeline, so raw immediate-mode GL here would draw out of order. Instead
     // wrap WaterMedia's GL texture as a Blaze3D texture and blit it like any GUI sprite.
-    public void render(GuiGraphics guiGraphics, int width, int height, float alpha) {
+    public void render(GuiGraphicsExtractor guiGraphics, int width, int height, float alpha) {
         long texId = currentTextureId();
         if (texId <= 0) {
             return;
@@ -864,7 +864,7 @@ public final class WaterMediaVideoBackend {
     }
 
     // Lazily registers a TextureManager entry wrapping WaterMedia's live frame texture; refreshes the
-    // wrapped id/size on change. Returns the Identifier for GuiGraphics.blit.
+    // wrapped id/size on change. Returns the Identifier for GuiGraphicsExtractor.blit.
     private Identifier ensureRegisteredTexture(int glId, int texW, int texH) {
         try {
             Minecraft minecraft = Minecraft.getInstance();

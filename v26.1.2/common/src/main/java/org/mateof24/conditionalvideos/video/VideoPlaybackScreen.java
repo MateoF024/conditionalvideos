@@ -4,7 +4,7 @@ import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.FormattedCharSequence;
@@ -234,7 +234,7 @@ public final class VideoPlaybackScreen extends Screen {
     // White bar that fills while the skip key is held toward a whole-playlist skip. It only appears
     // once the hold has outlasted a quick tap (a tap skips a single video and shows no bar); it is
     // full when releasing now will skip the whole playlist.
-    private void renderSkipHoldBar(GuiGraphics guiGraphics) {
+    private void renderSkipHoldBar(GuiGraphicsExtractor guiGraphics) {
         if (!skipKeyDown || !isCurrentSkippable() || state != State.PLAYING) {
             return;
         }
@@ -253,7 +253,7 @@ public final class VideoPlaybackScreen extends Screen {
         }
         if (skipHoldArmed) {
             // Bar is full: tell the player that releasing the key now skips the whole playlist.
-            guiGraphics.drawCenteredString(font, skipReleaseHint, width / 2, y - 14, 0xFFFFFFFF);
+            guiGraphics.centeredText(font, skipReleaseHint, width / 2, y - 14, 0xFFFFFFFF);
         }
     }
 
@@ -694,7 +694,7 @@ public final class VideoPlaybackScreen extends Screen {
     }
 
     @Override
-    public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
+    public void extractRenderState(GuiGraphicsExtractor guiGraphics, int mouseX, int mouseY, float partialTick) {
         WaterMediaVideoBackend renderTarget = chooseRenderTarget();
 
         if (!currentFirstFrameSeen && renderTarget == currentBackend) {
@@ -727,7 +727,7 @@ public final class VideoPlaybackScreen extends Screen {
                 int x = width / 2;
                 int y = height - 24;
                 int color = (hintAlpha << 24) | 0x00FFFFFF;
-                guiGraphics.drawCenteredString(font, skipHint, x, y, color);
+                guiGraphics.centeredText(font, skipHint, x, y, color);
             }
             renderVideoMetadata(guiGraphics, hintAlpha);
         }
@@ -747,7 +747,7 @@ public final class VideoPlaybackScreen extends Screen {
         }
     }
 
-    private void drawPauseIcon(GuiGraphics guiGraphics) {
+    private void drawPauseIcon(GuiGraphicsExtractor guiGraphics) {
         int barWidth = 6;
         int barHeight = 22;
         int gap = 6;
@@ -759,7 +759,7 @@ public final class VideoPlaybackScreen extends Screen {
         guiGraphics.fill(right - barWidth, top, right, top + barHeight, color);
     }
 
-    private void renderVideoMetadata(GuiGraphics guiGraphics, int alpha) {
+    private void renderVideoMetadata(GuiGraphicsExtractor guiGraphics, int alpha) {
         boolean hasTitle = !currentTitle.getString().isBlank();
         boolean hasDescription = !currentDescription.getString().isBlank();
         if (!hasTitle && !hasDescription) {
@@ -779,7 +779,7 @@ public final class VideoPlaybackScreen extends Screen {
         }
     }
 
-    private void drawTextBlock(GuiGraphics guiGraphics, Component text, TextAnchor anchor, float scale, int alpha) {
+    private void drawTextBlock(GuiGraphicsExtractor guiGraphics, Component text, TextAnchor anchor, float scale, int alpha) {
         int innerWidth = Math.max(1, Math.round((TEXT_BOX_WIDTH - TEXT_BOX_PADDING * 2) / scale));
         List<FormattedCharSequence> lines = font.split(text, innerWidth);
         if (lines.isEmpty()) {
@@ -800,7 +800,7 @@ public final class VideoPlaybackScreen extends Screen {
         drawScaledLines(guiGraphics, lines, x + TEXT_BOX_PADDING, y + TEXT_BOX_PADDING, scale, alpha);
     }
 
-    private void drawCombinedTextBlock(GuiGraphics guiGraphics, int alpha) {
+    private void drawCombinedTextBlock(GuiGraphicsExtractor guiGraphics, int alpha) {
         int titleInnerWidth = Math.max(1, Math.round((TEXT_BOX_WIDTH - TEXT_BOX_PADDING * 2) / currentTitleScale));
         int descInnerWidth = Math.max(1, Math.round((TEXT_BOX_WIDTH - TEXT_BOX_PADDING * 2) / currentDescriptionScale));
         List<FormattedCharSequence> titleLines = font.split(currentTitle, titleInnerWidth);
@@ -823,7 +823,7 @@ public final class VideoPlaybackScreen extends Screen {
         drawScaledLines(guiGraphics, descLines, x + TEXT_BOX_PADDING, descTopY, currentDescriptionScale, alpha);
     }
 
-    private void drawScaledLines(GuiGraphics guiGraphics, List<FormattedCharSequence> lines, int originX, int originY, float scale, int alpha) {
+    private void drawScaledLines(GuiGraphicsExtractor guiGraphics, List<FormattedCharSequence> lines, int originX, int originY, float scale, int alpha) {
         int textColor = (alpha << 24) | 0x00FFFFFF;
         int unscaledLineHeight = font.lineHeight + LINE_SPACING;
         Matrix3x2fStack pose = guiGraphics.pose();
@@ -831,12 +831,12 @@ public final class VideoPlaybackScreen extends Screen {
         pose.translate(originX, originY);
         pose.scale(scale, scale);
         for (int i = 0; i < lines.size(); i++) {
-            guiGraphics.drawString(font, lines.get(i), 0, i * unscaledLineHeight, textColor);
+            guiGraphics.text(font, lines.get(i), 0, i * unscaledLineHeight, textColor);
         }
         pose.popMatrix();
     }
 
-    private void fillTextBox(GuiGraphics guiGraphics, int left, int top, int right, int bottom, int textAlpha) {
+    private void fillTextBox(GuiGraphicsExtractor guiGraphics, int left, int top, int right, int bottom, int textAlpha) {
         int boxAlpha = resolveBoxAlpha(textAlpha);
         if (boxAlpha <= 0) {
             return;

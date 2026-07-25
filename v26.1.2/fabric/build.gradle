@@ -27,7 +27,7 @@ dependencies {
     implementation"net.fabricmc.fabric-api:fabric-api:${rootProject.fabric_api_v2612}"
     implementation"dev.architectury:architectury-fabric:${rootProject.architectury_api_v2612}"
 
-    common(project(path: ':common', configuration: 'namedElements')) { transitive false }
+    common(project(path: ':common')) { transitive false }
     shadowBundle project(path: ':common', configuration: 'transformProductionFabric')
 
     runtimeOnly files("${rootProject.projectDir}/libs/watermedia-${rootProject.watermedia_api_version}.jar")

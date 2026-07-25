@@ -1,7 +1,7 @@
 package org.mateof24.conditionalvideos.video;
 
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.network.chat.Component;
 
 public final class VideoLoadingOverlay {
@@ -17,13 +17,13 @@ public final class VideoLoadingOverlay {
     private VideoLoadingOverlay() {
     }
 
-    public static void render(GuiGraphics guiGraphics, Font font, int width, int height, int videoCount) {
+    public static void render(GuiGraphicsExtractor guiGraphics, Font font, int width, int height, int videoCount) {
         guiGraphics.fill(0, 0, width, height, 0xFF000000);
         renderSpinner(guiGraphics, width, height);
         renderLoadingText(guiGraphics, font, width, height, videoCount);
     }
 
-    private static void renderSpinner(GuiGraphics guiGraphics, int width, int height) {
+    private static void renderSpinner(GuiGraphicsExtractor guiGraphics, int width, int height) {
         int centerX = width / 2;
         int centerY = height / 2 - 10;
         int activeDot = (int) ((System.nanoTime() / 1_000_000L / DOT_STEP_MS) % SPINNER_DOT_COUNT);
@@ -44,10 +44,10 @@ public final class VideoLoadingOverlay {
         }
     }
 
-    private static void renderLoadingText(GuiGraphics guiGraphics, Font font, int width, int height, int videoCount) {
+    private static void renderLoadingText(GuiGraphicsExtractor guiGraphics, Font font, int width, int height, int videoCount) {
         int centerX = width / 2;
         int textY = height / 2 + LOADING_TEXT_OFFSET_Y;
         Component text = videoCount > 1 ? LOADING_TEXT_MULTIPLE : LOADING_TEXT_SINGLE;
-        guiGraphics.drawCenteredString(font, text, centerX, textY, 0xFFFFFFFF);
+        guiGraphics.centeredText(font, text, centerX, textY, 0xFFFFFFFF);
     }
 }
