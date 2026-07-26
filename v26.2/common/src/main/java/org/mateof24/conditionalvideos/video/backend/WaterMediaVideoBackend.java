@@ -933,17 +933,33 @@ public final class WaterMediaVideoBackend {
     }
 
     private void releaseFrameTexture() {
-        if (frameTextureId != null) {
+        Identifier id = frameTextureId;
+        frameTextureId = null;
+        frameTexture = null;
+        if (id == null) {
+            return;
+        }
+        // Releasing frees the GPU texture, and frames already submitted may still be sampling it, so the
+        // release waits behind the render fence. Doing it immediately costs the Vulkan device.
+        deferToRenderFence(() -> {
             try {
                 Minecraft minecraft = Minecraft.getInstance();
                 if (minecraft != null) {
-                    minecraft.getTextureManager().release(frameTextureId);
+                    minecraft.getTextureManager().release(id);
                 }
             } catch (Throwable ignored) {
             }
-            frameTextureId = null;
+        });
+    }
+
+    // Runs GPU teardown once the frames in flight are done with it, falling back to running it straight
+    // away if the fence queue is unavailable.
+    private static void deferToRenderFence(Runnable task) {
+        try {
+            RenderSystem.queueFencedTask(task);
+        } catch (Throwable ignored) {
+            task.run();
         }
-        frameTexture = null;
     }
 
     // Wraps a WaterMedia-owned GL texture as a Blaze3D GlTexture. close() never deletes it: WaterMedia
@@ -1021,28 +1037,42 @@ public final class WaterMediaVideoBackend {
         }
 
         private void disposeGpu() {
-            if (textureView != null) {
-                try {
-                    if (vulkan && replacedImageView != 0L) {
-                        ((VulkanGpuTextureViewAccessor) textureView).conditionalvideos$setImageView(replacedImageView);
-                    }
-                    textureView.close();
-                } catch (Throwable ignored) {
-                }
-                textureView = null;
-            }
-            if (texture != null) {
-                try {
-                    texture.close();
-                } catch (Throwable ignored) {
-                }
-                texture = null;
-            }
-            sampler = null;
-            replacedImageView = 0L;
+            GpuTextureView oldView = this.textureView;
+            GpuTexture oldTexture = this.texture;
+            long restore = this.replacedImageView;
+            boolean isVulkan = this.vulkan;
+
+            this.textureView = null;
+            this.texture = null;
+            this.sampler = null;
+            this.replacedImageView = 0L;
             wrappedHandle = -1L;
             wrappedWidth = -1;
             wrappedHeight = -1;
+
+            if (oldView == null && oldTexture == null) {
+                return;
+            }
+            // WaterMedia hands out a different frame every so often, so this runs mid-render. Frames already
+            // submitted may still sample these, hence the teardown waits behind the render fence. The
+            // borrowed handle is put back first so only Minecraft's own view is ever destroyed.
+            deferToRenderFence(() -> {
+                if (oldView != null) {
+                    try {
+                        if (isVulkan && restore != 0L) {
+                            ((VulkanGpuTextureViewAccessor) oldView).conditionalvideos$setImageView(restore);
+                        }
+                        oldView.close();
+                    } catch (Throwable ignored) {
+                    }
+                }
+                if (oldTexture != null) {
+                    try {
+                        oldTexture.close();
+                    } catch (Throwable ignored) {
+                    }
+                }
+            });
         }
 
         @Override
