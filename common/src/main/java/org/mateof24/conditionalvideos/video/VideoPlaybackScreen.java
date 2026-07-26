@@ -336,7 +336,10 @@ public final class VideoPlaybackScreen extends Screen {
 
         tickCursorAutoHide();
 
-        if (paused) {
+        // Pausing only holds playback, never the load: a pause requested before the first frame used to
+        // freeze the backend mid-startup, leaving the loading screen up forever. The entry keeps loading
+        // until it has a frame to show, and is put on hold there.
+        if (paused && currentFirstFrameSeen) {
             return;
         }
 
@@ -361,6 +364,11 @@ public final class VideoPlaybackScreen extends Screen {
             currentEntryTicks = 0;
             firstFrameWaitTicks = 0;
             consecutiveFailures = 0;
+            if (paused) {
+                // Pause was requested while this entry was still loading: apply it now that there is a
+                // frame, so it holds on the video instead of on the loading screen.
+                currentBackend.pause();
+            }
         } else if (currentFirstFrameSeen) {
             currentEntryTicks++;
         } else if (currentBackend.isActivelyLoading()) {
