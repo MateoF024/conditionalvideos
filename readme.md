@@ -6,7 +6,7 @@ Server-aware cinematic triggers for Minecraft. Configure conditions once and let
 
 [![Modrinth Downloads](https://img.shields.io/modrinth/dt/conditionalvideos?style=for-the-badge&logo=modrinth&label=Modrinth&color=00AF5C&logoColor=white)](https://modrinth.com/mod/conditionalvideos) [![CurseForge Downloads](https://img.shields.io/curseforge/dt/1521845?style=for-the-badge&logo=curseforge&label=CurseForge&color=f16a20&logoColor=white)](https://www.curseforge.com/minecraft/mc-mods/conditionalvideos)
 
-[![Fabric](https://img.shields.io/badge/Fabric-1.20.1%20%7C%201.21.1%20%7C%201.21.11-dbd0b4?style=for-the-badge)](https://fabricmc.net/) [![Forge 1.20.1](https://img.shields.io/badge/Forge-1.20.1-e04e14?style=for-the-badge)](https://minecraftforge.net/) [![NeoForge](https://img.shields.io/badge/NeoForge-1.21.1%20%7C%201.21.11-f98010?style=for-the-badge)](https://neoforged.net/) [![Environment](https://img.shields.io/badge/Env-Client%20%26%20Server-4a90d9?style=for-the-badge)](https://modrinth.com/mod/conditionalvideos)
+[![Fabric](https://img.shields.io/badge/Fabric-1.20.1%20%7C%201.21.1%20%7C%201.21.11%20%7C%2026.1.2%20%7C%2026.2-dbd0b4?style=for-the-badge)](https://fabricmc.net/) [![Forge 1.20.1](https://img.shields.io/badge/Forge-1.20.1-e04e14?style=for-the-badge)](https://minecraftforge.net/) [![NeoForge](https://img.shields.io/badge/NeoForge-1.21.1%20%7C%201.21.11%20%7C%2026.1.2%20%7C%2026.2-f98010?style=for-the-badge)](https://neoforged.net/) [![Environment](https://img.shields.io/badge/Env-Client%20%26%20Server-4a90d9?style=for-the-badge)](https://modrinth.com/mod/conditionalvideos)
 
 [![Wiki](https://img.shields.io/badge/Docs-Wiki-0969da?style=for-the-badge&logo=github&logoColor=white)](https://github.com/MateoF024/conditionalvideos/wiki) [![Issues](https://img.shields.io/badge/Report-Issues-red?style=for-the-badge&logo=github&logoColor=white)](https://github.com/MateoF024/conditionalvideos/issues)
 
@@ -37,11 +37,17 @@ It runs on **both client and dedicated server**: the server detects conditions a
 | 1.20.1 | Fabric, Forge | 17+ |
 | 1.21.1 | Fabric, NeoForge | 21+ |
 | 1.21.11 | Fabric, NeoForge | 21+ |
+| 26.1.2 | Fabric, NeoForge | 25+ |
+| 26.2 | Fabric, NeoForge | 25+ |
+
+> On **26.2** the game can run with either renderer. Videos play on both, but support for the **Vulkan
+> renderer is experimental** — Minecraft ships it as an opt-in preview, so OpenGL remains the safest
+> choice if you hit trouble.
 
 **Required (client side):**
 
-- [WATERMeDIA: Multimedia API](https://modrinth.com/mod/watermedia) — **v3.0.0.21+**
-- [WATERMeDIA: Native Binaries](https://modrinth.com/mod/watermedia-binaries) — **v3.0.0-rc.4+**
+- [WATERMeDIA: Multimedia API](https://modrinth.com/mod/watermedia) — **v3.0.0.22+**
+- [WATERMeDIA: Native Binaries](https://modrinth.com/mod/watermedia-binaries) — **v3.0.0.5+**
 - [Fabric API](https://modrinth.com/mod/fabric-api) — **any** (Fabric Only)
 
 **Config files**:

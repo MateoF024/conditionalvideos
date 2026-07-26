@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.5.0
+
+### Added
+- **Minecraft 26.1.2 and 26.2 support** (Fabric and NeoForge, Java 25).
+- **Vulkan renderer support on 26.2.** Videos play on either renderer; Vulkan support is experimental, matching Minecraft's own opt-in preview of it.
+- **Clearer diagnostics**: `debugLogging` now also reports the environment (OS, Java, Minecraft, graphics backend and driver, WATERMeDIA state) and a per-second playback line, so a report says what was happening without guesswork.
+- **Explicit message when WATERMeDIA's FFmpeg backend fails to load**, instead of a video that silently never starts.
+
+### Changed
+- **Updated WATERMeDIA stack:**
+  - API `3.0.0.21` → `3.0.0.22`
+  - Native Binaries `rc.4` → `3.0.0.5`
+- **Videos now upload at their native resolution.** The automatic upload-resolution cap added in 1.4.0 was removed: the frame is no longer downscaled before upload, so playback keeps the quality of the source and the GPU handles the scaling.
+- **Mature-content filtering is now handled entirely by WATERMeDIA.** The `blockMatureContent` option is unchanged and mirrors WATERMeDIA's own policy, which covers more sources than the previous built-in domain list.
+- Inherited the fixes and hardening of the updated WATERMeDIA stack.
+
 ## 1.4.0
 
 ### Added
