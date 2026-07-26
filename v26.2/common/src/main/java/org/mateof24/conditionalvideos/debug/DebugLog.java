@@ -71,18 +71,26 @@ public final class DebugLog {
         log(Area.ENV, "OS: {} {} | Java {}", System.getProperty("os.name"), System.getProperty("os.arch"), System.getProperty("java.version"));
         log(Area.ENV, "Minecraft: {}", minecraftVersion());
         // 26.2 can run OpenGL or Vulkan; the backend decides whether video playback is possible at all.
+        String backend = null;
         try {
             com.mojang.blaze3d.systems.DeviceInfo info = com.mojang.blaze3d.systems.RenderSystem.getDevice().getDeviceInfo();
+            backend = info.backendName();
             log(Area.ENV, "Renderer: backend='{}' device='{}' vendor='{}' driver='{}'",
-                    info.backendName(), info.name(), info.vendorName(), info.driverInfo());
+                    backend, info.name(), info.vendorName(), info.driverInfo());
         } catch (Throwable t) {
             log(Area.ENV, "Renderer: <unavailable> ({})", t.toString());
         }
-        try {
-            log(Area.ENV, "GL: vendor='{}' renderer='{}' version='{}'",
-                    GL11.glGetString(GL11.GL_VENDOR), GL11.glGetString(GL11.GL_RENDERER), GL11.glGetString(GL11.GL_VERSION));
-        } catch (Throwable t) {
-            log(Area.ENV, "GL: <unavailable> ({})", t.toString());
+        // Raw GL is only legal while the GL backend is active: under Vulkan there is no context and the
+        // call kills the process without throwing, so an unreadable backend skips the query as well.
+        if (backend != null && !"Vulkan".equalsIgnoreCase(backend)) {
+            try {
+                log(Area.ENV, "GL: vendor='{}' renderer='{}' version='{}'",
+                        GL11.glGetString(GL11.GL_VENDOR), GL11.glGetString(GL11.GL_RENDERER), GL11.glGetString(GL11.GL_VERSION));
+            } catch (Throwable t) {
+                log(Area.ENV, "GL: <unavailable> ({})", t.toString());
+            }
+        } else {
+            log(Area.ENV, "GL: <skipped, backend={}>", backend == null ? "<unknown>" : backend);
         }
         try {
             log(Area.ENV, "WaterMedia: v{} ffmpegLoaded={} ffmpegError={} vulkanDecode={}",

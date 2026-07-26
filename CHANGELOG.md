@@ -3,8 +3,8 @@
 ## 1.5.0
 
 ### Added
-- **Minecraft 26.1.2 and 26.2 support** (Fabric and NeoForge, Java 25).
-- **Vulkan renderer support on 26.2.** Videos play on either renderer; Vulkan support is experimental, matching Minecraft's own opt-in preview of it.
+- **Minecraft 26.1.2 and 26.2 support**
+- **Vulkan renderer support on 26.2.** Videos play on either renderer; Vulkan support is EXPERIMENTAL.
 - **Clearer diagnostics**: `debugLogging` now also reports the environment (OS, Java, Minecraft, graphics backend and driver, WATERMeDIA state) and a per-second playback line.
 - **Explicit message when WATERMeDIA's FFmpeg backend fails to load**, instead of a video that silently never starts.
 
@@ -17,7 +17,7 @@
 - Inherited the fixes and hardening of the updated WATERMeDIA stack.
 
 ### Fixed
-- **Pausing a video before it started playing no longer gets stuck on the loading screen.** Pausing that early stopped the entry from finishing its startup, so it never reached a first frame and single-video skip stopped responding. The entry now finishes loading and holds on its first frame instead.
+- **Pausing a video before it started playing no longer gets stuck on the loading screen.**
 
 ## 1.4.0
 

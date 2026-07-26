@@ -1,5 +1,6 @@
 package org.mateof24.conditionalvideos.debug;
 
+import com.mojang.blaze3d.systems.RenderSystem;
 import org.lwjgl.BufferUtils;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL30;
@@ -13,8 +14,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 // Per-source video diagnostics sampled ~1/s while debug logging is on (one instance per backend).
 // Correlates, in a single line, the player clock/status/fps, the GL upload rate, and the centre texel of
-// the frame texture (read back through a raw-GL FBO, so the identical code works on every branch and
-// loader). When the frame is frozen it points at the likely layer:
+// the frame texture (read back through a raw-GL FBO on the GL backend; skipped under Vulkan). When the
+// frame is frozen it points at the likely layer:
 //   clock ADVANCING + texture unchanged  -> a stalled present/upload
 //   clock STALLED while audio continues   -> an A/V-clock stall
 //   ZERO GL uploads/s                     -> WaterMedia stopped submitting frames
@@ -60,7 +61,7 @@ public final class VideoDiagnostics {
                 texW = gfx.width();
                 texH = gfx.height();
             }
-            String centre = readCentreTexel(textureId, texW, texH);
+            String centre = glBackend() ? readCentreTexel(textureId, texW, texH) : "";
 
             long timeDelta = (lastTimeMs == Long.MIN_VALUE || timeMs < 0) ? Long.MIN_VALUE : timeMs - lastTimeMs;
             boolean centreValid = !centre.isEmpty() && !centre.startsWith("fbo");
@@ -104,8 +105,18 @@ public final class VideoDiagnostics {
         }
     }
 
+    // 26.2 can run Vulkan, where the frame handle is not a GL name and the process has no GL context:
+    // raw GL there dies inside the driver without throwing, so the readback is skipped instead.
+    private static boolean glBackend() {
+        try {
+            return !"Vulkan".equalsIgnoreCase(RenderSystem.getDevice().getDeviceInfo().backendName());
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
     // Reads the centre texel of a GL texture through a throwaway read-FBO, saving and restoring the FBO
-    // bindings and read-buffer it touches. Raw GL only, so it behaves identically on every loader/branch.
+    // bindings and read-buffer it touches. Only reached while the GL backend is active.
     private static String readCentreTexel(long textureId, int texW, int texH) {
         if (textureId <= 0 || texW <= 0 || texH <= 0) {
             return "";
