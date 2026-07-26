@@ -1021,7 +1021,9 @@ public final class VideoPlaybackScreen extends Screen {
             return;
         }
         paused = value;
-        if (currentBackend != null) {
+        // Only an entry that already has a frame can be held. Pausing the backend mid-startup stalls
+        // it before it ever decodes one; tick() applies a pending pause once the first frame arrives.
+        if (currentBackend != null && currentFirstFrameSeen) {
             if (paused) {
                 currentBackend.pause();
             } else {
