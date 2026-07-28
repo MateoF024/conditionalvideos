@@ -32,7 +32,7 @@
     "fabric-api": "*"
   },
   "suggests": {
-    "watermedia": ">=3.0.0-alpha",
-    "watermedia_binaries": ">=3.0.0-alpha"
+    "watermedia": ">=3.0.0.23",
+    "watermedia_binaries": ">=3.0.0.6"
   }
 }

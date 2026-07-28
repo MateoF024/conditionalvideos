@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.5.1
+
+### Fixed
+- **Playback no longer breaks on WATERMeDIA `3.0.0.23`.** That release changed part of its API, which left 1.5.0 unable to start a video once WATERMeDIA was updated.
+
+### Changed
+- **Updated WATERMeDIA stack:**
+  - API `3.0.0.22` → `3.0.0.23`
+  - Native Binaries `3.0.0.5` → `3.0.0.6`
+- **WATERMeDIA `3.0.0.23`+ and Native Binaries `3.0.0.6`+ are now required.** Older versions are no longer compatible, and the mod loader now says so up front instead of letting playback fail later.
+- Refreshed the loader, Fabric API and Architectury versions used by every supported Minecraft version.
+- Inherited the fixes and hardening of the updated WATERMeDIA stack.
+
 ## 1.5.0
 
 ### Added

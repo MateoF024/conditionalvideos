@@ -37,14 +37,14 @@ side = "BOTH"
 [[dependencies.conditionalvideos]]
 modId = "watermedia"
 type = "required"
-versionRange = "[3.0.0-alpha,4.0.0)"
+versionRange = "[3.0.0.23,4.0.0)"
 ordering = "AFTER"
 side = "CLIENT"
 
 [[dependencies.conditionalvideos]]
 modId = "watermedia_binaries"
 type = "required"
-versionRange = "[3.0.0-alpha,4.0.0)"
+versionRange = "[3.0.0.6,4.0.0)"
 ordering = "AFTER"
 side = "CLIENT"
 

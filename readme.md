@@ -46,8 +46,8 @@ It runs on **both client and dedicated server**: the server detects conditions a
 
 **Required (client side):**
 
-- [WATERMeDIA: Multimedia API](https://modrinth.com/mod/watermedia) — **v3.0.0.22+**
-- [WATERMeDIA: Native Binaries](https://modrinth.com/mod/watermedia-binaries) — **v3.0.0.5+**
+- [WATERMeDIA: Multimedia API](https://modrinth.com/mod/watermedia) — **v3.0.0.23+**
+- [WATERMeDIA: Native Binaries](https://modrinth.com/mod/watermedia-binaries) — **v3.0.0.6+**
 - [Fabric API](https://modrinth.com/mod/fabric-api) — **any** (Fabric Only)
 
 **Config files**:
