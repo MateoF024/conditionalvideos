@@ -9,8 +9,7 @@
 - **Updated WATERMeDIA stack:**
   - API `3.0.0.22` → `3.0.0.23`
   - Native Binaries `3.0.0.5` → `3.0.0.6`
-- **WATERMeDIA `3.0.0.23`+ and Native Binaries `3.0.0.6`+ are now required.** Older versions are no longer compatible, and the mod loader now says so up front instead of letting playback fail later.
-- Refreshed the loader, Fabric API and Architectury versions used by every supported Minecraft version.
+- **WATERMeDIA `3.0.0.23`+ and Native Binaries `3.0.0.6`+ are now required.** Older versions are no longer compatible.
 - Inherited the fixes and hardening of the updated WATERMeDIA stack.
 
 ## 1.5.0
