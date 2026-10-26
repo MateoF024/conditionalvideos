@@ -93,19 +93,14 @@ public final class DebugLog {
             log(Area.ENV, "GL: <skipped, backend={}>", backend == null ? "<unknown>" : backend);
         }
         try {
-            log(Area.ENV, "WaterMedia: v{} ffmpegLoaded={} ffmpegError={} vulkanDecode={}",
+            log(Area.ENV, "WaterMedia: v{} loaded={} modules={}/{} ffmpegLoaded={} ffmpegError={} vulkanDecode={}",
                     org.watermedia.WaterMedia.VERSION,
+                    org.watermedia.WaterMedia.loaded(),
+                    org.watermedia.WaterMedia.step(),
+                    org.watermedia.WaterMedia.steps(),
                     org.watermedia.api.media.MediaAPI.ffmpegLoaded(),
                     org.watermedia.api.media.MediaAPI.ffmpegError(),
                     org.watermedia.api.media.MediaAPI.vulkanDecode());
-            java.util.List<org.watermedia.WaterMedia.Failure> failures = org.watermedia.WaterMedia.failures();
-            if (failures.isEmpty()) {
-                log(Area.ENV, "WaterMedia boot: no non-fatal failures");
-            } else {
-                for (org.watermedia.WaterMedia.Failure failure : failures) {
-                    log(Area.ENV, "WaterMedia boot FAILURE: api={} step={}", failure.api(), failure.step());
-                }
-            }
         } catch (Throwable t) {
             log(Area.ENV, "WaterMedia: <not loaded> ({})", t.toString());
         }

@@ -3,8 +3,8 @@ package org.mateof24.conditionalvideos.debug;
 import org.lwjgl.BufferUtils;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL30;
-import org.watermedia.api.media.engines.GFXEngine;
-import org.watermedia.api.media.players.MediaPlayer;
+import org.watermedia.api.media.GFXEngine;
+import org.watermedia.api.media.MediaPlayer;
 
 import java.net.URI;
 import java.nio.ByteBuffer;

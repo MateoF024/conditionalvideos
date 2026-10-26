@@ -26,19 +26,17 @@ import org.mateof24.conditionalvideos.debug.DebugLog;
 import org.mateof24.conditionalvideos.debug.VideoDiagnostics;
 import org.mateof24.conditionalvideos.mixin.GpuDeviceAccessor;
 import org.mateof24.conditionalvideos.mixin.VulkanGpuTextureViewAccessor;
-import org.watermedia.WaterMedia;
 import org.watermedia.WaterMediaConfig;
+import org.watermedia.api.media.GFXEngine;
 import org.watermedia.api.media.MRL;
 import org.watermedia.api.media.MediaAPI;
-import org.watermedia.api.media.engines.GFXEngine;
-import org.watermedia.api.media.engines.SFXEngine;
-import org.watermedia.api.media.engines.vk.VKContext;
-import org.watermedia.api.media.players.MediaPlayer;
+import org.watermedia.api.media.MediaPlayer;
+import org.watermedia.api.media.SFXEngine;
+import org.watermedia.api.media.VKContext;
 import org.watermedia.api.util.MediaQuality;
 import org.watermedia.api.util.MediaType;
 
 import java.net.URI;
-import java.util.List;
 import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -418,7 +416,7 @@ public final class WaterMediaVideoBackend {
             mrl = MediaAPI.mrl(source);
             if (mrl != null && mrl.status() == MRL.Status.EXPIRED) {
                 try {
-                    mrl.reload();
+                    mrl = mrl.reload();
                 } catch (Throwable t) {
                     ConditionalVideos.LOGGER.debug("MRL.reload() failed for '{}': {}", source, t.toString());
                 }
@@ -475,7 +473,7 @@ public final class WaterMediaVideoBackend {
         }
         boolean satisfied = forcedQuality != null
                 ? current == desiredQuality
-                : current != MediaQuality.UNKNOWN && current.threshold >= desiredQuality.threshold;
+                : current != MediaQuality.UNKNOWN && current.height() >= desiredQuality.height();
         if (satisfied) {
             qualitySettleTicks = 0;
             lastRequestedQuality = null;
@@ -564,7 +562,7 @@ public final class WaterMediaVideoBackend {
                 mrlReloadAttempts++;
                 DebugLog.log(DebugLog.Area.SOURCE, "Retrying MRL '{}' (attempt {}/{}).", source, mrlReloadAttempts, MAX_MRL_RELOAD_ATTEMPTS);
                 try {
-                    mrl.reload();
+                    mrl = mrl.reload();
                 } catch (Throwable t) {
                     ConditionalVideos.LOGGER.debug("MRL.reload() failed for '{}': {}", source, t.toString());
                 }
@@ -579,7 +577,7 @@ public final class WaterMediaVideoBackend {
         }
         if (status == MRL.Status.EXPIRED) {
             try {
-                mrl.reload();
+                mrl = mrl.reload();
             } catch (Throwable t) {
                 ConditionalVideos.LOGGER.debug("MRL.reload() failed for '{}': {}", source, t.toString());
             }
@@ -634,11 +632,18 @@ public final class WaterMediaVideoBackend {
         }
     }
 
-    // index >= 0 selects that source explicitly; -1 falls back to WaterMedia's default source.
+    // index >= 0 selects that source explicitly; -1 falls back to WaterMedia's default source. The MRL is
+    // already LOADED here, so a null player is a permanent failure (no backend or a construction crash).
     private void startSourcePlayer(MRL.Source preferred, int index) {
         player = index >= 0
-                ? MediaAPI.createPlayer(mrl, index, () -> gfx, () -> sfx)
-                : MediaAPI.createPlayer(mrl, () -> gfx, () -> sfx);
+                ? MediaAPI.player(mrl, index, () -> gfx, () -> sfx)
+                : MediaAPI.player(mrl, () -> gfx, () -> sfx);
+        if (player == null) {
+            ConditionalVideos.LOGGER.warn("WATERMeDIA could not create a player for '{}'; skipping it.", source);
+            errored = true;
+            cleanup();
+            return;
+        }
         registerStatusListener();
         if (ffmpegLoaded()) {
             DebugLog.applyFfmpegLogLevel();
@@ -680,10 +685,11 @@ public final class WaterMediaVideoBackend {
     }
 
     // Caches player status from the onStatus event (seeded once) so per-tick queries read one volatile
-    // field instead of several native getters; the callback may run off-thread, hence volatile.
+    // field instead of several native getters; the callback may run off-thread, hence volatile. A terminal
+    // status consumes the listener, which is fine because a finished player is never restarted.
     private void registerStatusListener() {
         try {
-            player.onStatus((previous, current) -> playerStatus = current);
+            player.onStatus((p, previous, current) -> playerStatus = current);
         } catch (Throwable t) {
             ConditionalVideos.LOGGER.debug("onStatus() registration failed for '{}': {}", source, t.toString());
         }
@@ -709,18 +715,11 @@ public final class WaterMediaVideoBackend {
         }
     }
 
-    // Surfaces a clear reason (plus WaterMedia boot failures) when FFmpeg failed to load, instead of a
-    // generic timeout.
+    // Surfaces a clear reason when FFmpeg failed to load, instead of a generic timeout.
     private void reportFfmpegUnavailable() {
         ConditionalVideos.LOGGER.warn("Cannot play video '{}': WaterMedia's FFmpeg backend failed to load; "
-                + "video playback is unavailable. Verify the WaterMedia and WaterMedia Binaries installation.", source);
-        try {
-            List<WaterMedia.Failure> failures = WaterMedia.failures();
-            for (WaterMedia.Failure failure : failures) {
-                ConditionalVideos.LOGGER.warn("  WaterMedia boot failure: api={}, step={}", failure.api(), failure.step());
-            }
-        } catch (Throwable ignored) {
-        }
+                + "video playback is unavailable. Verify the WaterMedia and WaterMedia Binaries installation "
+                + "(WaterMedia logged the reason at startup).", source);
     }
 
     // First video source, or -1 for WaterMedia's default. Only one source is played; playlist MRLs are
@@ -1085,6 +1084,8 @@ public final class WaterMediaVideoBackend {
         cleanup();
     }
 
+    // Releases the player and both engines. The engines are released here as well because a source that
+    // never got a player still owns them (the AL engine holds an OpenAL source from construction).
     private void cleanup() {
         closed = true;
         releaseFrameTexture();
@@ -1112,7 +1113,14 @@ public final class WaterMediaVideoBackend {
             }
             gfx = null;
         }
-        sfx = null;
+        if (sfx != null) {
+            try {
+                sfx.release();
+            } catch (Throwable t) {
+                ConditionalVideos.LOGGER.debug("Failed to release SFX engine for '{}': {}", source, t.toString());
+            }
+            sfx = null;
+        }
         mrl = null;
     }
 

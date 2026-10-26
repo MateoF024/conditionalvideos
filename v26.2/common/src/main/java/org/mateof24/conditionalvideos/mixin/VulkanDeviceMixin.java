@@ -14,7 +14,7 @@ import org.mateof24.conditionalvideos.video.backend.VulkanQueueLock;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
-import org.watermedia.api.media.engines.vk.VKContext;
+import org.watermedia.api.media.VKContext;
 
 // Implements WaterMedia's VKContext directly on Minecraft's Vulkan device, which is the integration
 // pattern WaterMedia documents: the game's own vkDevice() already satisfies the interface verbatim, so
