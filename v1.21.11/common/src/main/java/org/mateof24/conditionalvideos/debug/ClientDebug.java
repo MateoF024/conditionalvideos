@@ -46,10 +46,11 @@ public final class ClientDebug {
     // Must run only AFTER WaterMedia has loaded the FFmpeg natives (e.g. from the video backend),
     // never during mod init / config load: forcing the bytedeco avutil class to initialise early
     // poisons it permanently (NoClassDefFoundError) and breaks all video playback.
+    // Debug stops at WARNING: INFO/VERBOSE print every HLS segment URL straight to the native console.
     public static void applyFfmpegLogLevel() {
         try {
             Class<?> avutil = Class.forName("org.bytedeco.ffmpeg.global.avutil");
-            int level = avutil.getField(DebugLog.clientEnabled() ? "AV_LOG_VERBOSE" : "AV_LOG_ERROR").getInt(null);
+            int level = avutil.getField(DebugLog.clientEnabled() ? "AV_LOG_WARNING" : "AV_LOG_ERROR").getInt(null);
             avutil.getMethod("av_log_set_level", int.class).invoke(null, level);
         } catch (Throwable ignored) {
         }
