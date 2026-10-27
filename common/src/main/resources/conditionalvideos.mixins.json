@@ -11,7 +11,10 @@
     "ToastComponentMixin"
   ],
   "mixins": [
+    "ProtectedPushMixin",
+    "ProtectedTouchMixin",
     "RecipeUnlockedMixin",
+    "ServerLevelFreezeMixin",
     "TotemUsedMixin"
   ],
   "injectors": {

@@ -19,9 +19,14 @@ import java.util.Set;
 import java.util.UUID;
 
 // ConditionalVideos' data inside each world (<world>/data/conditionalvideos/world.dat), written only by the
-// server: the conditions every player already watched there, and whether the singleplayer history of
-// 1.5.1 was already brought in.
+// server: the conditions every player already watched there, the protection a player is under (so it
+// can be undone after a disconnect or a crash), and whether the singleplayer history of 1.5.1 was
+// already brought in.
 public final class ConditionalVideosWorldData extends SavedData {
+    // What a protection changed: the condition, and the invulnerability and game mode before it began.
+    public record Protection(String key, boolean invulnerable, String gameMode) {
+    }
+
     private static final Codec<ConditionalVideosWorldData> CODEC =
             CompoundTag.CODEC.xmap(ConditionalVideosWorldData::load, ConditionalVideosWorldData::save);
     private static final SavedDataType<ConditionalVideosWorldData> TYPE =
@@ -52,6 +57,19 @@ public final class ConditionalVideosWorldData extends SavedData {
         return added;
     }
 
+    public Protection protection(UUID player) {
+        PlayerRecord record = players.get(player.toString());
+        return record == null ? null : record.protection;
+    }
+
+    // Stores the protection a player is under, or clears it with null.
+    public void setProtection(UUID player, String name, Protection protection) {
+        PlayerRecord record = players.computeIfAbsent(player.toString(), id -> new PlayerRecord());
+        record.name = name;
+        record.protection = protection;
+        setDirty();
+    }
+
     public int playerCount() {
         return players.size();
     }
@@ -74,6 +92,13 @@ public final class ConditionalVideosWorldData extends SavedData {
             ListTag watched = new ListTag();
             record.watched.forEach(key -> watched.add(StringTag.valueOf(key)));
             playerTag.put("watched", watched);
+            if (record.protection != null) {
+                CompoundTag protectionTag = new CompoundTag();
+                protectionTag.putString("key", record.protection.key());
+                protectionTag.putBoolean("invulnerable", record.protection.invulnerable());
+                protectionTag.putString("gameMode", record.protection.gameMode());
+                playerTag.put("protection", protectionTag);
+            }
             playersTag.put(uuid, playerTag);
         });
         tag.put("players", playersTag);
@@ -92,6 +117,9 @@ public final class ConditionalVideosWorldData extends SavedData {
             for (int i = 0; i < watched.size(); i++) {
                 record.watched.add(watched.getStringOr(i, ""));
             }
+            playerTag.getCompound("protection").ifPresent(protectionTag -> record.protection = new Protection(
+                    protectionTag.getStringOr("key", ""), protectionTag.getBooleanOr("invulnerable", false),
+                    protectionTag.getStringOr("gameMode", "")));
             data.players.put(uuid, record);
         }
         data.legacyImported = tag.getBooleanOr("legacyImported", false);
@@ -101,5 +129,6 @@ public final class ConditionalVideosWorldData extends SavedData {
     private static final class PlayerRecord {
         private String name = "";
         private final Set<String> watched = new LinkedHashSet<>();
+        private Protection protection;
     }
 }

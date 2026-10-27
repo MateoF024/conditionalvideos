@@ -12,6 +12,7 @@ import org.mateof24.conditionalvideos.config.LegacyMigration;
 import org.mateof24.conditionalvideos.debug.ClientDebug;
 import org.mateof24.conditionalvideos.debug.DebugLog;
 import org.mateof24.conditionalvideos.debug.ServerDebug;
+import org.mateof24.conditionalvideos.world.PlaybackSessions;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,6 +32,7 @@ public final class ConditionalVideos {
         ServerDebug.init();
         LegacyMigration.run(!client);
         ConfigAnnouncer.init();
+        PlaybackSessions.init();
         ConfigSyncNetworking.init();
         PlaybackControlNetworking.init();
         ConditionalVideosCommands.register();

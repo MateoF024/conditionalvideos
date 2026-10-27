@@ -7,6 +7,7 @@ import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig.VideoEntry;
 import org.mateof24.conditionalvideos.debug.DebugLog;
 import org.mateof24.conditionalvideos.network.PlaybackControlNetworking;
+import org.mateof24.conditionalvideos.world.PlaybackSessions;
 import org.mateof24.conditionalvideos.video.VideoLoadingScreen;
 import org.mateof24.conditionalvideos.video.VideoPlaybackScreen;
 import org.mateof24.conditionalvideos.video.path.VideoPathResolver;
@@ -68,7 +69,7 @@ public final class ConditionVideoPlayer {
     ) {
     }
 
-    private static boolean isVideoActive(Minecraft minecraft) {
+    public static boolean isVideoActive(Minecraft minecraft) {
         return minecraft != null
                 && (minecraft.screen instanceof VideoPlaybackScreen
                 || minecraft.screen instanceof VideoLoadingScreen);
@@ -212,6 +213,7 @@ public final class ConditionVideoPlayer {
                     if (readyUri == null) {
                         ConditionalVideos.LOGGER.warn("{} video '{}' was reported ready but its URI could not be resolved.",
                                 logName, configuredPath);
+                        PlaybackControlNetworking.notifyPlayback(conditionId, PlaybackSessions.Phase.ENDED, false, false);
                         if (minecraft.screen instanceof VideoLoadingScreen) {
                             minecraft.setScreen(null);
                         }
@@ -226,6 +228,7 @@ public final class ConditionVideoPlayer {
                 },
                 () -> {
                     ConditionalVideos.LOGGER.warn("Timed out waiting for {} video '{}'.", logName, configuredPath);
+                    PlaybackControlNetworking.notifyPlayback(conditionId, PlaybackSessions.Phase.ENDED, false, false);
                     if (minecraft.screen instanceof VideoLoadingScreen) {
                         minecraft.setScreen(null);
                     }
@@ -237,6 +240,7 @@ public final class ConditionVideoPlayer {
                 LOADING_SCREEN_TIMEOUT_TICKS,
                 playlist.size()
         );
+        PlaybackControlNetworking.notifyPlayback(conditionId, PlaybackSessions.Phase.LOADING, false, conditionConfig.resolvedProtectPlayer());
         minecraft.setScreen(screen);
     }
 
@@ -255,7 +259,7 @@ public final class ConditionVideoPlayer {
             DebugLog.client(DebugLog.Area.CONDITION, "Marked '{}' as watched in this world{}.", conditionId,
                     ActiveConfigResolver.watchedFromServer() ? "" : " (for this connection only: the server keeps no world data)");
         }
-        PlaybackControlNetworking.notifyPlayback(conditionId, true, once);
+        PlaybackControlNetworking.notifyPlayback(conditionId, PlaybackSessions.Phase.STARTED, once, conditionConfig.resolvedProtectPlayer());
 
         VideoEntry firstEntry = playlist.get(0);
         if (playlist.size() == 1 && !conditionConfig.resolvedPlaylistLoop()) {
@@ -267,7 +271,7 @@ public final class ConditionVideoPlayer {
         }
 
         Runnable playlistEnd = () -> {
-            PlaybackControlNetworking.notifyPlayback(conditionId, false, false);
+            PlaybackControlNetworking.notifyPlayback(conditionId, PlaybackSessions.Phase.ENDED, false, false);
             if (onCloseCallback != null) {
                 onCloseCallback.run();
             }

@@ -11,6 +11,7 @@ import org.mateof24.conditionalvideos.condition.shared.ConditionVideoPlayer;
 import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
 import org.mateof24.conditionalvideos.debug.DebugLog;
 import org.mateof24.conditionalvideos.network.ConfigSyncNetworking;
+import org.mateof24.conditionalvideos.network.PlaybackControlNetworking;
 
 // Per-tick client dispatcher: detects session start/end, the firstJoin flow, death, and dimension
 // change, handing each off to its condition handler.
@@ -34,6 +35,7 @@ public final class ClientRuntime {
                 DebugLog.client(DebugLog.Area.LIFECYCLE, "Left the world; resetting the session state.");
                 KillEntityVideoHandler.onSessionEnded();
                 ConfigSyncNetworking.onClientDisconnected();
+                PlaybackControlNetworking.resetClientSession();
                 AdvancementVideoHandler.reset();
                 ActiveConfigResolver.invalidateLocalConfigCache();
                 ConditionVideoPlayer.clearQueue();
@@ -65,6 +67,8 @@ public final class ClientRuntime {
                 ConfigSyncNetworking.requestServerSync(false);
             }
         }
+
+        PlaybackControlNetworking.tickClientSession(ConditionVideoPlayer.isVideoActive(minecraft));
 
         if (!joinVideoHandled) {
             tickJoinFlow(minecraft);

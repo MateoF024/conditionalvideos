@@ -17,6 +17,8 @@
     "VulkanQueueSubmissionMixin"
   ],
   "mixins": [
+    "ProtectedPushMixin",
+    "ProtectedTouchMixin",
     "RecipeUnlockedMixin",
     "TotemUsedMixin"
   ],

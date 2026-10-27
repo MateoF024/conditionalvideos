@@ -11,7 +11,7 @@ import org.mateof24.conditionalvideos.ConditionalVideos;
 public final class DebugLog {
     public enum Area {
         LIFECYCLE, CONFIG, MIGRATION, WORLD, JOIN, CONDITION, QUEUE, NETWORK, TRANSFER, SOURCE, BACKEND, QUALITY,
-        PLAYLIST, PLAYBACK, RENDER, AUDIO, PROTECT, COMMAND, API, ENV, STATS
+        PLAYLIST, PLAYBACK, RENDER, AUDIO, PROTECT, FREEZE, COMMAND, API, ENV, STATS
     }
 
     public static final String CLIENT_MENU = "CLIENT";

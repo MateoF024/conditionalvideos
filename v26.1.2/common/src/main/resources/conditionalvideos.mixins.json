@@ -11,6 +11,8 @@
     "ToastComponentMixin"
   ],
   "mixins": [
+    "ProtectedPushMixin",
+    "ProtectedTouchMixin",
     "RecipeUnlockedMixin",
     "TotemUsedMixin"
   ],

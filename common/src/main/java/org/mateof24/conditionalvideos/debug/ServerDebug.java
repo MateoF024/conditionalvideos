@@ -11,7 +11,8 @@ import org.mateof24.conditionalvideos.condition.server.ServerConditionDispatcher
 import org.mateof24.conditionalvideos.condition.shared.ConditionRegistry;
 import org.mateof24.conditionalvideos.config.CommonConfig;
 import org.mateof24.conditionalvideos.config.ConditionFiles;
-import org.mateof24.conditionalvideos.network.ConfigSyncNetworking;
+import org.mateof24.conditionalvideos.world.PlaybackSessions;
+import org.mateof24.conditionalvideos.world.WorldFreeze;
 import org.mateof24.conditionalvideos.world.ConditionalVideosWorldData;
 
 import java.nio.file.Path;
@@ -159,9 +160,10 @@ public final class ServerDebug {
         }
         DebugLog.server(DebugLog.Area.STATS, "Players online {}/{}: {}", names.size(),
                 server.getPlayerList().getMaxPlayers(), names.isEmpty() ? "-" : String.join(", ", names));
-        List<String> protectedNames = ConfigSyncNetworking.protectedPlayerNames(server);
-        if (!protectedNames.isEmpty()) {
-            DebugLog.server(DebugLog.Area.STATS, "In firstJoin protection (spectator): {}", String.join(", ", protectedNames));
+        List<String> watching = PlaybackSessions.describe(server);
+        if (!watching.isEmpty()) {
+            DebugLog.server(DebugLog.Area.STATS, "Watching: {} | world {}", String.join(", ", watching),
+                    WorldFreeze.isFrozen() ? "frozen" : "running");
         }
         synchronized (ServerDebug.class) {
             int orders = ORDERS.values().stream().mapToInt(Integer::intValue).sum();

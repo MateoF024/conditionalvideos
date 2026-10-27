@@ -5,7 +5,6 @@ import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.level.GameType;
 import org.mateof24.conditionalvideos.ConditionalVideos;
 import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
 import org.mateof24.conditionalvideos.config.CommonConfig;
@@ -49,7 +48,6 @@ public final class ConfigSyncNetworking {
     private static final int FILE_CHUNK_SIZE = 32 * 1024;
     private static final Map<String, DownloadState> CLIENT_DOWNLOADS = new HashMap<>();
     private static boolean clientSyncRequested;
-    private static final Map<UUID, GameType> PLAYER_PRE_VIDEO_GAME_MODES = new HashMap<>();
     private static Map<ResourceLocation, NetworkHelper.S2CPacketHandler> s2cHandlers;
 
     private static final long SERVER_DATA_TTL_MILLIS = 5000L;
@@ -134,12 +132,6 @@ public final class ConfigSyncNetworking {
             sendServerData(player);
         });
 
-        c2sHandlers.put(CLIENT_JOIN_VIDEO_STATE_PACKET, (data, player) -> {
-            FriendlyByteBuf buf = NetworkHelper.fromBytes(data);
-            boolean playing = buf.readBoolean();
-            onServerJoinVideoState(player, playing);
-        });
-
         PlaybackControlNetworking.registerS2CHandlers(s2cHandlers);
         PlaybackControlNetworking.registerC2SHandlers(c2sHandlers);
 
@@ -166,16 +158,6 @@ public final class ConfigSyncNetworking {
             DebugLog.server(DebugLog.Area.NETWORK, "Not sending the configuration to {}: an integrated server (singleplayer/LAN) does not sync it.",
                     player.getScoreboardName());
         }
-    }
-
-    // Names of the players currently held in spectator for their firstJoin video.
-    public static List<String> protectedPlayerNames(MinecraftServer server) {
-        List<String> names = new ArrayList<>();
-        for (UUID uuid : PLAYER_PRE_VIDEO_GAME_MODES.keySet()) {
-            ServerPlayer player = server.getPlayerList().getPlayer(uuid);
-            names.add(player == null ? uuid.toString() : player.getScoreboardName());
-        }
-        return names;
     }
 
     // Loads the server config, common config and hashed video manifest once and caches them for a short
@@ -234,38 +216,14 @@ public final class ConfigSyncNetworking {
         NetworkHelper.sendToPlayer(player, SERVER_VIDEO_MANIFEST_PACKET, data);
     }
 
+    // Only servers older than 1.6.0 (no watched list) use this; newer ones protect through the playback reports.
     public static void notifyFirstJoinVideoState(boolean playing) {
+        if (ActiveConfigResolver.watchedFromServer()) {
+            return;
+        }
         NetworkHelper.sendToServer(CLIENT_JOIN_VIDEO_STATE_PACKET,
                 NetworkHelper.toBytes(buf -> buf.writeBoolean(playing)));
         DebugLog.client(DebugLog.Area.NETWORK, "Told the server the firstJoin video is {}.", playing ? "playing" : "over");
-    }
-
-    private static void onServerJoinVideoState(ServerPlayer player, boolean playing) {
-        UUID uuid = player.getUUID();
-        if (playing) {
-            GameType current = player.gameMode.getGameModeForPlayer();
-            GameType saved = PLAYER_PRE_VIDEO_GAME_MODES.putIfAbsent(uuid, current);
-            if (current != GameType.SPECTATOR) {
-                setServerPlayerGameMode(player, GameType.SPECTATOR);
-            }
-            DebugLog.server(DebugLog.Area.PROTECT, "{} started the firstJoin video: game mode {} -> spectator (saved mode {}).",
-                    player.getScoreboardName(), current, saved == null ? current : saved);
-            return;
-        }
-        GameType previous = PLAYER_PRE_VIDEO_GAME_MODES.remove(uuid);
-        if (previous != null && player.gameMode.getGameModeForPlayer() != previous) {
-            setServerPlayerGameMode(player, previous);
-        }
-        DebugLog.server(DebugLog.Area.PROTECT, "{} finished the firstJoin video: {}.", player.getScoreboardName(),
-                previous == null ? "no saved game mode to restore" : "game mode restored to " + previous);
-    }
-
-    private static void setServerPlayerGameMode(ServerPlayer player, GameType gameType) {
-        try {
-            player.setGameMode(gameType);
-        } catch (Throwable throwable) {
-            DebugLog.server(DebugLog.Area.PROTECT, "Failed to set game mode {} for {}: {}", gameType, player.getScoreboardName(), throwable.toString());
-        }
     }
 
     private static List<VideoManifestEntry> collectVideoEntries(ConditionalVideosConfig config, Path serverRoot) {

@@ -13,6 +13,7 @@ import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
 import org.mateof24.conditionalvideos.debug.DebugLog;
 import org.mateof24.conditionalvideos.debug.ServerDebug;
 import org.mateof24.conditionalvideos.runtime.PlaybackControlClient;
+import org.mateof24.conditionalvideos.world.PlaybackSessions;
 import org.mateof24.conditionalvideos.world.WatchedConditions;
 
 import java.util.ArrayList;
@@ -29,6 +30,14 @@ public final class PlaybackControlNetworking {
             new ResourceLocation(ConditionalVideos.MOD_ID, "watched_list");
     private static final ResourceLocation PLAYBACK_STATE_PACKET =
             new ResourceLocation(ConditionalVideos.MOD_ID, "playback_state");
+
+    private static final int ALIVE_INTERVAL_TICKS = 100;
+    private static final int OFF_SCREEN_LIMIT_TICKS = 40;
+
+    // The playback this client is in (loading screen or video), until its playlist ends.
+    private static String clientSession;
+    private static int aliveTicks;
+    private static int offScreenTicks;
 
     private PlaybackControlNetworking() {
     }
@@ -63,11 +72,11 @@ public final class PlaybackControlNetworking {
         }
         NetworkManager.registerReceiver(NetworkManager.c2s(), PLAYBACK_STATE_PACKET, (buffer, context) -> {
             String conditionKey = buffer.readUtf();
-            boolean started = buffer.readBoolean();
+            int phase = buffer.readVarInt();
             boolean once = buffer.readBoolean();
             context.queue(() -> {
-                if (context.getPlayer() instanceof ServerPlayer player) {
-                    WatchedConditions.onPlayback(player, conditionKey, started, once);
+                if (context.getPlayer() instanceof ServerPlayer player && phase >= 0 && phase < PlaybackSessions.Phase.values().length) {
+                    PlaybackSessions.onState(player, conditionKey, PlaybackSessions.Phase.values()[phase], once);
                 }
             });
         });
@@ -77,6 +86,7 @@ public final class PlaybackControlNetworking {
         FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
         buffer.writeUtf(conditionKey);
         NetworkManager.sendToPlayer(player, CONTROL_PLAY_PACKET, buffer);
+        PlaybackSessions.recordOrder(player, conditionKey);
         ServerDebug.countOrder(conditionKey);
         DebugLog.server(DebugLog.Area.NETWORK, "Sent a play order for '{}' to {}.", conditionKey, player.getScoreboardName());
     }
@@ -101,18 +111,60 @@ public final class PlaybackControlNetworking {
                 player.getScoreboardName(), keys.size());
     }
 
-    // Tells the server a playback started or finished. Only servers that sent a watched list know this
-    // message; once marks a natural start of a condition that plays once per world.
-    public static void notifyPlayback(String conditionKey, boolean started, boolean once) {
+    // Reports a phase of this client's playback (loading screen, video, end) and keeps the local session in
+    // step: the pulse that keeps it alive on the server and the push immunity of a protected video. once
+    // marks a natural start of a condition that plays once per world.
+    public static void notifyPlayback(String conditionKey, PlaybackSessions.Phase phase, boolean once, boolean protect) {
+        if (phase == PlaybackSessions.Phase.ENDED) {
+            if (conditionKey.equals(clientSession)) {
+                resetClientSession();
+            }
+        } else {
+            Minecraft minecraft = Minecraft.getInstance();
+            clientSession = conditionKey;
+            aliveTicks = 0;
+            offScreenTicks = 0;
+            PlaybackSessions.setClientImmune(protect && minecraft.player != null ? minecraft.player.getUUID() : null);
+        }
+        sendState(conditionKey, phase, once);
+    }
+
+    // Sends the pulse while the session lasts, and ends it when no video screen has been open for a while
+    // (another screen replaced the loading screen, so its end would never be reported).
+    public static void tickClientSession(boolean videoOnScreen) {
+        if (clientSession == null) {
+            return;
+        }
+        offScreenTicks = videoOnScreen ? 0 : offScreenTicks + 1;
+        if (offScreenTicks >= OFF_SCREEN_LIMIT_TICKS) {
+            DebugLog.client(DebugLog.Area.PLAYLIST, "No video screen for {} ticks; ending the playback of '{}'.", OFF_SCREEN_LIMIT_TICKS, clientSession);
+            notifyPlayback(clientSession, PlaybackSessions.Phase.ENDED, false, false);
+            return;
+        }
+        if (++aliveTicks >= ALIVE_INTERVAL_TICKS) {
+            aliveTicks = 0;
+            sendState(clientSession, PlaybackSessions.Phase.ALIVE, false);
+        }
+    }
+
+    public static void resetClientSession() {
+        clientSession = null;
+        PlaybackSessions.setClientImmune(null);
+    }
+
+    // Only servers that sent a watched list know this message.
+    private static void sendState(String conditionKey, PlaybackSessions.Phase phase, boolean once) {
         if (!ActiveConfigResolver.watchedFromServer() || Minecraft.getInstance().getConnection() == null) {
             return;
         }
         FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
         buffer.writeUtf(conditionKey);
-        buffer.writeBoolean(started);
+        buffer.writeVarInt(phase.ordinal());
         buffer.writeBoolean(once);
         NetworkManager.sendToServer(PLAYBACK_STATE_PACKET, buffer);
-        DebugLog.client(DebugLog.Area.NETWORK, "Told the server '{}' {}.", conditionKey, started ? "started" : "finished");
+        if (phase != PlaybackSessions.Phase.ALIVE) {
+            DebugLog.client(DebugLog.Area.NETWORK, "Told the server '{}': {}.", conditionKey, phase);
+        }
     }
 
     private static List<String> readKeys(FriendlyByteBuf buffer) {

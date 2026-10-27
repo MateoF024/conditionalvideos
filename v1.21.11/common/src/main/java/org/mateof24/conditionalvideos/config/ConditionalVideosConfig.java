@@ -95,13 +95,14 @@ public final class ConditionalVideosConfig {
             }
             scoreboard.put(key, new ScoreboardConditionConfig(score.repeatableInSameSession(),
                     score.playlistLoop() == null ? Boolean.FALSE : score.playlistLoop(), playable(score.videos()),
-                    score.value(), score.comparator()));
+                    score.value(), score.comparator(), score.protectPlayer(), score.freezeWorld()));
             return true;
         }
         ConditionConfig condition = (ConditionConfig) parsed;
         lint(condition.videos(), file, notices);
         ConditionConfig normalised = new ConditionConfig(condition.repeatableInSameSession(),
-                condition.playlistLoop() == null ? Boolean.FALSE : condition.playlistLoop(), playable(condition.videos()));
+                condition.playlistLoop() == null ? Boolean.FALSE : condition.playlistLoop(), playable(condition.videos()),
+                condition.protectPlayer(), condition.freezeWorld() == null && "firstJoin".equals(type) ? Boolean.TRUE : condition.freezeWorld());
         switch (type) {
             case "firstJoin" -> firstJoin = normalised;
             case "playerDeath" -> playerDeath = normalised;
@@ -351,7 +352,7 @@ public final class ConditionalVideosConfig {
     }
 
     private static ConditionConfig emptyCondition() {
-        return new ConditionConfig(false, Boolean.FALSE, new ArrayList<>());
+        return new ConditionConfig(false, Boolean.FALSE, new ArrayList<>(), null, null);
     }
 
     public ConditionConfig firstJoin() {
@@ -449,10 +450,13 @@ public final class ConditionalVideosConfig {
         return false;
     }
 
+    // protectPlayer is on unless set to false; freezeWorld is off unless set (firstJoin turns it on when it is missing).
     public record ConditionConfig(
             boolean repeatableInSameSession,
             Boolean playlistLoop,
-            List<VideoEntry> videos
+            List<VideoEntry> videos,
+            Boolean protectPlayer,
+            Boolean freezeWorld
     ) {
         public boolean resolvedPlaylistLoop() {
             return playlistLoop != null && playlistLoop;
@@ -461,6 +465,14 @@ public final class ConditionalVideosConfig {
         public List<VideoEntry> resolvedPlaylist() {
             return playable(videos);
         }
+
+        public boolean resolvedProtectPlayer() {
+            return protectPlayer == null || protectPlayer;
+        }
+
+        public boolean resolvedFreezeWorld() {
+            return freezeWorld != null && freezeWorld;
+        }
     }
 
     public record ScoreboardConditionConfig(
@@ -468,7 +480,9 @@ public final class ConditionalVideosConfig {
             Boolean playlistLoop,
             List<VideoEntry> videos,
             Integer value,
-            String comparator
+            String comparator,
+            Boolean protectPlayer,
+            Boolean freezeWorld
     ) {
         public boolean resolvedPlaylistLoop() {
             return playlistLoop != null && playlistLoop;
@@ -506,7 +520,7 @@ public final class ConditionalVideosConfig {
         }
 
         public ConditionConfig toConditionConfig() {
-            return new ConditionConfig(repeatableInSameSession, playlistLoop, videos);
+            return new ConditionConfig(repeatableInSameSession, playlistLoop, videos, protectPlayer, freezeWorld);
         }
     }
 

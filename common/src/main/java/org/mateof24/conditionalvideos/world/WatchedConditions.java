@@ -46,23 +46,13 @@ public final class WatchedConditions {
         return ORDERED.computeIfAbsent(player.getUUID(), id -> new HashSet<>()).add(key);
     }
 
-    public static void onPlayback(ServerPlayer player, String key, boolean started, boolean once) {
-        if (!started) {
-            DebugLog.server(DebugLog.Area.WORLD, "{} finished '{}'.", player.getScoreboardName(), key);
-            return;
-        }
+    // Records a started video as watched when it plays once and came from a natural trigger.
+    public static void onStarted(ServerPlayer player, String key, boolean once) {
         Set<String> ordered = ORDERED.get(player.getUUID());
         boolean wasOrdered = ordered != null && ordered.remove(key);
         MinecraftServer server = player.getServer();
         ConditionConfig condition = ConditionRegistry.resolve(ServerConditionDispatcher.activeConfig(server), key);
-        if (condition == null) {
-            DebugLog.server(DebugLog.Area.WORLD, "{} started '{}', which is not a condition of this server; not recorded.",
-                    player.getScoreboardName(), key);
-            return;
-        }
-        if (condition.repeatableInSameSession() || !(once || wasOrdered)) {
-            DebugLog.server(DebugLog.Area.WORLD, "{} started '{}' ({}).", player.getScoreboardName(), key,
-                    condition.repeatableInSameSession() ? "repeatable" : "forced play, not counted as watched");
+        if (condition == null || condition.repeatableInSameSession() || !(once || wasOrdered)) {
             return;
         }
         ConditionalVideosWorldData.get(server).markWatched(player.getUUID(), player.getScoreboardName(), List.of(key));
