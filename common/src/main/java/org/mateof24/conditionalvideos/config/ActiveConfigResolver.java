@@ -7,6 +7,7 @@ import org.mateof24.conditionalvideos.debug.ClientDebug;
 import org.mateof24.conditionalvideos.debug.DebugLog;
 
 import java.nio.file.Path;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -28,9 +29,10 @@ public final class ActiveConfigResolver {
     private static CommonConfig localCommonConfig;
     private static CommonConfig remoteCommonConfig;
 
-    // Conditions already watched: per connection on a server, per game run in singleplayer.
-    private static final Set<String> LOCAL_WATCHED = new HashSet<>();
-    private static final Set<String> REMOTE_WATCHED = new HashSet<>();
+    // Conditions already watched in the current world: the list the server sent on join plus every one
+    // started since. A server that sends no list (an older version) leaves it per connection.
+    private static final Set<String> WATCHED = new HashSet<>();
+    private static boolean watchedFromServer;
 
     private ActiveConfigResolver() {
     }
@@ -99,8 +101,21 @@ public final class ActiveConfigResolver {
         ConditionFiles.client().invalidate();
     }
 
-    public static Set<String> watchedSessions(Minecraft minecraft) {
-        return isMultiplayerSession(minecraft) ? REMOTE_WATCHED : LOCAL_WATCHED;
+    public static boolean hasWatched(String conditionKey) {
+        return WATCHED.contains(conditionKey);
+    }
+
+    public static void markWatched(String conditionKey) {
+        WATCHED.add(conditionKey);
+    }
+
+    public static void setWatchedFromServer(Collection<String> conditionKeys) {
+        WATCHED.addAll(conditionKeys);
+        watchedFromServer = true;
+    }
+
+    public static boolean watchedFromServer() {
+        return watchedFromServer;
     }
 
     public static boolean isMultiplayerSession(Minecraft minecraft) {
@@ -122,7 +137,8 @@ public final class ActiveConfigResolver {
         remoteVideoPaths.clear();
         manifestedRemoteVideoPaths.clear();
         remoteCommonConfig = null;
-        REMOTE_WATCHED.clear();
+        WATCHED.clear();
+        watchedFromServer = false;
     }
 
     public static RemoteConfigState remoteConfigState() {

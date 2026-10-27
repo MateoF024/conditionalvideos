@@ -13,7 +13,7 @@ import java.util.Map;
 import java.util.Set;
 
 public final class AdvancementVideoHandler {
-    private static final String CONDITION_ID_PREFIX = "advancementCompleted:";
+    private static final String CONDITION_ID_PREFIX = "advancement/";
     private static final Set<String> trackedCompleted = new HashSet<>();
     private static final Set<String> pendingNewCompletions = new HashSet<>();
 

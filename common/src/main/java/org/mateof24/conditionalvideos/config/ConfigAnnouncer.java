@@ -9,6 +9,7 @@ import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import org.mateof24.conditionalvideos.debug.DebugLog;
+import org.mateof24.conditionalvideos.world.PlayerRoles;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -87,7 +88,7 @@ public final class ConfigAnnouncer {
     }
 
     private static boolean canFix(MinecraftServer server, ServerPlayer player) {
-        return server.isDedicatedServer() ? player.hasPermissions(2) : server.isSingleplayerOwner(player.getGameProfile());
+        return server.isDedicatedServer() ? PlayerRoles.isOperator(player) : PlayerRoles.isHost(server, player);
     }
 
     private static void send(ServerPlayer player, List<ConfigNotice> notices) {

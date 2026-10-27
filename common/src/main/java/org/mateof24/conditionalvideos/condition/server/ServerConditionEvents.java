@@ -14,6 +14,7 @@ import org.mateof24.conditionalvideos.condition.shared.ConditionRegistry;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig.ScoreboardConditionConfig;
 import org.mateof24.conditionalvideos.debug.DebugLog;
+import org.mateof24.conditionalvideos.world.WatchedConditions;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -35,8 +36,8 @@ public final class ServerConditionEvents {
         PlayerEvent.SMELT_ITEM.register(ServerConditionEvents::onItemObtained);
         PlayerEvent.PLAYER_JOIN.register(ServerConditionEvents::onPlayerJoin);
         PlayerEvent.PLAYER_QUIT.register(player -> {
-            DebugLog.server(DebugLog.Area.JOIN, "{} left; cleared its fired conditions and tracking state.", player.getScoreboardName());
-            ServerConditionDispatcher.clearPlayer(player);
+            DebugLog.server(DebugLog.Area.JOIN, "{} left; cleared its pending orders and tracking state.", player.getScoreboardName());
+            WatchedConditions.clearPlayer(player);
             sleepingState.remove(player.getUUID());
             scoreboardArmed.remove(player.getUUID());
         });

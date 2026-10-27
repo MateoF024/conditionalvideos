@@ -13,7 +13,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 public final class KillEntityVideoHandler {
-    private static final String CONDITION_ID_PREFIX = "entityKilled:";
+    private static final String CONDITION_ID_PREFIX = "entityKilled/";
     private static final int TRACK_TIMEOUT_TICKS = 100;
     private static final Map<Integer, TrackedAttack> trackedAttacks = new LinkedHashMap<>();
     private static boolean sessionActive;

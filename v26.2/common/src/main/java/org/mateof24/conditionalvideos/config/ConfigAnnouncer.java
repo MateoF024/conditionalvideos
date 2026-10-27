@@ -4,12 +4,12 @@ import dev.architectury.event.events.common.LifecycleEvent;
 import dev.architectury.event.events.common.PlayerEvent;
 import dev.architectury.event.events.common.TickEvent;
 import net.minecraft.ChatFormatting;
-import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import org.mateof24.conditionalvideos.debug.DebugLog;
+import org.mateof24.conditionalvideos.world.PlayerRoles;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -88,7 +88,7 @@ public final class ConfigAnnouncer {
     }
 
     private static boolean canFix(MinecraftServer server, ServerPlayer player) {
-        return server.isDedicatedServer() ? Commands.LEVEL_GAMEMASTERS.check(player.permissions()) : server.isSingleplayerOwner(player.nameAndId());
+        return server.isDedicatedServer() ? PlayerRoles.isOperator(player) : PlayerRoles.isHost(server, player);
     }
 
     private static void send(ServerPlayer player, List<ConfigNotice> notices) {

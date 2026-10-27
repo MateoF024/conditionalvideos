@@ -8,16 +8,11 @@ import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig.ConditionConfig;
 import org.mateof24.conditionalvideos.debug.DebugLog;
 import org.mateof24.conditionalvideos.network.PlaybackControlNetworking;
+import org.mateof24.conditionalvideos.world.WatchedConditions;
 
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.UUID;
 
 public final class ServerConditionDispatcher {
-    private static final Map<UUID, Set<String>> firedConditions = new HashMap<>();
     private static ConditionalVideosConfig loggedConfig;
 
     private ServerConditionDispatcher() {
@@ -42,8 +37,12 @@ public final class ServerConditionDispatcher {
             return false;
         }
         if (!conditionConfig.repeatableInSameSession()) {
-            Set<String> fired = firedConditions.computeIfAbsent(player.getUUID(), key -> new HashSet<>());
-            if (!fired.add(conditionKey)) {
+            if (WatchedConditions.isWatched(player, conditionKey)) {
+                DebugLog.server(DebugLog.Area.CONDITION, "'{}' was already watched by {} in this world; not sending it.",
+                        conditionKey, player.getScoreboardName());
+                return false;
+            }
+            if (!WatchedConditions.order(player, conditionKey)) {
                 DebugLog.server(DebugLog.Area.CONDITION, "'{}' already fired for {} during this connection; not sending it again.",
                         conditionKey, player.getScoreboardName());
                 return false;
@@ -52,10 +51,6 @@ public final class ServerConditionDispatcher {
         DebugLog.server(DebugLog.Area.CONDITION, "'{}' fired for {}.", conditionKey, player.getScoreboardName());
         PlaybackControlNetworking.sendPlay(player, conditionKey);
         return true;
-    }
-
-    public static void clearPlayer(ServerPlayer player) {
-        firedConditions.remove(player.getUUID());
     }
 
     public static ConditionalVideosConfig activeConfig(MinecraftServer server) {

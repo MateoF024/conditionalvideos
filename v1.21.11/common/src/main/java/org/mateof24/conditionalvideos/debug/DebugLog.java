@@ -10,7 +10,7 @@ import org.mateof24.conditionalvideos.ConditionalVideos;
 // singleplayer log keeps both sides apart. Each side writes to its own log; nothing crosses the network.
 public final class DebugLog {
     public enum Area {
-        LIFECYCLE, CONFIG, MIGRATION, JOIN, CONDITION, QUEUE, NETWORK, TRANSFER, SOURCE, BACKEND, QUALITY,
+        LIFECYCLE, CONFIG, MIGRATION, WORLD, JOIN, CONDITION, QUEUE, NETWORK, TRANSFER, SOURCE, BACKEND, QUALITY,
         PLAYLIST, PLAYBACK, RENDER, AUDIO, PROTECT, COMMAND, API, ENV, STATS
     }
 

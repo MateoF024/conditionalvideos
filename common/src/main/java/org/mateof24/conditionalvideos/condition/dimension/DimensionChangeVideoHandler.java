@@ -7,7 +7,7 @@ import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
 import org.mateof24.conditionalvideos.condition.shared.ConditionVideoPlayer;
 
 public final class DimensionChangeVideoHandler {
-    private static final String CONDITION_ID_PREFIX = "dimensionChanged:";
+    private static final String CONDITION_ID_PREFIX = "dimension/";
 
     private DimensionChangeVideoHandler() {
     }

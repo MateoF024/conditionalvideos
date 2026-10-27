@@ -2,11 +2,11 @@ package org.mateof24.conditionalvideos.condition.shared;
 
 import net.minecraft.client.Minecraft;
 import org.mateof24.conditionalvideos.ConditionalVideos;
-import org.mateof24.conditionalvideos.condition.join.SessionKeyResolver;
 import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig.VideoEntry;
 import org.mateof24.conditionalvideos.debug.DebugLog;
+import org.mateof24.conditionalvideos.network.PlaybackControlNetworking;
 import org.mateof24.conditionalvideos.video.VideoLoadingScreen;
 import org.mateof24.conditionalvideos.video.VideoPlaybackScreen;
 import org.mateof24.conditionalvideos.video.path.VideoPathResolver;
@@ -150,14 +150,10 @@ public final class ConditionVideoPlayer {
             return false;
         }
 
-        String sessionKey = null;
-        if (!force && !conditionConfig.repeatableInSameSession()) {
-            sessionKey = SessionKeyResolver.resolveSessionKey(minecraft);
-            if (ActiveConfigResolver.watchedSessions(minecraft).contains(conditionId + ":" + sessionKey)) {
-                DebugLog.client(DebugLog.Area.CONDITION, "{} ('{}') was already watched in session '{}'; not playing it again.",
-                        logName, conditionId, sessionKey);
-                return false;
-            }
+        if (!force && !conditionConfig.repeatableInSameSession() && ActiveConfigResolver.hasWatched(conditionId)) {
+            DebugLog.client(DebugLog.Area.CONDITION, "{} ('{}') was already watched in this world; not playing it again.",
+                    logName, conditionId);
+            return false;
         }
 
         boolean isFirstJoin = FIRST_JOIN_CONDITION_ID.equals(conditionId);
@@ -184,14 +180,14 @@ public final class ConditionVideoPlayer {
                     DebugLog.client(DebugLog.Area.TRANSFER, "'{}' is still downloading and a loading screen is already open.", configuredPath);
                     return true;
                 }
-                openLoadingScreen(minecraft, config, conditionConfig, conditionId, sessionKey,
+                openLoadingScreen(minecraft, config, conditionConfig, conditionId,
                         playlist, sourceResolver, configuredPath, logName, onCloseCallback, force);
                 return true;
             }
             return shouldGiveUpOnSource(configuredPath, logName);
         }
 
-        startPlayback(minecraft, config, conditionConfig, conditionId, sessionKey,
+        startPlayback(minecraft, config, conditionConfig, conditionId,
                 playlist, sourceResolver, firstSourceUri, onCloseCallback, force);
         return true;
     }
@@ -200,7 +196,6 @@ public final class ConditionVideoPlayer {
                                           ConditionalVideosConfig config,
                                           ConditionalVideosConfig.ConditionConfig conditionConfig,
                                           String conditionId,
-                                          String sessionKey,
                                           List<VideoEntry> playlist,
                                           Function<VideoEntry, URI> sourceResolver,
                                           String configuredPath,
@@ -226,7 +221,7 @@ public final class ConditionVideoPlayer {
                         playNextInQueue(minecraft);
                         return;
                     }
-                    startPlayback(minecraft, config, conditionConfig, conditionId, sessionKey,
+                    startPlayback(minecraft, config, conditionConfig, conditionId,
                             playlist, sourceResolver, readyUri, onCloseCallback, force);
                 },
                 () -> {
@@ -249,17 +244,18 @@ public final class ConditionVideoPlayer {
                                       ConditionalVideosConfig config,
                                       ConditionalVideosConfig.ConditionConfig conditionConfig,
                                       String conditionId,
-                                      String sessionKey,
                                       List<VideoEntry> playlist,
                                       Function<VideoEntry, URI> sourceResolver,
                                       URI firstSourceUri,
                                       Runnable onCloseCallback,
                                       boolean force) {
-        if (!force && !conditionConfig.repeatableInSameSession()) {
-            ActiveConfigResolver.watchedSessions(minecraft).add(conditionId + ":" + sessionKey);
-            DebugLog.client(DebugLog.Area.CONDITION, "Marked '{}' as watched for session '{}' ({}).", conditionId, sessionKey,
-                    ActiveConfigResolver.isMultiplayerSession(minecraft) ? "for this connection" : "until the game closes");
+        boolean once = !force && !conditionConfig.repeatableInSameSession();
+        if (once) {
+            ActiveConfigResolver.markWatched(conditionId);
+            DebugLog.client(DebugLog.Area.CONDITION, "Marked '{}' as watched in this world{}.", conditionId,
+                    ActiveConfigResolver.watchedFromServer() ? "" : " (for this connection only: the server keeps no world data)");
         }
+        PlaybackControlNetworking.notifyPlayback(conditionId, true, once);
 
         VideoEntry firstEntry = playlist.get(0);
         if (playlist.size() == 1 && !conditionConfig.resolvedPlaylistLoop()) {
@@ -270,7 +266,12 @@ public final class ConditionVideoPlayer {
             }
         }
 
-        Runnable playlistEnd = onCloseCallback == null ? () -> {} : onCloseCallback;
+        Runnable playlistEnd = () -> {
+            PlaybackControlNetworking.notifyPlayback(conditionId, false, false);
+            if (onCloseCallback != null) {
+                onCloseCallback.run();
+            }
+        };
         minecraft.gui.setScreen(new VideoPlaybackScreen(
                 config,
                 conditionConfig,

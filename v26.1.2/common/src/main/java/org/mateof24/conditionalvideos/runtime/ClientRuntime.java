@@ -6,7 +6,6 @@ import org.mateof24.conditionalvideos.condition.death.PlayerDeathVideoHandler;
 import net.minecraft.resources.Identifier;
 import org.mateof24.conditionalvideos.condition.advancement.AdvancementVideoHandler;
 import org.mateof24.conditionalvideos.condition.dimension.DimensionChangeVideoHandler;
-import org.mateof24.conditionalvideos.condition.join.SessionKeyResolver;
 import org.mateof24.conditionalvideos.condition.kill.KillEntityVideoHandler;
 import org.mateof24.conditionalvideos.condition.shared.ConditionVideoPlayer;
 import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
@@ -17,7 +16,7 @@ import org.mateof24.conditionalvideos.network.ConfigSyncNetworking;
 // change, handing each off to its condition handler.
 public final class ClientRuntime {
     private static final int DIMENSION_VIDEO_DELAY_TICKS = 20;
-    private static final int MULTIPLAYER_HANDSHAKE_TIMEOUT_TICKS = 100;
+    private static final int HANDSHAKE_TIMEOUT_TICKS = 100;
     private static final int JOIN_VIDEO_RETRY_TIMEOUT_TICKS = 200;
 
     private boolean wasInSession;
@@ -26,7 +25,7 @@ public final class ClientRuntime {
     private Identifier pendingDimensionVideoTarget;
     private int pendingDimensionVideoTicks;
     private boolean joinVideoHandled;
-    private int multiplayerHandshakeTicks;
+    private int joinWaitTicks;
 
     public void onClientTick() {
         Minecraft minecraft = Minecraft.getInstance();
@@ -47,22 +46,22 @@ public final class ClientRuntime {
             pendingDimensionVideoTarget = null;
             pendingDimensionVideoTicks = 0;
             joinVideoHandled = false;
-            multiplayerHandshakeTicks = 0;
+            joinWaitTicks = 0;
             return;
         }
 
         if (!wasInSession) {
             wasInSession = true;
             DebugLog.setClientSituation(minecraft.hasSingleplayerServer() ? DebugLog.CLIENT_LOCAL : DebugLog.CLIENT_REMOTE);
-            DebugLog.client(DebugLog.Area.LIFECYCLE, "Joined a world (session '{}', dimension {}).",
-                    SessionKeyResolver.resolveSessionKey(minecraft), minecraft.level.dimension().identifier());
+            DebugLog.client(DebugLog.Area.LIFECYCLE, "Joined a world ({}, dimension {}).",
+                    minecraft.getCurrentServer() == null ? "singleplayer" : "server '" + minecraft.getCurrentServer().ip + "'", minecraft.level.dimension().identifier());
             KillEntityVideoHandler.onSessionStarted();
             PlayerDeathVideoHandler.reset();
             AdvancementVideoHandler.reset();
             lastDimension = minecraft.level.dimension().identifier();
             ConditionVideoPlayer.armFirstJoinGuard();
             joinVideoHandled = false;
-            multiplayerHandshakeTicks = 0;
+            joinWaitTicks = 0;
             if (ActiveConfigResolver.isMultiplayerSession(minecraft)) {
                 ConfigSyncNetworking.requestServerSync(false);
             }
@@ -100,6 +99,13 @@ public final class ClientRuntime {
 
     private void tickJoinFlow(Minecraft minecraft) {
         if (!ActiveConfigResolver.isMultiplayerSession(minecraft)) {
+            if (!ActiveConfigResolver.watchedFromServer() && ++joinWaitTicks < HANDSHAKE_TIMEOUT_TICKS) {
+                return;
+            }
+            if (!ActiveConfigResolver.watchedFromServer()) {
+                DebugLog.client(DebugLog.Area.JOIN, "The integrated server sent no watched list after {} ticks; watched conditions are only kept for this session.",
+                        HANDSHAKE_TIMEOUT_TICKS);
+            }
             JoinVideoHandler.onJoinedSession(minecraft);
             joinVideoHandled = true;
             return;
@@ -110,8 +116,8 @@ public final class ClientRuntime {
             if (JoinVideoHandler.onJoinedSession(minecraft)) {
                 joinVideoHandled = true;
             } else {
-                multiplayerHandshakeTicks++;
-                if (multiplayerHandshakeTicks >= JOIN_VIDEO_RETRY_TIMEOUT_TICKS) {
+                joinWaitTicks++;
+                if (joinWaitTicks >= JOIN_VIDEO_RETRY_TIMEOUT_TICKS) {
                     DebugLog.client(DebugLog.Area.JOIN, "firstJoin could not start after {} ticks; giving up for this session.",
                             JOIN_VIDEO_RETRY_TIMEOUT_TICKS);
                     joinVideoHandled = true;
@@ -126,13 +132,13 @@ public final class ClientRuntime {
             return;
         }
 
-        multiplayerHandshakeTicks++;
-        if (multiplayerHandshakeTicks % 40 == 0) {
+        joinWaitTicks++;
+        if (joinWaitTicks % 40 == 0) {
             ConfigSyncNetworking.requestServerSync(true);
         }
-        if (multiplayerHandshakeTicks >= MULTIPLAYER_HANDSHAKE_TIMEOUT_TICKS) {
+        if (joinWaitTicks >= HANDSHAKE_TIMEOUT_TICKS) {
             DebugLog.client(DebugLog.Area.NETWORK, "No ConditionalVideos data from the server after {} ticks; treating it as a server without the mod.",
-                    MULTIPLAYER_HANDSHAKE_TIMEOUT_TICKS);
+                    HANDSHAKE_TIMEOUT_TICKS);
             ActiveConfigResolver.markRemoteUnavailable();
             joinVideoHandled = true;
         }

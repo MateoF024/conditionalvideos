@@ -152,13 +152,16 @@ public final class ConfigSyncNetworking {
 
     }
 
+    // The watched list always goes first: a client that gets the conditions without it knows the server
+    // keeps no world data (an older version) and falls back to remembering this connection only.
     private static void sendServerData(ServerPlayer player) {
+        PlaybackControlNetworking.sendWatched(player);
         if (player.server.isDedicatedServer()) {
             sendServerConfig(player);
             sendServerCommonConfig(player);
             sendVideoManifest(player);
         } else {
-            DebugLog.server(DebugLog.Area.NETWORK, "Not sending data to {}: an integrated server (singleplayer/LAN) does not sync its configuration.",
+            DebugLog.server(DebugLog.Area.NETWORK, "Not sending the configuration to {}: an integrated server (singleplayer/LAN) does not sync it.",
                     player.getScoreboardName());
         }
     }

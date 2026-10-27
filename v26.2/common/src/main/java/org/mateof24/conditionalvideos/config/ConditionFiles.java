@@ -330,7 +330,7 @@ public final class ConditionFiles {
     }
 
     // UTF-8 text without the byte order mark some editors add.
-    static String readText(Path file) throws IOException {
+    public static String readText(Path file) throws IOException {
         String text;
         try {
             text = Files.readString(file, StandardCharsets.UTF_8);

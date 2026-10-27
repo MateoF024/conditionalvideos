@@ -12,6 +12,7 @@ import org.mateof24.conditionalvideos.condition.shared.ConditionRegistry;
 import org.mateof24.conditionalvideos.config.CommonConfig;
 import org.mateof24.conditionalvideos.config.ConditionFiles;
 import org.mateof24.conditionalvideos.network.ConfigSyncNetworking;
+import org.mateof24.conditionalvideos.world.ConditionalVideosWorldData;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -213,6 +214,9 @@ public final class ServerDebug {
         } catch (Throwable t) {
             DebugLog.server(DebugLog.Area.ENV, "Conditions folder '{}': unreadable ({})", files.directory(), t.toString());
         }
+        ConditionalVideosWorldData worldData = ConditionalVideosWorldData.get(server);
+        DebugLog.server(DebugLog.Area.ENV, "World data: {} player(s) with watched conditions | 1.5.1 history {}",
+                worldData.playerCount(), worldData.legacyImported() ? "imported" : "not imported yet");
         DebugLog.server(DebugLog.Area.ENV, "Common config '{}'", CommonConfig.configPath(directory));
         DebugLog.server(DebugLog.Area.ENV, "WaterMedia on this side: {} | Binaries {}",
                 DebugLog.modVersion("watermedia"), DebugLog.modVersion("watermedia_binaries"));

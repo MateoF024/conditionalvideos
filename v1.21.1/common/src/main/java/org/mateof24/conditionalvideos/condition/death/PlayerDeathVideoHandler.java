@@ -14,7 +14,7 @@ import org.mateof24.conditionalvideos.debug.DebugLog;
 
 public final class PlayerDeathVideoHandler {
     private static final String CONDITION_ID = "playerDeath";
-    private static final String ENTITY_CONDITION_ID_PREFIX = "deathByEntity:";
+    private static final String ENTITY_CONDITION_ID_PREFIX = "deathByEntity/";
     private static final int DEFERRED_PLAY_TICKS = 4;
     private static final long KILLER_CAPTURE_VALIDITY_MILLIS = 2000L;
 
