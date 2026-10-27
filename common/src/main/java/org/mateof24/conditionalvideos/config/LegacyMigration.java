@@ -33,7 +33,7 @@ import static org.mateof24.conditionalvideos.config.ConditionalVideosConfig.SIMP
 // Moves the single-file configs of 1.5.1 and earlier (conditionalvideos.json and
 // conditionalvideos-server.json) into one file per condition, and creates a clean folder on first run.
 // The move is a literal copy: every value keeps its content and its written form, unknown fields included,
-// and only the 1.1.x single-video shape is converted. It runs in a hidden temporary folder, is checked
+// and only the 1.1.x single-video shape is converted. It runs in a dot-named temporary folder, is checked
 // member by member and only then becomes the real folder; any failure leaves the original untouched.
 public final class LegacyMigration {
     private static final String CLIENT_FILE = "conditionalvideos.json";
@@ -233,10 +233,6 @@ public final class LegacyMigration {
 
     private static void write(Map<String, JsonElement> files, Path temporary) throws IOException {
         Files.createDirectories(temporary);
-        try {
-            Files.setAttribute(temporary, "dos:hidden", true);
-        } catch (IOException | RuntimeException ignored) {
-        }
         for (String type : NAMESPACED_TYPES) {
             Files.createDirectories(temporary.resolve(type));
         }
