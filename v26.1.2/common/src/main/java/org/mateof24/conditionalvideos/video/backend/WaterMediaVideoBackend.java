@@ -71,8 +71,8 @@ public final class WaterMediaVideoBackend {
     private int mrlReloadAttempts;
     private int createPlayerFailTicks;
     private int appliedVolumeIntCache = Integer.MIN_VALUE;
-    private boolean loggedFirstFrame;
     private MRL.Status lastLoggedStatus;
+    private long mrlRequestedNanos;
     private MediaQuality lastRequestedQuality;
     private boolean qualityCeilingReached;
     private int qualitySettleTicks;
@@ -222,7 +222,6 @@ public final class WaterMediaVideoBackend {
     }
 
     public void init() {
-        DebugLog.client(DebugLog.Area.BACKEND, "Initialising backend for '{}'.", source);
         applyMatureContentPolicy();
         if (!createEngines()) {
             return;
@@ -380,28 +379,17 @@ public final class WaterMediaVideoBackend {
             }
             if (mrl != null) {
                 ConditionalVideos.LOGGER.info("Requested MRL load from WATERMeDIA v3: {}", source);
-                DebugLog.client(DebugLog.Area.SOURCE, "MRL acquired for '{}' (initial status {}).", source, safeStatus());
+                mrlRequestedNanos = System.nanoTime();
+                lastLoggedStatus = MRL.Status.FETCHING;
             }
         } catch (Throwable throwable) {
             DebugLog.client(DebugLog.Area.SOURCE, "MediaAPI.mrl() not ready yet for '{}': {}", source, throwable.toString());
         }
     }
 
-    private MRL.Status safeStatus() {
-        try {
-            return mrl == null ? null : mrl.status();
-        } catch (Throwable ignored) {
-            return null;
-        }
-    }
-
     public void tick() {
         if (closed) {
             return;
-        }
-        if (!loggedFirstFrame && renderedAnyFrame) {
-            loggedFirstFrame = true;
-            DebugLog.client(DebugLog.Area.RENDER, "First frame rendered for '{}'.", source);
         }
         if (player == null) {
             tickPreStart();
@@ -499,7 +487,8 @@ public final class WaterMediaVideoBackend {
         }
         if (status != lastLoggedStatus) {
             lastLoggedStatus = status;
-            DebugLog.client(DebugLog.Area.SOURCE, "MRL '{}' status -> {}.", source, status);
+            DebugLog.client(DebugLog.Area.SOURCE, "MRL '{}' -> {} after {} ms.", source, status,
+                    (System.nanoTime() - mrlRequestedNanos) / 1_000_000L);
         }
         if (status == MRL.Status.ERROR) {
             if (mrlReloadAttempts >= MAX_MRL_RELOAD_ATTEMPTS) {
@@ -602,12 +591,10 @@ public final class WaterMediaVideoBackend {
             return;
         }
         registerStatusListener();
-        DebugLog.client(DebugLog.Area.BACKEND, "Created a WaterMedia player for '{}' (source #{}, {}, {} quality variant(s)).",
-                source, index, preferred.type(), preferred.qualities().size());
         if (ffmpegLoaded()) {
             ClientDebug.applyFfmpegLogLevel();
         }
-        desiredQuality = resolveDesiredQuality(preferred);
+        desiredQuality = resolveDesiredQuality(preferred, index);
         appliedVolumeIntCache = Integer.MIN_VALUE;
         lastRequestedQuality = null;
         qualityCeilingReached = false;
@@ -646,12 +633,12 @@ public final class WaterMediaVideoBackend {
     // Caches player status from the onStatus event (seeded once) so per-tick queries read one volatile
     // field instead of several native getters; the callback may run off-thread, hence volatile. A terminal
     // status consumes the listener, which is fine because a finished player is never restarted. Every
-    // transition is also logged, with WaterMedia's own failure cause when it lands in ERROR.
+    // transition before the release is logged, with WaterMedia's own failure cause when it lands in ERROR.
     private void registerStatusListener() {
         try {
             player.onStatus((p, previous, current) -> {
                 playerStatus = current;
-                if (DebugLog.clientEnabled()) {
+                if (DebugLog.clientEnabled() && !closed) {
                     Throwable cause = current == MediaPlayer.Status.ERROR ? p.exception() : null;
                     DebugLog.client(DebugLog.Area.PLAYBACK, "Player '{}': {} -> {}{}.", source, previous, current,
                             cause == null ? "" : " (cause: " + cause + ")");
@@ -722,7 +709,7 @@ public final class WaterMediaVideoBackend {
 
     // Returns null (quality left unmanaged) for single-variant sources (local files, direct mp4): forcing
     // a quality on them re-opens the decoder every tick and freezes the first local video.
-    private MediaQuality resolveDesiredQuality(MRL.Source preferred) {
+    private MediaQuality resolveDesiredQuality(MRL.Source preferred, int index) {
         Set<MediaQuality> available;
         try {
             available = preferred.qualities().keySet();
@@ -730,14 +717,16 @@ public final class WaterMediaVideoBackend {
             available = null;
         }
         if (available == null || available.size() <= 1) {
-            DebugLog.client(DebugLog.Area.QUALITY, "Single-variant source for '{}'; leaving quality unmanaged.", source);
+            DebugLog.client(DebugLog.Area.QUALITY, "Player for '{}' uses source #{} ({}) with a single quality; quality left unmanaged.",
+                    source, index, preferred.type());
             return null;
         }
         MediaQuality target = forcedQuality != null ? forcedQuality : MediaQuality.HIGHEST;
         try {
             MediaQuality picked = MediaQuality.closest(available, target);
             if (picked != null && picked != MediaQuality.UNKNOWN) {
-                DebugLog.client(DebugLog.Area.QUALITY, "Multi-variant source for '{}'; desired quality {} (target {}).", source, picked, target);
+                DebugLog.client(DebugLog.Area.QUALITY, "Player for '{}' uses source #{} ({}) with {} qualities; desired {} (target {}).",
+                        source, index, preferred.type(), available.size(), picked, target);
                 return picked;
             }
         } catch (Throwable ignored) {

@@ -6,7 +6,6 @@ import org.mateof24.conditionalvideos.condition.shared.ConditionRegistry;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig.ConditionConfig;
 import org.mateof24.conditionalvideos.debug.DebugLog;
-import org.mateof24.conditionalvideos.debug.ServerDebug;
 import org.mateof24.conditionalvideos.network.PlaybackControlNetworking;
 
 import java.nio.file.Path;
@@ -69,7 +68,6 @@ public final class ServerConditionDispatcher {
         if (cachedConfig == null || now >= cacheExpiryMillis) {
             cachedConfig = loadActiveConfig(server);
             cacheExpiryMillis = now + CACHE_TTL_MILLIS;
-            ServerDebug.countConfigReload();
             if (DebugLog.serverEnabled()) {
                 List<String> playable = ConditionRegistry.listPlayableKeys(cachedConfig);
                 int serverId = System.identityHashCode(server);

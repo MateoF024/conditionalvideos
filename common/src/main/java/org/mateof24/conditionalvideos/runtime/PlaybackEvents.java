@@ -30,7 +30,9 @@ public final class PlaybackEvents {
 
     public static void notifyStarted(String conditionKey) {
         currentConditionKey = conditionKey;
-        DebugLog.client(DebugLog.Area.PLAYBACK, "Playback started: '{}' ({} API listener(s) notified).", conditionKey, LISTENERS.size());
+        if (!LISTENERS.isEmpty()) {
+            DebugLog.client(DebugLog.Area.API, "Notifying {} playback listener(s) that '{}' started.", LISTENERS.size(), conditionKey);
+        }
         for (PlaybackListener listener : LISTENERS) {
             try {
                 listener.onPlaybackStarted(conditionKey);
@@ -42,7 +44,9 @@ public final class PlaybackEvents {
 
     public static void notifyEnded(String conditionKey) {
         currentConditionKey = null;
-        DebugLog.client(DebugLog.Area.PLAYBACK, "Playback ended: '{}' ({} API listener(s) notified).", conditionKey, LISTENERS.size());
+        if (!LISTENERS.isEmpty()) {
+            DebugLog.client(DebugLog.Area.API, "Notifying {} playback listener(s) that '{}' ended.", LISTENERS.size(), conditionKey);
+        }
         for (PlaybackListener listener : LISTENERS) {
             try {
                 listener.onPlaybackEnded(conditionKey);

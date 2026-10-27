@@ -32,8 +32,8 @@ public final class JoinVideoHandler {
                 "first join",
                 () -> ConfigSyncNetworking.notifyFirstJoinVideoState(false)
         );
-        DebugLog.client(DebugLog.Area.JOIN, "firstJoin playback request returned started={}.", started);
         if (!started) {
+            DebugLog.client(DebugLog.Area.JOIN, "firstJoin did not start (see the decision above).");
             ConfigSyncNetworking.notifyFirstJoinVideoState(false);
         }
         return started;

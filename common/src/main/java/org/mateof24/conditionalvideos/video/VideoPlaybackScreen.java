@@ -152,7 +152,9 @@ public final class VideoPlaybackScreen extends Screen {
         }
         try {
             MediaAPI.preload(uris.toArray(new URI[0]));
-            DebugLog.client(DebugLog.Area.SOURCE, "Asked WaterMedia to resolve {} playlist source(s) ahead of time.", uris.size());
+            if (uris.size() > 1) {
+                DebugLog.client(DebugLog.Area.SOURCE, "Asked WaterMedia to resolve the {} playlist sources ahead of time.", uris.size());
+            }
         } catch (Throwable t) {
             DebugLog.client(DebugLog.Area.SOURCE, "WaterMedia preload failed: {}", t.toString());
         }
@@ -180,8 +182,8 @@ public final class VideoPlaybackScreen extends Screen {
         boolean allowSounds = ActiveConfigResolver.effectiveAllowGameSounds(minecraft);
         alwaysShowCursor = ActiveConfigResolver.effectiveAlwaysShowCursor(minecraft);
         if (firstInit) {
-            DebugLog.client(DebugLog.Area.PLAYLIST, "Playback screen open for '{}': allowGameSounds={}, alwaysShowCursor={}, forced quality {}.",
-                    conditionKey, allowSounds, alwaysShowCursor, forcedQuality == null ? "none (AUTO)" : forcedQuality);
+            DebugLog.client(DebugLog.Area.PLAYLIST, "Playback of '{}' open: {} video(s), playlistLoop={}, allowGameSounds={}, alwaysShowCursor={}, quality {}.",
+                    conditionKey, playlist.size(), playlistLoop, allowSounds, alwaysShowCursor, forcedQuality == null ? "AUTO" : forcedQuality);
         }
         VideoAudioState.setAllowGameSounds(allowSounds);
         VideoAudioState.setVideoPlaying(true);
@@ -286,8 +288,9 @@ public final class VideoPlaybackScreen extends Screen {
 
     private void skipToNextEntry() {
         int target = computeSkipTargetIndex();
-        DebugLog.client(DebugLog.Area.PLAYLIST, "Skip tapped on entry {}; {}.", currentIndex,
-                target < 0 ? "it is the last one, closing" : "jumping to entry " + target);
+        if (target >= 0) {
+            DebugLog.client(DebugLog.Area.PLAYLIST, "Skip tapped on entry {}; jumping to entry {}.", currentIndex, target);
+        }
         if (target < 0) {
             close("skipped the last entry");
             return;

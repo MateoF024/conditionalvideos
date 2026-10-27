@@ -12,24 +12,30 @@ import java.nio.ByteBuffer;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicInteger;
 
-// Per-source video diagnostics sampled ~1/s while debug logging is on (one instance per backend).
-// Correlates, in a single line, the player clock/status/fps, the GL upload rate, and the centre texel of
-// the frame texture (read back through a raw-GL FBO on the GL backend; skipped under Vulkan). When the
-// frame is frozen it points at the likely layer:
+// Per-source video diagnostics sampled ~1/s while debug logging is on (one instance per backend), written
+// only when a sample says something: the first one, a player clock drifting from wall time, a frozen
+// texture (every second while it lasts), the recovery, a format change, and a heartbeat every 30 s.
+// Correlates the player clock/status/fps, the GL upload rate, and the centre texel of the frame texture
+// (read back through a raw-GL FBO on the GL backend; under Vulkan both GL-only fields are left out and
+// only the clock checks apply). When the frame is frozen it points at the likely layer:
 //   clock ADVANCING + texture unchanged  -> a stalled present/upload
 //   clock STALLED while audio continues   -> an A/V-clock stall
 //   ZERO GL uploads/s                     -> WaterMedia stopped submitting frames
 //   uploads > 0 but texture unchanged     -> the GL upload itself
-// Kept deliberately broad so it also fingerprints future faults (driver/mod/WaterMedia/Minecraft
-// regressions), not only the current long-YouTube freeze.
 public final class VideoDiagnostics {
     private static final long SAMPLE_INTERVAL_NANOS = 1_000_000_000L;
+    private static final long CLOCK_TOLERANCE_MS = 300L;
+    private static final int HEARTBEAT_SAMPLES = 30;
     private static final int TEXEL_CHANNELS = 4;
 
     private long lastSampleNanos;
     private long lastTimeMs = Long.MIN_VALUE;
+    private String lastStatus = "";
     private String lastCentre = "";
+    private String lastFormat = "";
     private int frozenSeconds;
+    private int quietSamples;
+    private boolean anomalous;
 
     // Call once per rendered frame with the GL texture currently shown; throttles itself to ~1/s.
     // uploadCounter is incremented by the render executor for every WaterMedia GL task, then read and
@@ -42,6 +48,8 @@ public final class VideoDiagnostics {
         if (now - lastSampleNanos < SAMPLE_INTERVAL_NANOS) {
             return;
         }
+        boolean first = lastSampleNanos == 0L;
+        long wallMs = (now - lastSampleNanos) / 1_000_000L;
         lastSampleNanos = now;
 
         int uploads = uploadCounter == null ? -1 : uploadCounter.getAndSet(0);
@@ -61,23 +69,61 @@ public final class VideoDiagnostics {
                 texW = gfx.width();
                 texH = gfx.height();
             }
-            String centre = glBackend() ? readCentreTexel(textureId, texW, texH) : "";
+            boolean gl = glBackend();
+            String centre = gl ? readCentreTexel(textureId, texW, texH) : "";
 
             long timeDelta = (lastTimeMs == Long.MIN_VALUE || timeMs < 0) ? Long.MIN_VALUE : timeMs - lastTimeMs;
             boolean centreValid = !centre.isEmpty() && !centre.startsWith("fbo");
             boolean centreFrozen = centreValid && centre.equals(lastCentre);
             boolean playing = "PLAYING".equals(status);
             frozenSeconds = (playing && centreFrozen) ? frozenSeconds + 1 : 0;
+            long drift = timeDelta == Long.MIN_VALUE ? 0L : timeDelta - wallMs;
+            boolean clockOff = playing && "PLAYING".equals(lastStatus) && Math.abs(drift) > CLOCK_TOLERANCE_MS;
+            String format = String.format(Locale.ROOT, "%.1f fps %dx%d %dms", fps, texW, texH, durMs);
+
+            String reason;
+            if (first) {
+                reason = "first sample";
+            } else if (frozenSeconds > 0) {
+                reason = null;
+            } else if (clockOff) {
+                reason = "clock " + (drift > 0 ? "jumped " : "lagged ") + Math.abs(drift) + "ms against wall time";
+            } else if (anomalous) {
+                reason = "recovered";
+            } else if (!format.equals(lastFormat)) {
+                reason = "format changed";
+            } else if (++quietSamples >= HEARTBEAT_SAMPLES) {
+                reason = "heartbeat";
+            } else {
+                reason = "";
+            }
+            anomalous = frozenSeconds > 0 || clockOff;
+            lastStatus = status;
+            lastFormat = format;
+            if (timeMs >= 0) {
+                lastTimeMs = timeMs;
+            }
+            if (centreValid) {
+                lastCentre = centre;
+            }
+            if (reason != null && reason.isEmpty()) {
+                return;
+            }
+            quietSamples = 0;
 
             String deltaStr = timeDelta == Long.MIN_VALUE ? "?" : (timeDelta >= 0 ? "+" : "") + timeDelta + "ms";
             StringBuilder line = new StringBuilder(192);
             line.append("status=").append(status)
                     .append(" time=").append(timeMs).append("ms(").append(deltaStr).append(')')
                     .append(" fps=").append(String.format(Locale.ROOT, "%.1f", fps))
-                    .append(" dur=").append(durMs).append("ms")
-                    .append(" uploads/s=").append(uploads)
-                    .append(" tex=").append(textureId).append(' ').append(texW).append('x').append(texH)
-                    .append(" centre=").append(centre.isEmpty() ? "n/a" : centre);
+                    .append(" dur=").append(durMs).append("ms");
+            if (gl) {
+                line.append(" uploads/s=").append(uploads);
+            }
+            line.append(" tex=").append(textureId).append(' ').append(texW).append('x').append(texH);
+            if (gl) {
+                line.append(" centre=").append(centre.isEmpty() ? "n/a" : centre);
+            }
             if (frozenSeconds > 0) {
                 line.append(" [FROZEN ~").append(frozenSeconds).append('s');
                 if (timeDelta != Long.MIN_VALUE && timeDelta > 0L) {
@@ -91,15 +137,10 @@ public final class VideoDiagnostics {
                     line.append("; uploads ran but texture unchanged -> GL upload");
                 }
                 line.append(']');
+            } else {
+                line.append(" [").append(reason).append(']');
             }
             DebugLog.client(DebugLog.Area.PLAYBACK, "{} for '{}'", line, source);
-
-            if (timeMs >= 0) {
-                lastTimeMs = timeMs;
-            }
-            if (centreValid) {
-                lastCentre = centre;
-            }
         } catch (Throwable t) {
             DebugLog.client(DebugLog.Area.PLAYBACK, "diagnostics sample failed for '{}': {}", source, t.toString());
         }

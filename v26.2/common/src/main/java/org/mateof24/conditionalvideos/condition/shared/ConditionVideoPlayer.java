@@ -274,8 +274,6 @@ public final class ConditionVideoPlayer {
             }
         }
 
-        DebugLog.client(DebugLog.Area.PLAYLIST, "Opening playback of '{}': {} video(s), playlistLoop={}, first source {}.",
-                conditionId, playlist.size(), conditionConfig.resolvedPlaylistLoop(), firstSourceUri);
         Runnable playlistEnd = onCloseCallback == null ? () -> {} : onCloseCallback;
         minecraft.gui.setScreen(new VideoPlaybackScreen(
                 config,

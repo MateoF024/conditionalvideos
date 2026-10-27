@@ -29,7 +29,6 @@ public final class ServerDebug {
     private static final Map<String, Integer> ORDERS = new TreeMap<>();
     private static int commands;
     private static int apiCalls;
-    private static int configReloads;
     private static int transfersStarted;
     private static int transfersFinished;
     private static int transfersFailed;
@@ -66,7 +65,6 @@ public final class ServerDebug {
         }
         ticks = 0;
         lastSituation = DebugLog.serverSituation();
-        DebugLog.server(DebugLog.Area.LIFECYCLE, "Server starting.");
     }
 
     private static void onServerStarted(MinecraftServer server) {
@@ -126,14 +124,6 @@ public final class ServerDebug {
         }
     }
 
-    public static void countConfigReload() {
-        if (DebugLog.serverEnabled()) {
-            synchronized (ServerDebug.class) {
-                configReloads++;
-            }
-        }
-    }
-
     public static void countTransferStarted() {
         if (DebugLog.serverEnabled()) {
             synchronized (ServerDebug.class) {
@@ -167,14 +157,19 @@ public final class ServerDebug {
         DebugLog.server(DebugLog.Area.STATS, "Players online {}/{}: {}", names.size(),
                 server.getPlayerList().getMaxPlayers(), names.isEmpty() ? "-" : String.join(", ", names));
         List<String> protectedNames = ConfigSyncNetworking.protectedPlayerNames(server);
-        DebugLog.server(DebugLog.Area.STATS, "In firstJoin protection (spectator): {}",
-                protectedNames.isEmpty() ? "-" : String.join(", ", protectedNames));
+        if (!protectedNames.isEmpty()) {
+            DebugLog.server(DebugLog.Area.STATS, "In firstJoin protection (spectator): {}", String.join(", ", protectedNames));
+        }
         synchronized (ServerDebug.class) {
             int orders = ORDERS.values().stream().mapToInt(Integer::intValue).sum();
-            DebugLog.server(DebugLog.Area.STATS, "Last minute: {} play order(s) {}, {} command(s), {} API call(s), {} conditions reload(s)",
-                    orders, orders == 0 ? "" : ORDERS, commands, apiCalls, configReloads);
-            DebugLog.server(DebugLog.Area.STATS, "Last minute transfers: {} started, {} finished, {} failed, {} KB sent ({} KB/s)",
-                    transfersStarted, transfersFinished, transfersFailed, bytesSent / 1024, bytesSent / 1024 / 60);
+            if (orders > 0 || commands > 0 || apiCalls > 0) {
+                DebugLog.server(DebugLog.Area.STATS, "Last minute: {} play order(s) {}, {} command(s), {} API call(s)",
+                        orders, ORDERS, commands, apiCalls);
+            }
+            if (transfersStarted > 0 || transfersFinished > 0 || transfersFailed > 0) {
+                DebugLog.server(DebugLog.Area.STATS, "Last minute transfers: {} started, {} finished, {} failed, {} KB sent ({} KB/s)",
+                        transfersStarted, transfersFinished, transfersFailed, bytesSent / 1024, bytesSent / 1024 / 60);
+            }
             resetCounters();
         }
     }
@@ -183,7 +178,6 @@ public final class ServerDebug {
         ORDERS.clear();
         commands = 0;
         apiCalls = 0;
-        configReloads = 0;
         transfersStarted = 0;
         transfersFinished = 0;
         transfersFailed = 0;
@@ -203,7 +197,7 @@ public final class ServerDebug {
                 server.getPlayerList().getMaxPlayers());
         try {
             List<String> playable = ConditionRegistry.listPlayableKeys(ServerConditionDispatcher.activeConfig(server));
-            DebugLog.server(DebugLog.Area.ENV, "Conditions file '{}': {} playable {}", conditionsFile, playable.size(), playable);
+            DebugLog.server(DebugLog.Area.ENV, "Conditions file '{}': {} playable condition(s).", conditionsFile, playable.size());
         } catch (Throwable t) {
             DebugLog.server(DebugLog.Area.ENV, "Conditions file '{}': unreadable ({})", conditionsFile, t.toString());
         }

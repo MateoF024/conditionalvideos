@@ -188,7 +188,6 @@ public final class ConfigSyncNetworking {
             data = new ServerData(config, common, manifest);
             cachedServerData = data;
             serverDataExpiryMillis = now + SERVER_DATA_TTL_MILLIS;
-            ServerDebug.countConfigReload();
             if (DebugLog.serverEnabled()) {
                 DebugLog.server(DebugLog.Area.CONFIG, "Loaded the server data: {} playable condition(s), {} file(s) in the video manifest ({} ms).",
                         ConditionRegistry.listPlayableKeys(config).size(), manifest.size(), System.currentTimeMillis() - now);

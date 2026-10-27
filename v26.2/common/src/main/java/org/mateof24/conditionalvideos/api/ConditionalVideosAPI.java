@@ -239,7 +239,6 @@ public final class ConditionalVideosAPI {
     private static void seedRegisteredCustomConditions(MinecraftServer server) {
         Collection<CustomCondition> customs = CustomConditionRegistry.all();
         if (customs.isEmpty()) {
-            DebugLog.server(DebugLog.Area.API, "No custom conditions registered by other mods.");
             return;
         }
         DebugLog.server(DebugLog.Area.API, "Custom conditions registered by other mods: {}.",
