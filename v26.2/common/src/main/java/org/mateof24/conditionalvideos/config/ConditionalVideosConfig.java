@@ -1,35 +1,24 @@
 package org.mateof24.conditionalvideos.config;
 
 import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import com.google.gson.JsonSyntaxException;
-import net.minecraft.client.Minecraft;
 import org.mateof24.conditionalvideos.ConditionalVideos;
 
-import java.io.IOException;
-import java.io.Reader;
-import java.io.Writer;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+// In-memory view of every condition, built from the per-condition files (ConditionFiles) or from the
+// aggregated JSON a server sends. It never touches the disk.
 public final class ConditionalVideosConfig {
-    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-    private static final String CLIENT_FILE_NAME = "conditionalvideos.json";
-    private static final String SERVER_FILE_NAME = "conditionalvideos-server.json";
+    private static final Gson GSON = new Gson();
 
-    public static final int CURRENT_CONFIG_VERSION = 3;
+    public static final int CURRENT_CONFIG_VERSION = 4;
     static final float DEFAULT_TEXT_SCALE = 1.0f;
     static final float DEFAULT_VIDEO_VOLUME = 1.0f;
     static final float TEXT_BOX_OPACITY_LEGACY = -1.0f;
@@ -45,365 +34,250 @@ public final class ConditionalVideosConfig {
             COMPARATOR_EQUAL, COMPARATOR_LESS, COMPARATOR_GREATER,
             COMPARATOR_LESS_OR_EQUAL, COMPARATOR_GREATER_OR_EQUAL
     };
+    private static final Set<String> TEXT_POSITIONS = Set.of("topleft", "topright", "bottomleft", "bottomright");
 
-    private static final String[] LEGACY_DECORATOR_FIELDS = {
+    // Condition names as they appear in the files, the folders and the synced JSON.
+    public static final List<String> SIMPLE_CONDITIONS = List.of("firstJoin", "playerDeath", "totemUsed", "bedSleep");
+    public static final List<String> NAMESPACED_TYPES = List.of("entityKilled", "deathByEntity", "advancementCompleted",
+            "dimensionChanged", "itemObtained", "itemCrafted", "recipeUnlocked");
+    public static final List<String> FLAT_TYPES = List.of("scoreboard", "custom");
+    // The conditions that existed in 1.1.x and may still use its single-video format.
+    static final Set<String> LEGACY_SHAPED = Set.of("firstJoin", "playerDeath", "entityKilled", "deathByEntity",
+            "advancementCompleted", "dimensionChanged");
+    static final Set<String> LEGACY_DECORATOR_FIELDS = Set.of(
             "skippable", "videoLoop", "enableBackground", "colorBackground",
             "videoTitle", "videoTitlePosition",
             "videoDescription", "videoDescriptionPosition",
             "titleTextScale", "descriptionTextScale", "textBoxOpacity",
             "videoVolume", "transition", "nextAt"
-    };
+    );
 
-    private Integer configVersion;
-    private ConditionConfig firstJoin = defaultFirstJoin();
-    private ConditionConfig playerDeath = defaultPlayerDeath();
-    private Map<String, ConditionConfig> entityKilled = new HashMap<>();
-    private Map<String, ConditionConfig> deathByEntity = new HashMap<>();
-    private Map<String, ConditionConfig> advancementCompleted = new HashMap<>();
-    private Map<String, ConditionConfig> dimensionChanged = new HashMap<>();
-    private ConditionConfig totemUsed = defaultSimpleCondition();
-    private ConditionConfig bedSleep = defaultSimpleCondition();
-    private Map<String, ConditionConfig> itemObtained = new HashMap<>();
-    private Map<String, ConditionConfig> itemCrafted = new HashMap<>();
-    private Map<String, ConditionConfig> recipeUnlocked = new HashMap<>();
-    private Map<String, ScoreboardConditionConfig> scoreboard = new HashMap<>();
-    private Map<String, ConditionConfig> custom = new HashMap<>();
-    private Set<String> consumedConditionSessions = new HashSet<>();
+    private ConditionConfig firstJoin = emptyCondition();
+    private ConditionConfig playerDeath = emptyCondition();
+    private ConditionConfig totemUsed = emptyCondition();
+    private ConditionConfig bedSleep = emptyCondition();
+    private final Map<String, ConditionConfig> entityKilled = new HashMap<>();
+    private final Map<String, ConditionConfig> deathByEntity = new HashMap<>();
+    private final Map<String, ConditionConfig> advancementCompleted = new HashMap<>();
+    private final Map<String, ConditionConfig> dimensionChanged = new HashMap<>();
+    private final Map<String, ConditionConfig> itemObtained = new HashMap<>();
+    private final Map<String, ConditionConfig> itemCrafted = new HashMap<>();
+    private final Map<String, ConditionConfig> recipeUnlocked = new HashMap<>();
+    private final Map<String, ScoreboardConditionConfig> scoreboard = new HashMap<>();
+    private final Map<String, ConditionConfig> custom = new HashMap<>();
 
-    public static ConditionalVideosConfig load() {
-        return load(configPath(CLIENT_FILE_NAME));
-    }
-
-    public static ConditionalVideosConfig loadServer(Path gameDirectory) {
-        return load(gameDirectory.resolve("config").resolve(SERVER_FILE_NAME));
-    }
-
-    public static Path clientConfigPath(Path gameDirectory) {
-        return gameDirectory.resolve("config").resolve(CLIENT_FILE_NAME);
-    }
-
-    public static Path serverConfigPath(Path gameDirectory) {
-        return gameDirectory.resolve("config").resolve(SERVER_FILE_NAME);
-    }
-
-    private static final Map<String, String> LAST_CONFIG_ISSUE = new HashMap<>();
-
-    private static synchronized boolean shouldLogConfigIssue(String fileKey, String signature) {
-        String previous = LAST_CONFIG_ISSUE.get(fileKey);
-        if (signature.equals(previous)) {
+    // Reads one condition into this config. Returns false when it is skipped; every problem found,
+    // fatal or not, is added to notices with the given file label.
+    public boolean accept(String type, String key, JsonElement element, String file, List<ConfigNotice> notices) {
+        if (element == null || element.isJsonNull()) {
             return false;
         }
-        LAST_CONFIG_ISSUE.put(fileKey, signature);
+        if (!element.isJsonObject()) {
+            notices.add(ConfigNotice.notObject(file));
+            return false;
+        }
+        JsonObject object = LEGACY_SHAPED.contains(type) ? convertLegacy(element.getAsJsonObject()) : element.getAsJsonObject();
+        boolean isScoreboard = "scoreboard".equals(type);
+        Object parsed;
+        try {
+            parsed = GSON.fromJson(object, isScoreboard ? ScoreboardConditionConfig.class : ConditionConfig.class);
+        } catch (RuntimeException exception) {
+            notices.add(ConfigNotice.invalidContent(file, locate(object, exception)));
+            return false;
+        }
+        if (parsed == null) {
+            return false;
+        }
+        if (parsed instanceof ScoreboardConditionConfig score) {
+            lint(score.videos(), file, notices);
+            if (score.comparator() != null && !score.comparator().isBlank() && !isValidComparator(score.comparator())) {
+                notices.add(ConfigNotice.invalidComparator(file, score.comparator()));
+            }
+            scoreboard.put(key, new ScoreboardConditionConfig(score.repeatableInSameSession(),
+                    score.playlistLoop() == null ? Boolean.FALSE : score.playlistLoop(), playable(score.videos()),
+                    score.value(), score.comparator()));
+            return true;
+        }
+        ConditionConfig condition = (ConditionConfig) parsed;
+        lint(condition.videos(), file, notices);
+        ConditionConfig normalised = new ConditionConfig(condition.repeatableInSameSession(),
+                condition.playlistLoop() == null ? Boolean.FALSE : condition.playlistLoop(), playable(condition.videos()));
+        switch (type) {
+            case "firstJoin" -> firstJoin = normalised;
+            case "playerDeath" -> playerDeath = normalised;
+            case "totemUsed" -> totemUsed = normalised;
+            case "bedSleep" -> bedSleep = normalised;
+            default -> {
+                Map<String, ConditionConfig> map = conditionMap(type);
+                if (map == null) {
+                    return false;
+                }
+                map.put(key, normalised);
+            }
+        }
         return true;
     }
 
-    private static synchronized void clearConfigIssueLog(String fileKey) {
-        LAST_CONFIG_ISSUE.remove(fileKey);
+    private Map<String, ConditionConfig> conditionMap(String type) {
+        return switch (type) {
+            case "entityKilled" -> entityKilled;
+            case "deathByEntity" -> deathByEntity;
+            case "advancementCompleted" -> advancementCompleted;
+            case "dimensionChanged" -> dimensionChanged;
+            case "itemObtained" -> itemObtained;
+            case "itemCrafted" -> itemCrafted;
+            case "recipeUnlocked" -> recipeUnlocked;
+            case "custom" -> custom;
+            default -> null;
+        };
     }
 
-    public static ConditionalVideosConfig load(Path file) {
-        if (!Files.isRegularFile(file)) {
-            ConditionalVideosConfig config = new ConditionalVideosConfig();
-            config.ensureDefaults();
-            config.save(file);
-            return config;
-        }
-
-        String fileKey = file.toString();
-        JsonObject rootJson;
-        try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
-            JsonElement parsed = JsonParser.parseReader(reader);
-            if (parsed == null || !parsed.isJsonObject()) {
-                if (shouldLogConfigIssue(fileKey, "not-json-object")) {
-                    ConditionalVideos.LOGGER.error("Config '{}' is not a JSON object. Using defaults for this session; the file is left UNTOUCHED so you can fix it without losing your work.", file);
-                }
-                ConditionalVideosConfig fallback = new ConditionalVideosConfig();
-                fallback.ensureDefaults();
-                return fallback;
-            }
-            rootJson = parsed.getAsJsonObject();
-        } catch (IOException | JsonSyntaxException exception) {
-            if (shouldLogConfigIssue(fileKey, "syntax:" + exception)) {
-                ConditionalVideos.LOGGER.error("Failed to read config '{}' (likely a JSON syntax error such as a missing comma or brace). Using defaults for this session; the file is left UNTOUCHED so you can fix it without losing your work: {}", file, exception.toString());
-            }
-            ConditionalVideosConfig fallback = new ConditionalVideosConfig();
-            fallback.ensureDefaults();
-            return fallback;
-        }
-
-        int loadedVersion = readConfigVersion(rootJson);
-        try {
-            boolean needsMigration = loadedVersion < CURRENT_CONFIG_VERSION || hasLegacySchema(rootJson);
-            if (needsMigration) {
-                backupBeforeMigrate(file, loadedVersion);
-                migrateLegacySchema(rootJson);
-                rootJson.addProperty("configVersion", CURRENT_CONFIG_VERSION);
-            }
-
-            List<String> skipped = new ArrayList<>();
-            ConditionalVideosConfig config = deserializeLenient(rootJson, skipped, fileKey);
-            config.ensureDefaults();
-
-            if (!skipped.isEmpty()) {
-                if (shouldLogConfigIssue(fileKey, "skipped:" + String.join("|", skipped))) {
-                    for (String warning : skipped) {
-                        ConditionalVideos.LOGGER.warn("{}", warning);
-                    }
-                    ConditionalVideos.LOGGER.warn("Config '{}' had {} malformed entr(ies) that were skipped (kept defaults for those). The file is left UNTOUCHED so the rest of your configuration is preserved and you can fix the bad entr(ies). This is logged once until the file changes.", file, skipped.size());
-                }
-            } else {
-                clearConfigIssueLog(fileKey);
-                if (needsMigration) {
-                    config.save(file);
-                    ConditionalVideos.LOGGER.info("Migrated config '{}' from v{} to v{}.", file, loadedVersion, CURRENT_CONFIG_VERSION);
-                }
-            }
-            return config;
-        } catch (Throwable throwable) {
-            if (shouldLogConfigIssue(fileKey, "error:" + throwable)) {
-                ConditionalVideos.LOGGER.error("Unexpected error processing config '{}'. Using defaults for this session; the file is left UNTOUCHED so your configuration is not lost: {}", file, throwable.toString());
-            }
-            ConditionalVideosConfig fallback = new ConditionalVideosConfig();
-            fallback.ensureDefaults();
-            return fallback;
-        }
-    }
-
-    private static ConditionalVideosConfig deserializeLenient(JsonObject root, List<String> skipped, String source) {
-        ConditionalVideosConfig config = new ConditionalVideosConfig();
-        config.firstJoin = parseConditionLenient(root, "firstJoin", defaultFirstJoin(), skipped, source);
-        config.playerDeath = parseConditionLenient(root, "playerDeath", defaultPlayerDeath(), skipped, source);
-        config.totemUsed = parseConditionLenient(root, "totemUsed", defaultSimpleCondition(), skipped, source);
-        config.bedSleep = parseConditionLenient(root, "bedSleep", defaultSimpleCondition(), skipped, source);
-        config.entityKilled = parseConditionMapLenient(root, "entityKilled", skipped, source);
-        config.deathByEntity = parseConditionMapLenient(root, "deathByEntity", skipped, source);
-        config.advancementCompleted = parseConditionMapLenient(root, "advancementCompleted", skipped, source);
-        config.dimensionChanged = parseConditionMapLenient(root, "dimensionChanged", skipped, source);
-        config.itemObtained = parseConditionMapLenient(root, "itemObtained", skipped, source);
-        config.itemCrafted = parseConditionMapLenient(root, "itemCrafted", skipped, source);
-        config.recipeUnlocked = parseConditionMapLenient(root, "recipeUnlocked", skipped, source);
-        config.custom = parseConditionMapLenient(root, "custom", skipped, source);
-        config.scoreboard = parseScoreboardMapLenient(root, "scoreboard", skipped, source);
-        config.consumedConditionSessions = parseStringSetLenient(root, "consumedConditionSessions");
-        return config;
-    }
-
-    private static ConditionConfig parseConditionLenient(JsonObject root, String key, ConditionConfig fallback,
-                                                         List<String> skipped, String source) {
-        if (!root.has(key) || root.get(key).isJsonNull()) {
-            return fallback;
-        }
-        try {
-            ConditionConfig parsed = GSON.fromJson(root.get(key), ConditionConfig.class);
-            return parsed == null ? fallback : parsed;
-        } catch (RuntimeException exception) {
-            skipped.add("Condition '" + key + "' in '" + source + "' is malformed and was reset to defaults: " + exception.getMessage());
-            return fallback;
-        }
-    }
-
-    private static Map<String, ConditionConfig> parseConditionMapLenient(JsonObject root, String key,
-                                                                         List<String> skipped, String source) {
-        Map<String, ConditionConfig> map = new HashMap<>();
-        if (!root.has(key) || !root.get(key).isJsonObject()) {
-            return map;
-        }
-        for (Map.Entry<String, JsonElement> entry : root.get(key).getAsJsonObject().entrySet()) {
-            try {
-                ConditionConfig parsed = GSON.fromJson(entry.getValue(), ConditionConfig.class);
-                if (parsed != null) {
-                    map.put(entry.getKey(), parsed);
-                }
-            } catch (RuntimeException exception) {
-                skipped.add("Condition '" + key + "/" + entry.getKey() + "' in '" + source + "' is malformed and was skipped: " + exception.getMessage());
-            }
-        }
-        return map;
-    }
-
-    private static Map<String, ScoreboardConditionConfig> parseScoreboardMapLenient(JsonObject root, String key,
-                                                                                    List<String> skipped, String source) {
-        Map<String, ScoreboardConditionConfig> map = new HashMap<>();
-        if (!root.has(key) || !root.get(key).isJsonObject()) {
-            return map;
-        }
-        for (Map.Entry<String, JsonElement> entry : root.get(key).getAsJsonObject().entrySet()) {
-            try {
-                ScoreboardConditionConfig parsed = GSON.fromJson(entry.getValue(), ScoreboardConditionConfig.class);
-                if (parsed != null) {
-                    map.put(entry.getKey(), parsed);
-                }
-            } catch (RuntimeException exception) {
-                skipped.add("Scoreboard condition '" + key + "/" + entry.getKey() + "' in '" + source + "' is malformed and was skipped: " + exception.getMessage());
-            }
-        }
-        return map;
-    }
-
-    private static Set<String> parseStringSetLenient(JsonObject root, String key) {
-        Set<String> set = new HashSet<>();
-        if (root.has(key) && root.get(key).isJsonArray()) {
-            for (JsonElement element : root.get(key).getAsJsonArray()) {
+    // Points at the first broken video when a condition fails to parse, so the notice says where to look.
+    private static String locate(JsonObject object, RuntimeException exception) {
+        JsonElement videos = object.get("videos");
+        if (videos != null && videos.isJsonArray()) {
+            int index = 0;
+            for (JsonElement video : videos.getAsJsonArray()) {
+                index++;
                 try {
-                    if (element != null && element.isJsonPrimitive()) {
-                        set.add(element.getAsString());
-                    }
-                } catch (RuntimeException ignored) {
+                    GSON.fromJson(video, VideoEntry.class);
+                } catch (RuntimeException videoError) {
+                    return "video " + index + ": " + ConfigNotice.reason(videoError);
                 }
             }
         }
-        return set;
+        return ConfigNotice.reason(exception);
     }
 
-    private static int readConfigVersion(JsonObject root) {
-        if (root.has("configVersion") && root.get("configVersion").isJsonPrimitive()) {
-            try {
-                return root.get("configVersion").getAsInt();
-            } catch (Exception ignored) {
+    // Values that still play but fall back to a default; the video number matches its place in the file.
+    private static void lint(List<VideoEntry> videos, String file, List<ConfigNotice> notices) {
+        if (videos == null) {
+            return;
+        }
+        for (int i = 0; i < videos.size(); i++) {
+            VideoEntry video = videos.get(i);
+            if (video == null) {
+                continue;
+            }
+            int number = i + 1;
+            String color = video.colorBackground();
+            if (color != null && !color.isBlank() && parseColor(color) == null) {
+                notices.add(ConfigNotice.invalidOption(file, "colorBackground", color, number, "#000000"));
+            }
+            if (!isValidPosition(video.videoTitlePosition())) {
+                notices.add(ConfigNotice.invalidOption(file, "videoTitlePosition", video.videoTitlePosition(), number, "bottomLeft"));
+            }
+            if (!isValidPosition(video.videoDescriptionPosition())) {
+                notices.add(ConfigNotice.invalidOption(file, "videoDescriptionPosition", video.videoDescriptionPosition(), number, "bottomLeft"));
+            }
+            String transition = video.transition();
+            if (transition != null && !transition.isBlank() && !transition.trim().equalsIgnoreCase(TRANSITION_CUT)
+                    && !transition.trim().equalsIgnoreCase(TRANSITION_FADE)) {
+                notices.add(ConfigNotice.invalidOption(file, "transition", transition, number, TRANSITION_CUT));
+            }
+            if (video.videoVolume() != null && (video.videoVolume() < 0f || video.videoVolume() > 1f)) {
+                notices.add(ConfigNotice.outOfRange(file, "videoVolume", video.videoVolume(), number, "0-1"));
+            }
+            if (video.textBoxOpacity() != null && (video.textBoxOpacity() < 0f || video.textBoxOpacity() > 1f)) {
+                notices.add(ConfigNotice.outOfRange(file, "textBoxOpacity", video.textBoxOpacity(), number, "0-1"));
+            }
+            if (video.titleTextScale() != null && video.titleTextScale() <= 0f) {
+                notices.add(ConfigNotice.outOfRange(file, "titleTextScale", video.titleTextScale(), number, "> 0"));
+            }
+            if (video.descriptionTextScale() != null && video.descriptionTextScale() <= 0f) {
+                notices.add(ConfigNotice.outOfRange(file, "descriptionTextScale", video.descriptionTextScale(), number, "> 0"));
             }
         }
-        return 1;
     }
 
-    private static void backupBeforeMigrate(Path file, int oldVersion) {
-        Path backup = file.resolveSibling(file.getFileName() + ".bak-v" + oldVersion);
-        try {
-            Files.copy(file, backup, StandardCopyOption.REPLACE_EXISTING);
-            ConditionalVideos.LOGGER.info("Backed up config '{}' to '{}' before migration.", file, backup);
-        } catch (IOException exception) {
-            ConditionalVideos.LOGGER.warn("Failed to back up config '{}' before migration: {}", file, exception.toString());
-        }
-    }
-
-    private static boolean hasLegacySchema(JsonObject root) {
-        if (hasLegacyConditionFields(root, "firstJoin")) return true;
-        if (hasLegacyConditionFields(root, "playerDeath")) return true;
-        for (String mapKey : new String[]{"entityKilled", "deathByEntity", "advancementCompleted", "dimensionChanged"}) {
-            if (!root.has(mapKey) || !root.get(mapKey).isJsonObject()) continue;
-            for (Map.Entry<String, JsonElement> e : root.get(mapKey).getAsJsonObject().entrySet()) {
-                if (e.getValue().isJsonObject() && conditionObjectHasLegacyFields(e.getValue().getAsJsonObject())) {
-                    return true;
+    private static List<VideoEntry> playable(List<VideoEntry> videos) {
+        List<VideoEntry> cleaned = new ArrayList<>();
+        if (videos != null) {
+            for (VideoEntry entry : videos) {
+                if (entry != null && entry.source() != null && !entry.source().isBlank()) {
+                    cleaned.add(entry);
                 }
             }
         }
-        return false;
+        return cleaned;
     }
 
-    private static boolean hasLegacyConditionFields(JsonObject root, String key) {
-        if (!root.has(key) || !root.get(key).isJsonObject()) return false;
-        return conditionObjectHasLegacyFields(root.get(key).getAsJsonObject());
-    }
-
-    private static boolean conditionObjectHasLegacyFields(JsonObject obj) {
-        if (obj.has("video")) return true;
+    static boolean isLegacy(JsonObject condition) {
+        if (condition.has("video")) {
+            return true;
+        }
         for (String field : LEGACY_DECORATOR_FIELDS) {
-            if (obj.has(field)) return true;
+            if (condition.has(field)) {
+                return true;
+            }
         }
         return false;
     }
 
-    private static void migrateLegacySchema(JsonObject root) {
-        migrateConditionField(root, "firstJoin");
-        migrateConditionField(root, "playerDeath");
-        migrateConditionMapField(root, "entityKilled");
-        migrateConditionMapField(root, "deathByEntity");
-        migrateConditionMapField(root, "advancementCompleted");
-        migrateConditionMapField(root, "dimensionChanged");
-    }
-
-    private static void migrateConditionField(JsonObject root, String key) {
-        if (!root.has(key) || !root.get(key).isJsonObject()) {
-            return;
+    // Converts the 1.1.x shape (one "video" plus condition-level video options) into the playlist shape
+    // without losing anything: options are copied into each video (a video's own value wins), "video"
+    // becomes the first entry's source, and whatever cannot be placed stays where it was.
+    static JsonObject convertLegacy(JsonObject old) {
+        if (!isLegacy(old)) {
+            return old;
         }
-        JsonObject migrated = migrateSingleConditionObject(root.get(key).getAsJsonObject());
-        root.add(key, migrated);
-    }
-
-    private static void migrateConditionMapField(JsonObject root, String key) {
-        if (!root.has(key) || !root.get(key).isJsonObject()) {
-            return;
-        }
-        JsonObject newMap = new JsonObject();
-        for (Map.Entry<String, JsonElement> entry : root.get(key).getAsJsonObject().entrySet()) {
-            if (entry.getValue().isJsonObject()) {
-                newMap.add(entry.getKey(), migrateSingleConditionObject(entry.getValue().getAsJsonObject()));
-            }
-        }
-        root.add(key, newMap);
-    }
-
-    private static JsonObject migrateSingleConditionObject(JsonObject old) {
-        JsonObject migrated = new JsonObject();
-        if (old.has("repeatableInSameSession")) {
-            migrated.add("repeatableInSameSession", old.get("repeatableInSameSession"));
-        }
-        if (old.has("playlistLoop")) {
-            migrated.add("playlistLoop", old.get("playlistLoop"));
-        }
-
         JsonObject decorators = new JsonObject();
-        for (String fieldName : LEGACY_DECORATOR_FIELDS) {
-            if (old.has(fieldName)) {
-                decorators.add(fieldName, old.get(fieldName));
+        for (Map.Entry<String, JsonElement> member : old.entrySet()) {
+            if (LEGACY_DECORATOR_FIELDS.contains(member.getKey())) {
+                decorators.add(member.getKey(), member.getValue());
             }
         }
-
-        JsonArray videos = new JsonArray();
-        if (old.has("videos") && old.get("videos").isJsonArray()) {
-            for (JsonElement element : old.get("videos").getAsJsonArray()) {
-                if (!element.isJsonObject()) {
-                    continue;
-                }
-                JsonObject merged = new JsonObject();
-                for (Map.Entry<String, JsonElement> d : decorators.entrySet()) {
-                    merged.add(d.getKey(), d.getValue());
-                }
-                for (Map.Entry<String, JsonElement> e : element.getAsJsonObject().entrySet()) {
-                    merged.add(e.getKey(), e.getValue());
-                }
-                videos.add(merged);
-            }
-        } else if (old.has("video") && old.get("video").isJsonPrimitive()) {
-            String videoPath = old.get("video").getAsString();
-            if (videoPath != null && !videoPath.isBlank()) {
-                JsonObject entry = new JsonObject();
-                for (Map.Entry<String, JsonElement> d : decorators.entrySet()) {
-                    entry.add(d.getKey(), d.getValue());
-                }
-                entry.addProperty("source", videoPath);
-                videos.add(entry);
-            }
+        JsonElement videos = old.get("videos");
+        if (videos != null && videos.isJsonNull()) {
+            videos = null;
         }
-        migrated.add("videos", videos);
-
-        return migrated;
-    }
-
-    public void save() {
-        save(configPath(CLIENT_FILE_NAME));
-    }
-
-    public void saveServer(Path gameDirectory) {
-        save(serverConfigPath(gameDirectory));
-    }
-
-    public void save(Path file) {
-        try {
-            Files.createDirectories(file.getParent());
-            try (Writer writer = Files.newBufferedWriter(file, StandardCharsets.UTF_8)) {
-                GSON.toJson(toJsonTree(), writer);
+        JsonArray converted = new JsonArray();
+        boolean consumedVideo = false;
+        boolean consumedDecorators = false;
+        if (videos != null && videos.isJsonArray()) {
+            for (JsonElement element : videos.getAsJsonArray()) {
+                if (element.isJsonObject()) {
+                    JsonObject merged = decorators.deepCopy();
+                    for (Map.Entry<String, JsonElement> member : element.getAsJsonObject().entrySet()) {
+                        merged.add(member.getKey(), member.getValue());
+                    }
+                    converted.add(merged);
+                    consumedDecorators = true;
+                } else {
+                    converted.add(element);
+                }
             }
-        } catch (IOException exception) {
-            ConditionalVideos.LOGGER.error("Failed to save config file '{}'.", file, exception);
+        } else if (videos == null && old.has("video")) {
+            JsonObject entry = decorators.deepCopy();
+            entry.add("source", old.get("video"));
+            converted.add(entry);
+            consumedVideo = true;
+            consumedDecorators = true;
+        } else {
+            return old;
         }
+        if (!consumedDecorators) {
+            return old;
+        }
+        JsonObject result = new JsonObject();
+        for (Map.Entry<String, JsonElement> member : old.entrySet()) {
+            String name = member.getKey();
+            if (LEGACY_DECORATOR_FIELDS.contains(name)) {
+                continue;
+            }
+            if (name.equals("videos") || (consumedVideo && name.equals("video"))) {
+                result.add("videos", converted);
+                continue;
+            }
+            result.add(name, member.getValue());
+        }
+        return result;
     }
 
-    // Custom serialization so the file stays tidy: only firstJoin ships its base options; every
-    // other condition that is still at defaults (no videos, no flags) is written as an empty
-    // object `{}` instead of the full {repeatableInSameSession, playlistLoop, videos} block.
-    private JsonObject toJsonTree() {
+    // Aggregated JSON sent to clients: one object with every condition, the shape older versions read.
+    public String toJson() {
         JsonObject root = new JsonObject();
-        root.addProperty("configVersion", configVersion == null ? CURRENT_CONFIG_VERSION : configVersion);
+        root.addProperty("configVersion", CURRENT_CONFIG_VERSION);
         root.add("firstJoin", GSON.toJsonTree(firstJoin));
         root.add("playerDeath", conditionTree(playerDeath));
         root.add("entityKilled", conditionMapTree(entityKilled));
@@ -417,8 +291,41 @@ public final class ConditionalVideosConfig {
         root.add("recipeUnlocked", conditionMapTree(recipeUnlocked));
         root.add("scoreboard", GSON.toJsonTree(scoreboard));
         root.add("custom", conditionMapTree(custom));
-        root.add("consumedConditionSessions", GSON.toJsonTree(consumedConditionSessions));
-        return root;
+        return GSON.toJson(root);
+    }
+
+    public static ConditionalVideosConfig fromJson(String rawJson) {
+        ConditionalVideosConfig config = new ConditionalVideosConfig();
+        List<ConfigNotice> notices = new ArrayList<>();
+        try {
+            JsonElement parsed = JsonParser.parseString(rawJson);
+            if (parsed != null && parsed.isJsonObject()) {
+                JsonObject root = parsed.getAsJsonObject();
+                for (String name : SIMPLE_CONDITIONS) {
+                    config.accept(name, name, root.get(name), name, notices);
+                }
+                for (String type : NAMESPACED_TYPES) {
+                    config.acceptMap(type, root.get(type), notices);
+                }
+                for (String type : FLAT_TYPES) {
+                    config.acceptMap(type, root.get(type), notices);
+                }
+            }
+        } catch (RuntimeException exception) {
+            ConditionalVideos.LOGGER.warn("Could not read the server's conditions; none are used: {}", ConfigNotice.reason(exception));
+        }
+        for (ConfigNotice notice : notices) {
+            ConditionalVideos.LOGGER.warn("Server conditions: {}", notice.text());
+        }
+        return config;
+    }
+
+    private void acceptMap(String type, JsonElement element, List<ConfigNotice> notices) {
+        if (element != null && element.isJsonObject()) {
+            for (Map.Entry<String, JsonElement> entry : element.getAsJsonObject().entrySet()) {
+                accept(type, entry.getKey(), entry.getValue(), type + "/" + entry.getKey(), notices);
+            }
+        }
     }
 
     private static JsonElement conditionTree(ConditionConfig config) {
@@ -430,10 +337,8 @@ public final class ConditionalVideosConfig {
 
     private static JsonObject conditionMapTree(Map<String, ConditionConfig> map) {
         JsonObject object = new JsonObject();
-        if (map != null) {
-            for (Map.Entry<String, ConditionConfig> entry : map.entrySet()) {
-                object.add(entry.getKey(), conditionTree(entry.getValue()));
-            }
+        for (Map.Entry<String, ConditionConfig> entry : map.entrySet()) {
+            object.add(entry.getKey(), conditionTree(entry.getValue()));
         }
         return object;
     }
@@ -445,8 +350,8 @@ public final class ConditionalVideosConfig {
                 && config.resolvedPlaylist().isEmpty());
     }
 
-    public int configVersion() {
-        return configVersion == null ? 0 : configVersion;
+    private static ConditionConfig emptyCondition() {
+        return new ConditionConfig(false, Boolean.FALSE, new ArrayList<>());
     }
 
     public ConditionConfig firstJoin() {
@@ -501,29 +406,23 @@ public final class ConditionalVideosConfig {
         return custom;
     }
 
-    public boolean hasConsumedConditionSession(String conditionId, String sessionKey) {
-        return consumedConditionSessions.contains(conditionSessionKey(conditionId, sessionKey));
-    }
-
-    public void markConditionSessionConsumed(String conditionId, String sessionKey) {
-        consumedConditionSessions.add(conditionSessionKey(conditionId, sessionKey));
-    }
-
     public int resolveBackgroundColor(VideoEntry entry, int fallbackColor) {
         if (entry == null || !entry.resolvedEnableBackground()) {
             return fallbackColor;
         }
+        Integer color = parseColor(entry.resolvedColorBackground());
+        return color == null ? fallbackColor : color;
+    }
 
-        String hexColor = entry.resolvedColorBackground();
-        if (hexColor.isBlank()) {
-            return fallbackColor;
+    // "#RRGGBB" or "#AARRGGBB" (the '#' is optional); null when blank or invalid.
+    static Integer parseColor(String hexColor) {
+        if (hexColor == null || hexColor.isBlank()) {
+            return null;
         }
-
         String cleanedHex = hexColor.trim();
         if (cleanedHex.startsWith("#")) {
             cleanedHex = cleanedHex.substring(1);
         }
-
         try {
             if (cleanedHex.length() == 6) {
                 return (int) (0xFF000000L | Long.parseLong(cleanedHex, 16));
@@ -531,169 +430,23 @@ public final class ConditionalVideosConfig {
             if (cleanedHex.length() == 8) {
                 return (int) Long.parseLong(cleanedHex, 16);
             }
-        } catch (NumberFormatException exception) {
-            ConditionalVideos.LOGGER.warn("Invalid colorBackground '{}' in config. Using fallback color.", hexColor);
+        } catch (NumberFormatException ignored) {
         }
-
-        return fallbackColor;
+        return null;
     }
 
-    private static String conditionSessionKey(String conditionId, String sessionKey) {
-        return conditionId + ":" + sessionKey;
+    private static boolean isValidPosition(String position) {
+        return position == null || position.isBlank() || TEXT_POSITIONS.contains(position.trim().toLowerCase());
     }
 
-    private boolean ensureDefaults() {
-        if (firstJoin == null) {
-            firstJoin = defaultFirstJoin();
-        }
-        if (playerDeath == null) {
-            playerDeath = defaultPlayerDeath();
-        }
-        if (deathByEntity == null) {
-            deathByEntity = new HashMap<>();
-        }
-        if (entityKilled == null) {
-            entityKilled = new HashMap<>();
-        }
-        if (advancementCompleted == null) {
-            advancementCompleted = new HashMap<>();
-        }
-        if (dimensionChanged == null) {
-            dimensionChanged = new HashMap<>();
-        }
-        if (itemObtained == null) {
-            itemObtained = new HashMap<>();
-        }
-        if (itemCrafted == null) {
-            itemCrafted = new HashMap<>();
-        }
-        if (recipeUnlocked == null) {
-            recipeUnlocked = new HashMap<>();
-        }
-        if (scoreboard == null) {
-            scoreboard = new HashMap<>();
-        }
-        if (custom == null) {
-            custom = new HashMap<>();
-        }
-        if (consumedConditionSessions == null) {
-            consumedConditionSessions = new HashSet<>();
-        }
-        firstJoin = normaliseCondition(firstJoin);
-        playerDeath = normaliseCondition(playerDeath);
-        totemUsed = normaliseCondition(totemUsed);
-        bedSleep = normaliseCondition(bedSleep);
-        deathByEntity.replaceAll((key, value) -> normaliseCondition(value));
-        entityKilled.replaceAll((key, value) -> normaliseCondition(value));
-        advancementCompleted.replaceAll((key, value) -> normaliseCondition(value));
-        dimensionChanged.replaceAll((key, value) -> normaliseCondition(value));
-        itemObtained.replaceAll((key, value) -> normaliseCondition(value));
-        itemCrafted.replaceAll((key, value) -> normaliseCondition(value));
-        recipeUnlocked.replaceAll((key, value) -> normaliseCondition(value));
-        custom.replaceAll((key, value) -> normaliseCondition(value));
-        scoreboard.replaceAll((key, value) -> normaliseScoreboard(value));
-        boolean migrated = configVersion == null || configVersion < CURRENT_CONFIG_VERSION;
-        configVersion = CURRENT_CONFIG_VERSION;
-        return migrated;
-    }
-
-    private static ConditionConfig normaliseCondition(ConditionConfig config) {
-        if (config == null) {
-            return baseDefaults();
-        }
-        List<VideoEntry> rawVideos = config.videos();
-        List<VideoEntry> cleaned = new ArrayList<>();
-        if (rawVideos != null) {
-            for (VideoEntry entry : rawVideos) {
-                if (entry == null) continue;
-                if (entry.source() == null || entry.source().isBlank()) continue;
-                cleaned.add(entry);
+    private static boolean isValidComparator(String comparator) {
+        String trimmed = comparator.trim();
+        for (String valid : VALID_COMPARATORS) {
+            if (valid.equalsIgnoreCase(trimmed)) {
+                return true;
             }
         }
-        return new ConditionConfig(
-                config.repeatableInSameSession(),
-                config.playlistLoop() == null ? Boolean.FALSE : config.playlistLoop(),
-                cleaned
-        );
-    }
-
-    private static ConditionConfig baseDefaults() {
-        return new ConditionConfig(true, Boolean.FALSE, new ArrayList<>());
-    }
-
-    private static ConditionConfig defaultSimpleCondition() {
-        return new ConditionConfig(false, Boolean.FALSE, new ArrayList<>());
-    }
-
-    public static ConditionConfig emptyConditionConfig() {
-        return new ConditionConfig(false, Boolean.FALSE, new ArrayList<>());
-    }
-
-    private static ScoreboardConditionConfig normaliseScoreboard(ScoreboardConditionConfig config) {
-        if (config == null) {
-            return new ScoreboardConditionConfig(false, Boolean.FALSE, new ArrayList<>(), 0, null);
-        }
-        List<VideoEntry> rawVideos = config.videos();
-        List<VideoEntry> cleaned = new ArrayList<>();
-        if (rawVideos != null) {
-            for (VideoEntry entry : rawVideos) {
-                if (entry == null) continue;
-                if (entry.source() == null || entry.source().isBlank()) continue;
-                cleaned.add(entry);
-            }
-        }
-        return new ScoreboardConditionConfig(
-                config.repeatableInSameSession(),
-                config.playlistLoop() == null ? Boolean.FALSE : config.playlistLoop(),
-                cleaned,
-                config.value(),
-                config.comparator()
-        );
-    }
-
-    private static ConditionConfig defaultFirstJoin() {
-        return new ConditionConfig(false, Boolean.FALSE, new ArrayList<>());
-    }
-
-    private static ConditionConfig defaultPlayerDeath() {
-        return emptyConditionConfig();
-    }
-
-    public String toJson() {
-        return GSON.toJson(toJsonTree());
-    }
-
-    public static ConditionalVideosConfig fromJson(String rawJson) {
-        try {
-            JsonElement parsed = JsonParser.parseString(rawJson);
-            if (parsed == null || !parsed.isJsonObject()) {
-                ConditionalVideosConfig fallback = new ConditionalVideosConfig();
-                fallback.ensureDefaults();
-                return fallback;
-            }
-            JsonObject root = parsed.getAsJsonObject();
-            int version = readConfigVersion(root);
-            if (version < CURRENT_CONFIG_VERSION || hasLegacySchema(root)) {
-                migrateLegacySchema(root);
-                root.addProperty("configVersion", CURRENT_CONFIG_VERSION);
-            }
-            List<String> skipped = new ArrayList<>();
-            ConditionalVideosConfig config = deserializeLenient(root, skipped, "<synced server config>");
-            config.ensureDefaults();
-            for (String warning : skipped) {
-                ConditionalVideos.LOGGER.warn("{}", warning);
-            }
-            return config;
-        } catch (JsonSyntaxException exception) {
-            ConditionalVideos.LOGGER.warn("Failed to parse synced config JSON. Falling back to defaults.");
-            ConditionalVideosConfig fallback = new ConditionalVideosConfig();
-            fallback.ensureDefaults();
-            return fallback;
-        }
-    }
-
-    private static Path configPath(String fileName) {
-        return Minecraft.getInstance().gameDirectory.toPath().resolve("config").resolve(fileName);
+        return false;
     }
 
     public record ConditionConfig(
@@ -706,15 +459,7 @@ public final class ConditionalVideosConfig {
         }
 
         public List<VideoEntry> resolvedPlaylist() {
-            List<VideoEntry> list = new ArrayList<>();
-            if (videos != null) {
-                for (VideoEntry entry : videos) {
-                    if (entry == null) continue;
-                    if (entry.source() == null || entry.source().isBlank()) continue;
-                    list.add(entry);
-                }
-            }
-            return list;
+            return playable(videos);
         }
     }
 
@@ -730,15 +475,7 @@ public final class ConditionalVideosConfig {
         }
 
         public List<VideoEntry> resolvedPlaylist() {
-            List<VideoEntry> list = new ArrayList<>();
-            if (videos != null) {
-                for (VideoEntry entry : videos) {
-                    if (entry == null) continue;
-                    if (entry.source() == null || entry.source().isBlank()) continue;
-                    list.add(entry);
-                }
-            }
-            return list;
+            return playable(videos);
         }
 
         public int resolvedValue() {

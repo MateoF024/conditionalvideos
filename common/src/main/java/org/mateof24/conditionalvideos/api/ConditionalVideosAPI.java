@@ -1,7 +1,5 @@
 package org.mateof24.conditionalvideos.api;
 
-import com.google.gson.JsonElement;
-import com.google.gson.JsonParser;
 import dev.architectury.event.events.common.LifecycleEvent;
 import dev.architectury.platform.Platform;
 import dev.architectury.utils.Env;
@@ -11,6 +9,7 @@ import net.minecraft.server.level.ServerPlayer;
 import org.mateof24.conditionalvideos.ConditionalVideos;
 import org.mateof24.conditionalvideos.condition.server.ServerConditionDispatcher;
 import org.mateof24.conditionalvideos.condition.shared.ConditionRegistry;
+import org.mateof24.conditionalvideos.config.ConditionFiles;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
 import org.mateof24.conditionalvideos.debug.DebugLog;
 import org.mateof24.conditionalvideos.debug.ServerDebug;
@@ -19,11 +18,9 @@ import org.mateof24.conditionalvideos.runtime.PlaybackControlClient;
 import org.mateof24.conditionalvideos.runtime.PlaybackEvents;
 import org.mateof24.conditionalvideos.video.VideoPlaybackScreen;
 
-import java.io.Reader;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -61,10 +58,9 @@ public final class ConditionalVideosAPI {
     /**
      * Registers a custom condition so it is dispatchable by id and discoverable in config.
      *
-     * <p>Registered conditions are seeded into the active config file as empty entries when a world
-     * starts (only when the file does not yet contain them; existing entries are never altered, and a
-     * config that cannot be parsed is left untouched). Admins add videos to {@code custom/<id>} to make
-     * it playable.</p>
+     * <p>When a world starts, every registered condition without a file gets an empty
+     * {@code custom/<id>.json} in the active conditions folder; existing files are never altered, even
+     * when they cannot be parsed. Admins add videos to that file to make it playable.</p>
      */
     public static void registerCustomCondition(CustomCondition condition) {
         if (condition == null) {
@@ -243,43 +239,17 @@ public final class ConditionalVideosAPI {
         }
         DebugLog.server(DebugLog.Area.API, "Custom conditions registered by other mods: {}.",
                 customs.stream().map(CustomCondition::id).toList());
-        try {
-            Path directory = server.getServerDirectory().toPath();
-            Path file = server.isDedicatedServer()
-                    ? ConditionalVideosConfig.serverConfigPath(directory)
-                    : ConditionalVideosConfig.clientConfigPath(directory);
-
-            // Config-sanctity: never rewrite a file we cannot parse cleanly.
-            if (Files.isRegularFile(file) && !isParseableJsonObject(file)) {
-                ConditionalVideos.LOGGER.warn("Skipping custom-condition seeding: '{}' is not valid JSON; leaving it untouched.", file);
-                return;
-            }
-
-            ConditionalVideosConfig config = ConditionalVideosConfig.load(file);
-            boolean changed = false;
-            for (CustomCondition custom : customs) {
-                if (!config.custom().containsKey(custom.id())) {
-                    config.custom().put(custom.id(), ConditionalVideosConfig.emptyConditionConfig());
-                    changed = true;
-                }
-            }
-            if (changed) {
-                config.save(file);
-                ConditionalVideos.LOGGER.info("Seeded {} registered custom condition(s) into '{}'.", customs.size(), file);
-            } else {
-                DebugLog.server(DebugLog.Area.API, "Every registered custom condition is already in '{}'; nothing seeded.", file);
-            }
-        } catch (Throwable t) {
-            DebugLog.server(DebugLog.Area.API, "Failed to seed the registered custom conditions: {}", t.toString());
+        ConditionFiles files = ConditionFiles.active(server.isDedicatedServer());
+        if (!Files.isDirectory(files.directory())) {
+            DebugLog.server(DebugLog.Area.API, "Not seeding custom conditions: '{}' does not exist.", files.directory());
+            return;
         }
-    }
-
-    private static boolean isParseableJsonObject(Path file) {
-        try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
-            JsonElement parsed = JsonParser.parseReader(reader);
-            return parsed != null && parsed.isJsonObject();
-        } catch (Throwable t) {
-            return false;
+        List<String> created = files.seedCustom(customs.stream().map(CustomCondition::id).toList());
+        if (!created.isEmpty()) {
+            ConditionalVideos.LOGGER.info("Created {} file(s) in '{}' for the custom condition(s) {}.", created.size(),
+                    files.directory().resolve(ConditionRegistry.TYPE_CUSTOM), created);
+        } else {
+            DebugLog.server(DebugLog.Area.API, "Every registered custom condition already has a file in '{}'.", files.directory());
         }
     }
 }

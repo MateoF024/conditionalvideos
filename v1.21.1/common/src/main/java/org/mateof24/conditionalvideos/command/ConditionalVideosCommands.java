@@ -13,12 +13,12 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import org.mateof24.conditionalvideos.condition.shared.ConditionRegistry;
+import org.mateof24.conditionalvideos.config.ConditionFiles;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
 import org.mateof24.conditionalvideos.debug.DebugLog;
 import org.mateof24.conditionalvideos.debug.ServerDebug;
 import org.mateof24.conditionalvideos.network.PlaybackControlNetworking;
 
-import java.nio.file.Path;
 import java.util.Collection;
 import java.util.List;
 
@@ -116,10 +116,6 @@ public final class ConditionalVideosCommands {
     }
 
     private static ConditionalVideosConfig loadActiveConfig(MinecraftServer server) {
-        Path directory = server.getServerDirectory();
-        if (server.isDedicatedServer()) {
-            return ConditionalVideosConfig.loadServer(directory);
-        }
-        return ConditionalVideosConfig.load(ConditionalVideosConfig.clientConfigPath(directory));
+        return ConditionFiles.active(server.isDedicatedServer()).config();
     }
 }

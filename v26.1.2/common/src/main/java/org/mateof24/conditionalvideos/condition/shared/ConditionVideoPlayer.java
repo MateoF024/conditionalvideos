@@ -153,7 +153,7 @@ public final class ConditionVideoPlayer {
         String sessionKey = null;
         if (!force && !conditionConfig.repeatableInSameSession()) {
             sessionKey = SessionKeyResolver.resolveSessionKey(minecraft);
-            if (config.hasConsumedConditionSession(conditionId, sessionKey)) {
+            if (ActiveConfigResolver.watchedSessions(minecraft).contains(conditionId + ":" + sessionKey)) {
                 DebugLog.client(DebugLog.Area.CONDITION, "{} ('{}') was already watched in session '{}'; not playing it again.",
                         logName, conditionId, sessionKey);
                 return false;
@@ -256,13 +256,9 @@ public final class ConditionVideoPlayer {
                                       Runnable onCloseCallback,
                                       boolean force) {
         if (!force && !conditionConfig.repeatableInSameSession()) {
-            config.markConditionSessionConsumed(conditionId, sessionKey);
-            boolean persist = ActiveConfigResolver.shouldPersistLocalChanges(minecraft);
-            if (persist) {
-                config.save();
-            }
+            ActiveConfigResolver.watchedSessions(minecraft).add(conditionId + ":" + sessionKey);
             DebugLog.client(DebugLog.Area.CONDITION, "Marked '{}' as watched for session '{}' ({}).", conditionId, sessionKey,
-                    persist ? "saved to the local conditions file" : "kept in memory for this connection only");
+                    ActiveConfigResolver.isMultiplayerSession(minecraft) ? "for this connection" : "until the game closes");
         }
 
         VideoEntry firstEntry = playlist.get(0);

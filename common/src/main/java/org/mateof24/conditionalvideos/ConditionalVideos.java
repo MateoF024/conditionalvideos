@@ -7,7 +7,8 @@ import org.mateof24.conditionalvideos.network.ConfigSyncNetworking;
 import org.mateof24.conditionalvideos.network.PlaybackControlNetworking;
 import dev.architectury.platform.Platform;
 import dev.architectury.utils.Env;
-import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
+import org.mateof24.conditionalvideos.config.ConfigAnnouncer;
+import org.mateof24.conditionalvideos.config.LegacyMigration;
 import org.mateof24.conditionalvideos.debug.ClientDebug;
 import org.mateof24.conditionalvideos.debug.DebugLog;
 import org.mateof24.conditionalvideos.debug.ServerDebug;
@@ -28,11 +29,8 @@ public final class ConditionalVideos {
             ClientDebug.init();
         }
         ServerDebug.init();
-        if (client) {
-            ConditionalVideosConfig.load(ConditionalVideosConfig.clientConfigPath(Platform.getGameFolder()));
-        } else {
-            ConditionalVideosConfig.load(ConditionalVideosConfig.serverConfigPath(Platform.getGameFolder()));
-        }
+        LegacyMigration.run(!client);
+        ConfigAnnouncer.init();
         ConfigSyncNetworking.init();
         PlaybackControlNetworking.init();
         ConditionalVideosCommands.register();

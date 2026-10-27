@@ -10,7 +10,7 @@ import org.mateof24.conditionalvideos.ConditionalVideos;
 import org.mateof24.conditionalvideos.condition.server.ServerConditionDispatcher;
 import org.mateof24.conditionalvideos.condition.shared.ConditionRegistry;
 import org.mateof24.conditionalvideos.config.CommonConfig;
-import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
+import org.mateof24.conditionalvideos.config.ConditionFiles;
 import org.mateof24.conditionalvideos.network.ConfigSyncNetworking;
 
 import java.nio.file.Path;
@@ -34,6 +34,7 @@ public final class ServerDebug {
     private static int transfersFailed;
     private static long bytesSent;
     private static int ticks;
+    private static int statsGeneration;
     private static String lastSituation;
 
     private ServerDebug() {
@@ -64,6 +65,7 @@ public final class ServerDebug {
             resetCounters();
         }
         ticks = 0;
+        statsGeneration = 0;
         lastSituation = DebugLog.serverSituation();
     }
 
@@ -172,6 +174,13 @@ public final class ServerDebug {
             }
             resetCounters();
         }
+        ConditionFiles files = ConditionFiles.active(server.isDedicatedServer());
+        int generation = files.generation();
+        if (statsGeneration != 0 && generation != statsGeneration) {
+            DebugLog.server(DebugLog.Area.STATS, "Last minute config: {} reload(s), {} problem(s) now", generation - statsGeneration,
+                    files.notices().size());
+        }
+        statsGeneration = generation;
     }
 
     private static void resetCounters() {
@@ -187,19 +196,22 @@ public final class ServerDebug {
     // One-shot server snapshot: platform, situation and the conditions this server serves.
     private static void dumpEnvironment(MinecraftServer server) {
         Path directory = serverDirectory(server);
-        Path conditionsFile = server.isDedicatedServer()
-                ? ConditionalVideosConfig.serverConfigPath(directory)
-                : ConditionalVideosConfig.clientConfigPath(directory);
+        ConditionFiles files = ConditionFiles.active(server.isDedicatedServer());
         DebugLog.server(DebugLog.Area.ENV, "=== ConditionalVideos server environment ===");
         DebugLog.server(DebugLog.Area.ENV, "{}", DebugLog.runtimeDescription());
         DebugLog.server(DebugLog.Area.ENV, "{}", DebugLog.platformDescription());
         DebugLog.server(DebugLog.Area.ENV, "Server directory '{}' | max players {}", directory,
                 server.getPlayerList().getMaxPlayers());
         try {
-            List<String> playable = ConditionRegistry.listPlayableKeys(ServerConditionDispatcher.activeConfig(server));
-            DebugLog.server(DebugLog.Area.ENV, "Conditions file '{}': {} playable condition(s).", conditionsFile, playable.size());
+            Map<String, Integer> byType = new TreeMap<>();
+            for (String key : ConditionRegistry.listPlayableKeys(ServerConditionDispatcher.activeConfig(server))) {
+                int slash = key.indexOf('/');
+                byType.merge(slash < 0 ? key : key.substring(0, slash), 1, Integer::sum);
+            }
+            DebugLog.server(DebugLog.Area.ENV, "Conditions folder '{}': playable {} | {} problem(s)", files.directory(), byType,
+                    files.notices().size());
         } catch (Throwable t) {
-            DebugLog.server(DebugLog.Area.ENV, "Conditions file '{}': unreadable ({})", conditionsFile, t.toString());
+            DebugLog.server(DebugLog.Area.ENV, "Conditions folder '{}': unreadable ({})", files.directory(), t.toString());
         }
         DebugLog.server(DebugLog.Area.ENV, "Common config '{}'", CommonConfig.configPath(directory));
         DebugLog.server(DebugLog.Area.ENV, "WaterMedia on this side: {} | Binaries {}",

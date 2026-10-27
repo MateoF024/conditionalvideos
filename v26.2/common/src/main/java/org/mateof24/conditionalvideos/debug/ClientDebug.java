@@ -2,11 +2,10 @@ package org.mateof24.conditionalvideos.debug;
 
 import com.mojang.blaze3d.systems.DeviceInfo;
 import com.mojang.blaze3d.systems.RenderSystem;
-import dev.architectury.platform.Platform;
 import org.lwjgl.opengl.GL11;
 import org.mateof24.conditionalvideos.ConditionalVideos;
 import org.mateof24.conditionalvideos.config.CommonConfig;
-import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
+import org.mateof24.conditionalvideos.config.ConditionFiles;
 
 // Client side of the debug log. It is enabled from this installation's own common config (a server never
 // switches it), drives WaterMedia's and FFmpeg's verbosity with it, and dumps the client environment once
@@ -117,8 +116,8 @@ public final class ClientDebug {
                 anyClassPresent("net.caffeinemc.mods.sodium.client.SodiumClientMod",
                         "me.jellysquid.mods.sodium.client.SodiumClientMod"),
                 anyClassPresent("net.irisshaders.iris.Iris", "net.coderbot.iris.Iris"));
-        DebugLog.client(DebugLog.Area.ENV, "Config: conditions '{}', common '{}'",
-                ConditionalVideosConfig.clientConfigPath(Platform.getGameFolder()), CommonConfig.configPath());
+        DebugLog.client(DebugLog.Area.ENV, "Config: conditions '{}' ({} problem(s)), common '{}'",
+                ConditionFiles.client().directory(), ConditionFiles.client().notices().size(), CommonConfig.configPath());
         DebugLog.client(DebugLog.Area.ENV, "=== end of client environment ===");
     }
 

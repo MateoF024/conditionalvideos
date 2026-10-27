@@ -13,6 +13,7 @@ import net.minecraft.world.level.GameType;
 import org.mateof24.conditionalvideos.ConditionalVideos;
 import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
 import org.mateof24.conditionalvideos.config.CommonConfig;
+import org.mateof24.conditionalvideos.config.ConditionFiles;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
 import org.mateof24.conditionalvideos.condition.shared.ConditionRegistry;
 import org.mateof24.conditionalvideos.debug.DebugLog;
@@ -47,6 +48,7 @@ public final class ConfigSyncNetworking {
             new ResourceLocation(ConditionalVideos.MOD_ID, "server_video_chunk");
 
     private static final int FILE_CHUNK_SIZE = 32 * 1024;
+    private static final int MAX_JSON_LENGTH = 262144;
 
     private static final Map<String, DownloadState> CLIENT_DOWNLOADS = new HashMap<>();
     private static boolean clientSyncRequested;
@@ -62,7 +64,7 @@ public final class ConfigSyncNetworking {
     public static void init() {
         if (Platform.getEnvironment() == Env.CLIENT) {
             NetworkManager.registerReceiver(NetworkManager.s2c(), SERVER_CONFIG_PACKET, (buffer, context) -> {
-                String json = buffer.readUtf(262144);
+                String json = buffer.readUtf(MAX_JSON_LENGTH);
                 context.queue(() -> {
                     DebugLog.client(DebugLog.Area.NETWORK, "Received the server's conditions ({} chars).", json.length());
                     ActiveConfigResolver.setRemoteConfig(ConditionalVideosConfig.fromJson(json));
@@ -70,7 +72,7 @@ public final class ConfigSyncNetworking {
             });
 
             NetworkManager.registerReceiver(NetworkManager.s2c(), SERVER_COMMON_CONFIG_PACKET, (buffer, context) -> {
-                String json = buffer.readUtf(262144);
+                String json = buffer.readUtf(MAX_JSON_LENGTH);
                 context.queue(() -> {
                     DebugLog.client(DebugLog.Area.NETWORK, "Received the server's common config.");
                     ActiveConfigResolver.setRemoteCommonConfig(CommonConfig.fromAuthoritativeJson(json));
@@ -179,7 +181,7 @@ public final class ConfigSyncNetworking {
         ServerData data = cachedServerData;
         if (data == null || now >= serverDataExpiryMillis) {
             Path root = server.getServerDirectory().toPath();
-            ConditionalVideosConfig config = ConditionalVideosConfig.loadServer(root);
+            ConditionalVideosConfig config = ConditionFiles.active(server.isDedicatedServer()).config();
             CommonConfig common = CommonConfig.loadServer(root);
             ServerDebug.applyFlag(common.debugLogging());
             List<VideoManifestEntry> manifest = collectVideoEntries(config, root);
@@ -197,7 +199,7 @@ public final class ConfigSyncNetworking {
     public static void sendServerConfig(ServerPlayer player) {
         String json = serverData(player.server).config().toJson();
         FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
-        buffer.writeUtf(json);
+        buffer.writeUtf(json, MAX_JSON_LENGTH);
         NetworkManager.sendToPlayer(player, SERVER_CONFIG_PACKET, buffer);
         DebugLog.server(DebugLog.Area.NETWORK, "Sent the conditions to {} ({} chars).", player.getScoreboardName(), json.length());
     }

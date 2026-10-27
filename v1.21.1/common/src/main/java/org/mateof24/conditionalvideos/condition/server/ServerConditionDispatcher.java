@@ -3,12 +3,12 @@ package org.mateof24.conditionalvideos.condition.server;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import org.mateof24.conditionalvideos.condition.shared.ConditionRegistry;
+import org.mateof24.conditionalvideos.config.ConditionFiles;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig.ConditionConfig;
 import org.mateof24.conditionalvideos.debug.DebugLog;
 import org.mateof24.conditionalvideos.network.PlaybackControlNetworking;
 
-import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -17,13 +17,8 @@ import java.util.Set;
 import java.util.UUID;
 
 public final class ServerConditionDispatcher {
-    private static final long CACHE_TTL_MILLIS = 5000L;
-
     private static final Map<UUID, Set<String>> firedConditions = new HashMap<>();
-    private static ConditionalVideosConfig cachedConfig;
-    private static long cacheExpiryMillis;
-    private static int loggedServerId;
-    private static int loggedPlayable = -1;
+    private static ConditionalVideosConfig loggedConfig;
 
     private ServerConditionDispatcher() {
     }
@@ -64,28 +59,12 @@ public final class ServerConditionDispatcher {
     }
 
     public static ConditionalVideosConfig activeConfig(MinecraftServer server) {
-        long now = System.currentTimeMillis();
-        if (cachedConfig == null || now >= cacheExpiryMillis) {
-            cachedConfig = loadActiveConfig(server);
-            cacheExpiryMillis = now + CACHE_TTL_MILLIS;
-            if (DebugLog.serverEnabled()) {
-                List<String> playable = ConditionRegistry.listPlayableKeys(cachedConfig);
-                int serverId = System.identityHashCode(server);
-                if (serverId != loggedServerId || playable.size() != loggedPlayable) {
-                    loggedServerId = serverId;
-                    loggedPlayable = playable.size();
-                    DebugLog.server(DebugLog.Area.CONFIG, "Active conditions: {} playable {}.", playable.size(), playable);
-                }
-            }
+        ConditionalVideosConfig config = ConditionFiles.active(server.isDedicatedServer()).config();
+        if (config != loggedConfig && DebugLog.serverEnabled()) {
+            List<String> playable = ConditionRegistry.listPlayableKeys(config);
+            DebugLog.server(DebugLog.Area.CONFIG, "Active conditions: {} playable {}.", playable.size(), playable);
         }
-        return cachedConfig;
-    }
-
-    public static ConditionalVideosConfig loadActiveConfig(MinecraftServer server) {
-        Path directory = server.getServerDirectory();
-        if (server.isDedicatedServer()) {
-            return ConditionalVideosConfig.loadServer(directory);
-        }
-        return ConditionalVideosConfig.load(ConditionalVideosConfig.clientConfigPath(directory));
+        loggedConfig = config;
+        return config;
     }
 }

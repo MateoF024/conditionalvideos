@@ -10,7 +10,7 @@ import org.mateof24.conditionalvideos.ConditionalVideos;
 // singleplayer log keeps both sides apart. Each side writes to its own log; nothing crosses the network.
 public final class DebugLog {
     public enum Area {
-        LIFECYCLE, CONFIG, JOIN, CONDITION, QUEUE, NETWORK, TRANSFER, SOURCE, BACKEND, QUALITY,
+        LIFECYCLE, CONFIG, MIGRATION, JOIN, CONDITION, QUEUE, NETWORK, TRANSFER, SOURCE, BACKEND, QUALITY,
         PLAYLIST, PLAYBACK, RENDER, AUDIO, PROTECT, COMMAND, API, ENV, STATS
     }
 
@@ -80,6 +80,20 @@ public final class DebugLog {
         if (serverEnabled) {
             ConditionalVideos.LOGGER.info("[CV|" + serverSituation() + "|" + area.name() + "] " + format, args);
         }
+    }
+
+    // Logs on the side this installation runs: the client for a game client, the server for a dedicated
+    // server. Used for what belongs to the installation itself, such as its config folders.
+    public static void side(Area area, String format, Object... args) {
+        if (Platform.getEnvironment() == Env.SERVER) {
+            server(area, format, args);
+        } else {
+            client(area, format, args);
+        }
+    }
+
+    public static boolean sideEnabled() {
+        return Platform.getEnvironment() == Env.SERVER ? serverEnabled : clientEnabled;
     }
 
     // Runtime and platform lines shared by the client and the server environment dumps.

@@ -28,10 +28,9 @@ public final class ActiveConfigResolver {
     private static CommonConfig localCommonConfig;
     private static CommonConfig remoteCommonConfig;
 
-    private static final long LOCAL_CONFIG_TTL_MILLIS = 3000L;
-    private static ConditionalVideosConfig localConfigCache;
-    private static long localConfigCacheExpiry;
-    private static int loggedLocalPlayable = -1;
+    // Conditions already watched: per connection on a server, per game run in singleplayer.
+    private static final Set<String> LOCAL_WATCHED = new HashSet<>();
+    private static final Set<String> REMOTE_WATCHED = new HashSet<>();
 
     private ActiveConfigResolver() {
     }
@@ -86,19 +85,7 @@ public final class ActiveConfigResolver {
 
     public static ConditionalVideosConfig resolve(Minecraft minecraft) {
         if (!isMultiplayerSession(minecraft)) {
-            long now = System.currentTimeMillis();
-            if (localConfigCache == null || now >= localConfigCacheExpiry) {
-                localConfigCache = ConditionalVideosConfig.load();
-                localConfigCacheExpiry = now + LOCAL_CONFIG_TTL_MILLIS;
-                if (DebugLog.clientEnabled()) {
-                    List<String> playable = ConditionRegistry.listPlayableKeys(localConfigCache);
-                    if (playable.size() != loggedLocalPlayable) {
-                        loggedLocalPlayable = playable.size();
-                        DebugLog.client(DebugLog.Area.CONFIG, "Using the local conditions file: {} playable {}.", playable.size(), playable);
-                    }
-                }
-            }
-            return localConfigCache;
+            return ConditionFiles.client().config();
         }
 
         if (remoteConfigState == RemoteConfigState.AVAILABLE && remoteConfig != null) {
@@ -109,13 +96,11 @@ public final class ActiveConfigResolver {
     }
 
     public static void invalidateLocalConfigCache() {
-        localConfigCache = null;
-        localConfigCacheExpiry = 0L;
-        loggedLocalPlayable = -1;
+        ConditionFiles.client().invalidate();
     }
 
-    public static boolean shouldPersistLocalChanges(Minecraft minecraft) {
-        return !isMultiplayerSession(minecraft);
+    public static Set<String> watchedSessions(Minecraft minecraft) {
+        return isMultiplayerSession(minecraft) ? REMOTE_WATCHED : LOCAL_WATCHED;
     }
 
     public static boolean isMultiplayerSession(Minecraft minecraft) {
@@ -137,6 +122,7 @@ public final class ActiveConfigResolver {
         remoteVideoPaths.clear();
         manifestedRemoteVideoPaths.clear();
         remoteCommonConfig = null;
+        REMOTE_WATCHED.clear();
     }
 
     public static RemoteConfigState remoteConfigState() {
@@ -165,6 +151,8 @@ public final class ActiveConfigResolver {
         return manifestedRemoteVideoPaths.contains(configuredPath);
     }
 
+    // Folder name of this server's video cache inside config/conditionalvideos/. It never takes the name of
+    // a conditions folder, which lives in the same place.
     public static String resolveCurrentServerId(Minecraft minecraft) {
         ServerData server = minecraft.getCurrentServer();
         if (server == null) {
@@ -174,6 +162,10 @@ public final class ActiveConfigResolver {
         if (source == null || source.isBlank()) {
             source = "unknown-server";
         }
-        return source.replaceAll("[^a-zA-Z0-9._-]", "_");
+        String id = source.replaceAll("[^a-zA-Z0-9._-]", "_");
+        if (id.equalsIgnoreCase(ConditionFiles.CLIENT_FOLDER) || id.equalsIgnoreCase(ConditionFiles.SERVER_FOLDER)) {
+            id += "_";
+        }
+        return id;
     }
 }
