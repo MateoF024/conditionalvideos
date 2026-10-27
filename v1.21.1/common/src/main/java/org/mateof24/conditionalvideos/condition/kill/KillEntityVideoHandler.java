@@ -6,6 +6,7 @@ import net.minecraft.world.entity.LivingEntity;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
 import org.mateof24.conditionalvideos.condition.shared.ConditionVideoPlayer;
 import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
+import org.mateof24.conditionalvideos.debug.DebugLog;
 
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -37,7 +38,9 @@ public final class KillEntityVideoHandler {
         if (!ActiveConfigResolver.resolve(Minecraft.getInstance()).entityKilled().containsKey(entityTypeId)) {
             return;
         }
-        trackedAttacks.put(entityId, new TrackedAttack(entityTypeId));
+        if (trackedAttacks.put(entityId, new TrackedAttack(entityTypeId)) == null) {
+            DebugLog.client(DebugLog.Area.CONDITION, "Tracking the attacked {} #{} (it has an entityKilled video).", entityTypeId, entityId);
+        }
     }
 
     public static void onClientTick(Minecraft minecraft) {
@@ -53,12 +56,16 @@ public final class KillEntityVideoHandler {
             tracked.ticks++;
 
             if (tracked.ticks > TRACK_TIMEOUT_TICKS) {
+                DebugLog.client(DebugLog.Area.CONDITION, "Stopped tracking {} #{}: not killed within {} ticks.",
+                        tracked.entityTypeId, entry.getKey(), TRACK_TIMEOUT_TICKS);
                 it.remove();
                 continue;
             }
 
             Entity entity = minecraft.level.getEntity(entry.getKey());
             if (entity == null || (entity instanceof LivingEntity living && !living.isAlive())) {
+                DebugLog.client(DebugLog.Area.CONDITION, "Tracked {} #{} is gone or dead; counting it as killed.",
+                        tracked.entityTypeId, entry.getKey());
                 it.remove();
                 onEntityKilled(minecraft, tracked.entityTypeId);
                 break;

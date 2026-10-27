@@ -4,6 +4,7 @@ import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
+import org.mateof24.conditionalvideos.debug.DebugLog;
 
 import java.util.function.BooleanSupplier;
 
@@ -49,6 +50,7 @@ public final class VideoLoadingScreen extends Screen {
         if (readyCheck.getAsBoolean()) {
             settled = true;
             transitioned = true;
+            DebugLog.client(DebugLog.Area.TRANSFER, "Loading screen: the video was ready after {} s.", elapsedTicks / 20);
             // Bridge audio mute through the swap so SoundManagerMixin keeps cancelling sounds
             // during the one-tick gap between removed() and VideoPlaybackScreen.init().
             VideoAudioState.setVideoPlaying(true);
@@ -58,6 +60,7 @@ public final class VideoLoadingScreen extends Screen {
 
         if (timeoutTicks > 0 && elapsedTicks >= timeoutTicks) {
             settled = true;
+            DebugLog.client(DebugLog.Area.TRANSFER, "Loading screen: gave up after {} s without the video.", elapsedTicks / 20);
             onTimeout.run();
             if (minecraft != null && minecraft.screen == this) {
                 minecraft.setScreen(null);

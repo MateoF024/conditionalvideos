@@ -4,6 +4,8 @@ import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 import org.mateof24.conditionalvideos.ConditionalVideos;
+import org.mateof24.conditionalvideos.debug.DebugLog;
+import org.mateof24.conditionalvideos.debug.ServerDebug;
 import org.mateof24.conditionalvideos.runtime.PlaybackControlClient;
 
 import java.util.Map;
@@ -26,22 +28,33 @@ public final class PlaybackControlNetworking {
         s2cHandlers.put(CONTROL_PLAY, data -> {
             FriendlyByteBuf buf = NetworkHelper.fromBytes(data);
             String conditionKey = buf.readUtf();
+            DebugLog.client(DebugLog.Area.NETWORK, "The server ordered to play '{}'.", conditionKey);
             PlaybackControlClient.play(conditionKey);
         });
-        s2cHandlers.put(CONTROL_STOP, data -> PlaybackControlClient.stop());
-        s2cHandlers.put(CONTROL_PAUSE, data -> PlaybackControlClient.togglePause());
+        s2cHandlers.put(CONTROL_STOP, data -> {
+            DebugLog.client(DebugLog.Area.NETWORK, "The server ordered to stop playback.");
+            PlaybackControlClient.stop();
+        });
+        s2cHandlers.put(CONTROL_PAUSE, data -> {
+            DebugLog.client(DebugLog.Area.NETWORK, "The server ordered to toggle pause.");
+            PlaybackControlClient.togglePause();
+        });
     }
 
     public static void sendPlay(ServerPlayer player, String conditionKey) {
         NetworkHelper.sendToPlayer(player, CONTROL_PLAY,
                 NetworkHelper.toBytes(buf -> buf.writeUtf(conditionKey)));
+        ServerDebug.countOrder(conditionKey);
+        DebugLog.server(DebugLog.Area.NETWORK, "Sent a play order for '{}' to {}.", conditionKey, player.getScoreboardName());
     }
 
     public static void sendStop(ServerPlayer player) {
         NetworkHelper.sendToPlayer(player, CONTROL_STOP, new byte[0]);
+        DebugLog.server(DebugLog.Area.NETWORK, "Sent a stop order to {}.", player.getScoreboardName());
     }
 
     public static void sendPause(ServerPlayer player) {
         NetworkHelper.sendToPlayer(player, CONTROL_PAUSE, new byte[0]);
+        DebugLog.server(DebugLog.Area.NETWORK, "Sent a pause toggle to {}.", player.getScoreboardName());
     }
 }

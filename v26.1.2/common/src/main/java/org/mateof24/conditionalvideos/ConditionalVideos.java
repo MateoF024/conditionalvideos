@@ -7,6 +7,9 @@ import org.mateof24.conditionalvideos.network.ConfigSyncNetworking;
 import dev.architectury.platform.Platform;
 import dev.architectury.utils.Env;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
+import org.mateof24.conditionalvideos.debug.ClientDebug;
+import org.mateof24.conditionalvideos.debug.DebugLog;
+import org.mateof24.conditionalvideos.debug.ServerDebug;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,7 +22,12 @@ public final class ConditionalVideos {
     }
 
     public static void init() {
-        if (Platform.getEnvironment() == Env.CLIENT) {
+        boolean client = Platform.getEnvironment() == Env.CLIENT;
+        if (client) {
+            ClientDebug.init();
+        }
+        ServerDebug.init();
+        if (client) {
             ConditionalVideosConfig.load(ConditionalVideosConfig.clientConfigPath(Platform.getGameFolder()));
         } else {
             ConditionalVideosConfig.load(ConditionalVideosConfig.serverConfigPath(Platform.getGameFolder()));
@@ -29,5 +37,10 @@ public final class ConditionalVideos {
         ServerConditionEvents.init();
         ConditionalVideosAPI.init();
         LOGGER.info("Initializing ConditionalVideos core.");
+        if (client) {
+            DebugLog.client(DebugLog.Area.LIFECYCLE, "Core initialized on the client (game folder '{}').", Platform.getGameFolder());
+        } else {
+            DebugLog.server(DebugLog.Area.LIFECYCLE, "Core initialized on the dedicated server (game folder '{}').", Platform.getGameFolder());
+        }
     }
 }

@@ -1,125 +1,107 @@
 package org.mateof24.conditionalvideos.debug;
 
-import org.lwjgl.opengl.GL11;
+import dev.architectury.platform.Platform;
+import dev.architectury.utils.Env;
+import net.minecraft.server.MinecraftServer;
 import org.mateof24.conditionalvideos.ConditionalVideos;
 
+// Debug logging split by side. The client and the server each enable it from their own debugLogging
+// flag and tag every line with where it runs ([CV|CLIENT/REMOTE|AREA], [CV|SERVER/LAN|AREA], ...), so a
+// singleplayer log keeps both sides apart. Each side writes to its own log; nothing crosses the network.
 public final class DebugLog {
     public enum Area {
-        LIFECYCLE, JOIN, CONDITION, QUEUE, SOURCE, BACKEND, QUALITY, PLAYLIST, NETWORK, CONFIG,
-        PLAYBACK, RENDER, ENV
+        LIFECYCLE, CONFIG, JOIN, CONDITION, QUEUE, NETWORK, TRANSFER, SOURCE, BACKEND, QUALITY,
+        PLAYLIST, PLAYBACK, RENDER, AUDIO, PROTECT, COMMAND, API, ENV, STATS
     }
 
-    private static volatile boolean enabled;
+    public static final String CLIENT_MENU = "CLIENT";
+    public static final String CLIENT_LOCAL = "CLIENT/LOCAL";
+    public static final String CLIENT_REMOTE = "CLIENT/REMOTE";
+
+    private static volatile boolean clientEnabled;
+    private static volatile boolean serverEnabled;
+    private static volatile String clientSituation = CLIENT_MENU;
+    private static volatile MinecraftServer server;
 
     private DebugLog() {
     }
 
-    public static boolean enabled() {
-        return enabled;
+    public static boolean clientEnabled() {
+        return clientEnabled;
     }
 
-    public static void setEnabled(boolean value) {
-        boolean changed = enabled != value;
-        enabled = value;
-        applyWaterMediaLogLevel(value);
-        if (changed) {
-            ConditionalVideos.LOGGER.info("ConditionalVideos debug logging {}.", value ? "ENABLED" : "disabled");
-            if (value) {
-                dumpEnvironment();
-            }
+    public static boolean serverEnabled() {
+        return serverEnabled;
+    }
+
+    // Both setters return whether the flag changed, so the caller can react to it.
+    public static boolean setClientEnabled(boolean value) {
+        boolean changed = clientEnabled != value;
+        clientEnabled = value;
+        return changed;
+    }
+
+    public static boolean setServerEnabled(boolean value) {
+        boolean changed = serverEnabled != value;
+        serverEnabled = value;
+        return changed;
+    }
+
+    public static void setClientSituation(String situation) {
+        clientSituation = situation;
+    }
+
+    public static String clientSituation() {
+        return clientSituation;
+    }
+
+    public static void setServer(MinecraftServer value) {
+        server = value;
+    }
+
+    public static String serverSituation() {
+        MinecraftServer current = server;
+        if (current == null) {
+            return Platform.getEnvironment() == Env.SERVER ? "SERVER/DEDICATED" : "SERVER";
+        }
+        if (current.isDedicatedServer()) {
+            return "SERVER/DEDICATED";
+        }
+        return current.isPublished() ? "SERVER/LAN" : "SERVER/LOCAL";
+    }
+
+    public static void client(Area area, String format, Object... args) {
+        if (clientEnabled) {
+            ConditionalVideos.LOGGER.info("[CV|" + clientSituation + "|" + area.name() + "] " + format, args);
         }
     }
 
-    public static void log(Area area, String format, Object... args) {
-        if (!enabled) {
-            return;
+    public static void server(Area area, String format, Object... args) {
+        if (serverEnabled) {
+            ConditionalVideos.LOGGER.info("[CV|" + serverSituation() + "|" + area.name() + "] " + format, args);
         }
-        ConditionalVideos.LOGGER.info("[CV/" + area.name() + "] " + format, args);
     }
 
-    // Must run only AFTER WaterMedia has loaded the FFmpeg natives (e.g. from the video backend),
-    // never during mod init / config load: forcing the bytedeco avutil class to initialise early
-    // poisons it permanently (NoClassDefFoundError) and breaks all video playback.
-    public static void applyFfmpegLogLevel() {
+    // Runtime and platform lines shared by the client and the server environment dumps.
+    public static String runtimeDescription() {
+        return "OS " + System.getProperty("os.name") + " " + System.getProperty("os.arch")
+                + " | Java " + System.getProperty("java.version") + " (" + System.getProperty("java.vendor") + ")";
+    }
+
+    public static String platformDescription() {
+        boolean neoForge = Platform.isModLoaded("neoforge");
+        String loader = Platform.isFabric() ? "Fabric" : neoForge ? "NeoForge" : "Forge";
+        String loaderId = Platform.isFabric() ? "fabricloader" : neoForge ? "neoforge" : "forge";
+        return "Minecraft " + Platform.getMinecraftVersion() + " | " + loader + " " + modVersion(loaderId)
+                + " | ConditionalVideos " + modVersion(ConditionalVideos.MOD_ID)
+                + " | Architectury " + modVersion("architectury");
+    }
+
+    public static String modVersion(String modId) {
         try {
-            Class<?> avutil = Class.forName("org.bytedeco.ffmpeg.global.avutil");
-            int level = avutil.getField(enabled ? "AV_LOG_VERBOSE" : "AV_LOG_ERROR").getInt(null);
-            avutil.getMethod("av_log_set_level", int.class).invoke(null, level);
-        } catch (Throwable ignored) {
-        }
-    }
-
-    private static void applyWaterMediaLogLevel(boolean debug) {
-        try {
-            Object logger = Class.forName("org.watermedia.WaterMedia").getField("LOGGER").get(null);
-            String name = (String) logger.getClass().getMethod("getName").invoke(logger);
-            Class<?> level = Class.forName("org.apache.logging.log4j.Level");
-            Object target = level.getMethod("valueOf", String.class).invoke(null, debug ? "DEBUG" : "WARN");
-            Class.forName("org.apache.logging.log4j.core.config.Configurator")
-                    .getMethod("setLevel", String.class, level)
-                    .invoke(null, name, target);
-        } catch (Throwable ignored) {
-        }
-    }
-
-    // One-shot environment/compat snapshot, logged when debug is enabled. Deliberately broad — driver,
-    // GL, OS, Minecraft, WaterMedia and known-interfering mods — so a future regression (a driver/mod
-    // conflict, or a WaterMedia/Minecraft change like the 1.21.1->1.21.11 render rewrite) leaves a
-    // fingerprint in the log with no new code. Called on the render thread; the GL block is guarded.
-    public static void dumpEnvironment() {
-        log(Area.ENV, "=== ConditionalVideos diagnostics snapshot ===");
-        log(Area.ENV, "OS: {} {} | Java {}", System.getProperty("os.name"), System.getProperty("os.arch"), System.getProperty("java.version"));
-        log(Area.ENV, "Minecraft: {}", minecraftVersion());
-        try {
-            log(Area.ENV, "GL: vendor='{}' renderer='{}' version='{}'",
-                    GL11.glGetString(GL11.GL_VENDOR), GL11.glGetString(GL11.GL_RENDERER), GL11.glGetString(GL11.GL_VERSION));
+            return Platform.isModLoaded(modId) ? Platform.getMod(modId).getVersion() : "absent";
         } catch (Throwable t) {
-            log(Area.ENV, "GL: <unavailable> ({})", t.toString());
+            return "unknown";
         }
-        try {
-            log(Area.ENV, "WaterMedia: v{} loaded={} modules={}/{} ffmpegLoaded={} ffmpegError={} vulkanDecode={}",
-                    org.watermedia.WaterMedia.VERSION,
-                    org.watermedia.WaterMedia.loaded(),
-                    org.watermedia.WaterMedia.step(),
-                    org.watermedia.WaterMedia.steps(),
-                    org.watermedia.api.media.MediaAPI.ffmpegLoaded(),
-                    org.watermedia.api.media.MediaAPI.ffmpegError(),
-                    org.watermedia.api.media.MediaAPI.vulkanDecode());
-        } catch (Throwable t) {
-            log(Area.ENV, "WaterMedia: <not loaded> ({})", t.toString());
-        }
-        log(Area.ENV, "Interfering mods present: sodium={} iris/oculus={}",
-                anyClassPresent("net.caffeinemc.mods.sodium.client.SodiumClientMod",
-                        "me.jellysquid.mods.sodium.client.SodiumClientMod"),
-                anyClassPresent("net.irisshaders.iris.Iris", "net.coderbot.iris.Iris"));
-        log(Area.ENV, "=== end snapshot ===");
-    }
-
-    private static String minecraftVersion() {
-        try {
-            Object version = Class.forName("net.minecraft.SharedConstants").getMethod("getCurrentVersion").invoke(null);
-            try {
-                return (String) version.getClass().getMethod("getName").invoke(version);
-            } catch (Throwable ignored) {
-            }
-            try {
-                return (String) version.getClass().getMethod("name").invoke(version);
-            } catch (Throwable ignored) {
-            }
-            return String.valueOf(version);
-        } catch (Throwable t) {
-            return "<unknown>";
-        }
-    }
-
-    private static boolean anyClassPresent(String... classNames) {
-        for (String className : classNames) {
-            try {
-                Class.forName(className, false, DebugLog.class.getClassLoader());
-                return true;
-            } catch (Throwable ignored) {
-            }
-        }
-        return false;
     }
 }

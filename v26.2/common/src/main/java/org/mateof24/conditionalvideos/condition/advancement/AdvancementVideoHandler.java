@@ -6,6 +6,7 @@ import net.minecraft.resources.Identifier;
 import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
 import org.mateof24.conditionalvideos.condition.shared.ConditionVideoPlayer;
+import org.mateof24.conditionalvideos.debug.DebugLog;
 
 import java.util.HashSet;
 import java.util.Map;
@@ -39,6 +40,7 @@ public final class AdvancementVideoHandler {
                 boolean wasNew = trackedCompleted.add(id);
                 if (wasNew && !shouldReset) {
                     pendingNewCompletions.add(id);
+                    DebugLog.client(DebugLog.Area.CONDITION, "Advancement completed: {}.", id);
                 }
             } else {
                 trackedCompleted.remove(id);

@@ -6,9 +6,8 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonSyntaxException;
-import net.minecraft.client.Minecraft;
+import dev.architectury.platform.Platform;
 import org.mateof24.conditionalvideos.ConditionalVideos;
-import org.mateof24.conditionalvideos.debug.DebugLog;
 
 import java.io.IOException;
 import java.io.Reader;
@@ -35,15 +34,29 @@ public final class CommonConfig {
     private Integer videoLoadTimeoutSeconds;
 
     public static CommonConfig load() {
-        CommonConfig config = load(configPath());
-        DebugLog.setEnabled(config.debugLogging());
-        return config;
+        return load(configPath());
     }
 
     public static CommonConfig loadServer(Path gameDirectory) {
-        CommonConfig config = load(gameDirectory.resolve("config").resolve(FILE_NAME));
-        DebugLog.setEnabled(config.debugLogging());
-        return config;
+        return load(configPath(gameDirectory));
+    }
+
+    // Reads only the debugLogging flag, never creating or rewriting the file, so the debug log can be
+    // switched on at startup without touching the user's config.
+    public static boolean readDebugLogging(Path file) {
+        if (!Files.isRegularFile(file)) {
+            return false;
+        }
+        try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+            JsonElement parsed = JsonParser.parseReader(reader);
+            if (parsed == null || !parsed.isJsonObject()) {
+                return false;
+            }
+            Boolean value = readBool(parsed.getAsJsonObject(), "debugLogging");
+            return value != null && value;
+        } catch (IOException | RuntimeException exception) {
+            return false;
+        }
     }
 
     public static CommonConfig load(Path file) {
@@ -120,7 +133,7 @@ public final class CommonConfig {
     }
 
     public void saveServer(Path gameDirectory) {
-        save(gameDirectory.resolve("config").resolve(FILE_NAME));
+        save(configPath(gameDirectory));
     }
 
     public void save(Path file) {
@@ -231,7 +244,11 @@ public final class CommonConfig {
         return config;
     }
 
-    private static Path configPath() {
-        return Minecraft.getInstance().gameDirectory.toPath().resolve("config").resolve(FILE_NAME);
+    public static Path configPath() {
+        return configPath(Platform.getGameFolder());
+    }
+
+    public static Path configPath(Path gameDirectory) {
+        return gameDirectory.resolve("config").resolve(FILE_NAME);
     }
 }

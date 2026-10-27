@@ -2,10 +2,14 @@ package org.mateof24.conditionalvideos.config;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ServerData;
+import org.mateof24.conditionalvideos.condition.shared.ConditionRegistry;
+import org.mateof24.conditionalvideos.debug.ClientDebug;
+import org.mateof24.conditionalvideos.debug.DebugLog;
 
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -29,23 +33,30 @@ public final class ActiveConfigResolver {
     private static final long LOCAL_CONFIG_TTL_MILLIS = 3000L;
     private static ConditionalVideosConfig localConfigCache;
     private static long localConfigCacheExpiry;
+    private static int loggedLocalPlayable = -1;
 
     private ActiveConfigResolver() {
     }
 
     public static CommonConfig localCommonConfig() {
         if (localCommonConfig == null) {
-            localCommonConfig = CommonConfig.load();
+            reloadLocalCommonConfig();
         }
         return localCommonConfig;
     }
 
     public static void reloadLocalCommonConfig() {
         localCommonConfig = CommonConfig.load();
+        ClientDebug.applyFlag(localCommonConfig.debugLogging());
+        DebugLog.client(DebugLog.Area.CONFIG, "Local common config '{}': videoQuality={}, alwaysShowCursor={}, allowGameSounds={}, blockMatureContent={}, videoLoadTimeoutSeconds={}.",
+                CommonConfig.configPath(), localCommonConfig.videoQuality(), localCommonConfig.alwaysShowCursor(),
+                localCommonConfig.allowGameSounds(), localCommonConfig.blockMatureContent(), localCommonConfig.videoLoadTimeoutSeconds());
     }
 
     public static void setRemoteCommonConfig(CommonConfig config) {
         remoteCommonConfig = config;
+        DebugLog.client(DebugLog.Area.CONFIG, "The server dictates: videoQuality={}, alwaysShowCursor={}, allowGameSounds={}.",
+                config.videoQuality(), config.alwaysShowCursor(), config.allowGameSounds());
     }
 
     private static CommonConfig authoritativeCommonConfig(Minecraft minecraft) {
@@ -81,6 +92,13 @@ public final class ActiveConfigResolver {
             if (localConfigCache == null || now >= localConfigCacheExpiry) {
                 localConfigCache = ConditionalVideosConfig.load();
                 localConfigCacheExpiry = now + LOCAL_CONFIG_TTL_MILLIS;
+                if (DebugLog.clientEnabled()) {
+                    List<String> playable = ConditionRegistry.listPlayableKeys(localConfigCache);
+                    if (playable.size() != loggedLocalPlayable) {
+                        loggedLocalPlayable = playable.size();
+                        DebugLog.client(DebugLog.Area.CONFIG, "Using the local conditions file: {} playable {}.", playable.size(), playable);
+                    }
+                }
             }
             return localConfigCache;
         }
@@ -95,6 +113,7 @@ public final class ActiveConfigResolver {
     public static void invalidateLocalConfigCache() {
         localConfigCache = null;
         localConfigCacheExpiry = 0L;
+        loggedLocalPlayable = -1;
     }
 
     public static boolean shouldPersistLocalChanges(Minecraft minecraft) {
@@ -108,6 +127,10 @@ public final class ActiveConfigResolver {
     public static void setRemoteConfig(ConditionalVideosConfig config) {
         remoteConfig = config;
         remoteConfigState = RemoteConfigState.AVAILABLE;
+        if (DebugLog.clientEnabled()) {
+            List<String> playable = ConditionRegistry.listPlayableKeys(config);
+            DebugLog.client(DebugLog.Area.CONFIG, "Using the server's conditions: {} playable {}.", playable.size(), playable);
+        }
     }
 
     public static void resetRemoteSessionState() {

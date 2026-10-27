@@ -14,10 +14,13 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import org.mateof24.conditionalvideos.condition.shared.ConditionRegistry;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
+import org.mateof24.conditionalvideos.debug.DebugLog;
+import org.mateof24.conditionalvideos.debug.ServerDebug;
 import org.mateof24.conditionalvideos.network.PlaybackControlNetworking;
 
 import java.nio.file.Path;
 import java.util.Collection;
+import java.util.List;
 
 public final class ConditionalVideosCommands {
     private static final SuggestionProvider<CommandSourceStack> CONDITION_SUGGESTIONS = (context, builder) -> {
@@ -63,13 +66,17 @@ public final class ConditionalVideosCommands {
         Collection<ServerPlayer> targets = EntityArgument.getPlayers(context, "targets");
 
         MinecraftServer server = source.getServer();
+        ServerDebug.countCommand();
         ConditionalVideosConfig.ConditionConfig resolved =
                 ConditionRegistry.resolve(loadActiveConfig(server), condition);
         if (resolved == null || resolved.resolvedPlaylist().isEmpty()) {
+            DebugLog.server(DebugLog.Area.COMMAND, "{} ran 'play {}' for {}: the condition has no videos.",
+                    source.getTextName(), condition, names(targets));
             source.sendFailure(Component.translatable("command.conditionalvideos.play.invalid", condition));
             return 0;
         }
 
+        DebugLog.server(DebugLog.Area.COMMAND, "{} ran 'play {}' for {}.", source.getTextName(), condition, names(targets));
         for (ServerPlayer target : targets) {
             PlaybackControlNetworking.sendPlay(target, condition);
         }
@@ -81,6 +88,8 @@ public final class ConditionalVideosCommands {
     private static int stopCommand(CommandContext<CommandSourceStack> context) throws CommandSyntaxException {
         CommandSourceStack source = context.getSource();
         Collection<ServerPlayer> targets = EntityArgument.getPlayers(context, "targets");
+        ServerDebug.countCommand();
+        DebugLog.server(DebugLog.Area.COMMAND, "{} ran 'stop' for {}.", source.getTextName(), names(targets));
         for (ServerPlayer target : targets) {
             PlaybackControlNetworking.sendStop(target);
         }
@@ -92,12 +101,18 @@ public final class ConditionalVideosCommands {
     private static int pauseCommand(CommandContext<CommandSourceStack> context) throws CommandSyntaxException {
         CommandSourceStack source = context.getSource();
         Collection<ServerPlayer> targets = EntityArgument.getPlayers(context, "targets");
+        ServerDebug.countCommand();
+        DebugLog.server(DebugLog.Area.COMMAND, "{} ran 'pause' for {}.", source.getTextName(), names(targets));
         for (ServerPlayer target : targets) {
             PlaybackControlNetworking.sendPause(target);
         }
         int count = targets.size();
         source.sendSuccess(() -> Component.translatable("command.conditionalvideos.pause.success", count), true);
         return count;
+    }
+
+    private static List<String> names(Collection<ServerPlayer> players) {
+        return players.stream().map(ServerPlayer::getScoreboardName).toList();
     }
 
     private static ConditionalVideosConfig loadActiveConfig(MinecraftServer server) {

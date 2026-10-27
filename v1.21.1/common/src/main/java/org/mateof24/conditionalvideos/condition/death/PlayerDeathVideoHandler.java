@@ -10,6 +10,7 @@ import net.minecraft.world.entity.LivingEntity;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
 import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
 import org.mateof24.conditionalvideos.condition.shared.ConditionVideoPlayer;
+import org.mateof24.conditionalvideos.debug.DebugLog;
 
 public final class PlayerDeathVideoHandler {
     private static final String CONDITION_ID = "playerDeath";
@@ -35,6 +36,7 @@ public final class PlayerDeathVideoHandler {
         if (!id.isBlank()) {
             capturedKillerId = id;
             capturedKillerMillis = Util.getMillis();
+            DebugLog.client(DebugLog.Area.CONDITION, "Killer captured at the moment of death: {}.", id);
         }
     }
 
@@ -46,6 +48,7 @@ public final class PlayerDeathVideoHandler {
         lastHandledAtMillis = now;
         pendingDeath = true;
         pendingDeathTicks = 0;
+        DebugLog.client(DebugLog.Area.CONDITION, "Player died; choosing the death video in {} ticks.", DEFERRED_PLAY_TICKS);
     }
 
     public static void tickPendingDeath(Minecraft minecraft) {
@@ -74,6 +77,9 @@ public final class PlayerDeathVideoHandler {
         ConditionalVideosConfig config = ActiveConfigResolver.resolve(minecraft);
         String killerEntityId = resolveKillerWithCapture(minecraft);
         clearCapturedKiller();
+        DebugLog.client(DebugLog.Area.CONDITION, "Death resolved: killer {}; trying {}.",
+                killerEntityId.isBlank() ? "none" : "'" + killerEntityId + "'",
+                killerEntityId.isBlank() ? "playerDeath" : "deathByEntity first, then playerDeath");
         if (!killerEntityId.isBlank()) {
             ConditionalVideosConfig.ConditionConfig entityConfig = config.deathByEntity().get(killerEntityId);
             if (ConditionVideoPlayer.play(

@@ -13,6 +13,7 @@ import net.minecraft.world.scores.Scoreboard;
 import org.mateof24.conditionalvideos.condition.shared.ConditionRegistry;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig.ScoreboardConditionConfig;
+import org.mateof24.conditionalvideos.debug.DebugLog;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -34,6 +35,7 @@ public final class ServerConditionEvents {
         PlayerEvent.SMELT_ITEM.register(ServerConditionEvents::onItemObtained);
         PlayerEvent.PLAYER_JOIN.register(ServerConditionEvents::onPlayerJoin);
         PlayerEvent.PLAYER_QUIT.register(player -> {
+            DebugLog.server(DebugLog.Area.JOIN, "{} left; cleared its fired conditions and tracking state.", player.getScoreboardName());
             ServerConditionDispatcher.clearPlayer(player);
             sleepingState.remove(player.getUUID());
             scoreboardArmed.remove(player.getUUID());
@@ -46,6 +48,7 @@ public final class ServerConditionEvents {
     // rejoin and never re-fires. It only fires again if the score drops below the comparator (re-arms)
     // and crosses it again while online. This is what gives cross-session persistence with no disk store.
     private static void onPlayerJoin(ServerPlayer player) {
+        DebugLog.server(DebugLog.Area.JOIN, "{} joined.", player.getScoreboardName());
         MinecraftServer server = player.getServer();
         if (server == null) {
             return;
@@ -65,6 +68,7 @@ public final class ServerConditionEvents {
                     && entry.getValue().matches(scoreboard.getOrCreatePlayerScore(holder, objective).getScore());
             armed.put(objectiveName, satisfied);
         }
+        DebugLog.server(DebugLog.Area.CONDITION, "Scoreboard state seeded for {} without firing: {}.", player.getScoreboardName(), armed);
     }
 
     private static void onItemObtained(Player player, ItemStack stack) {
@@ -104,6 +108,7 @@ public final class ServerConditionEvents {
                 boolean sleeping = player.isSleeping();
                 boolean wasSleeping = sleepingState.getOrDefault(uuid, false);
                 if (sleeping && !wasSleeping) {
+                    DebugLog.server(DebugLog.Area.CONDITION, "{} went to sleep.", player.getScoreboardName());
                     ServerConditionDispatcher.fire(player, ConditionRegistry.KEY_BED_SLEEP);
                 }
                 sleepingState.put(uuid, sleeping);
@@ -131,7 +136,12 @@ public final class ServerConditionEvents {
             boolean satisfied = condition.matches(score);
             boolean wasSatisfied = armed.getOrDefault(objectiveName, false);
             if (satisfied && !wasSatisfied) {
+                DebugLog.server(DebugLog.Area.CONDITION, "{}'s score '{}' = {} now meets its condition.",
+                        player.getScoreboardName(), objectiveName, score);
                 ServerConditionDispatcher.fire(player, ConditionRegistry.TYPE_SCOREBOARD + "/" + objectiveName);
+            } else if (!satisfied && wasSatisfied) {
+                DebugLog.server(DebugLog.Area.CONDITION, "{}'s score '{}' = {} no longer meets its condition; armed again.",
+                        player.getScoreboardName(), objectiveName, score);
             }
             armed.put(objectiveName, satisfied);
         }

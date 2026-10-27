@@ -17,10 +17,11 @@ public final class JoinVideoHandler {
         ConditionalVideosConfig config = ActiveConfigResolver.resolve(minecraft);
         ConditionalVideosConfig.ConditionConfig firstJoin = config.firstJoin();
         if (firstJoin == null || firstJoin.resolvedPlaylist().isEmpty()) {
+            DebugLog.client(DebugLog.Area.JOIN, "firstJoin has no videos configured; nothing to play on join.");
             return true;
         }
 
-        DebugLog.log(DebugLog.Area.JOIN, "firstJoin matched: {} playlist entr(ies); requesting playback.",
+        DebugLog.client(DebugLog.Area.JOIN, "firstJoin matched: {} playlist entr(ies); requesting playback.",
                 firstJoin.resolvedPlaylist().size());
         ConfigSyncNetworking.notifyFirstJoinVideoState(true);
         boolean started = ConditionVideoPlayer.play(
@@ -31,7 +32,7 @@ public final class JoinVideoHandler {
                 "first join",
                 () -> ConfigSyncNetworking.notifyFirstJoinVideoState(false)
         );
-        DebugLog.log(DebugLog.Area.JOIN, "firstJoin playback request returned started={}.", started);
+        DebugLog.client(DebugLog.Area.JOIN, "firstJoin playback request returned started={}.", started);
         if (!started) {
             ConfigSyncNetworking.notifyFirstJoinVideoState(false);
         }

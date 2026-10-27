@@ -6,6 +6,7 @@ import org.mateof24.conditionalvideos.condition.shared.ConditionRegistry;
 import org.mateof24.conditionalvideos.condition.shared.ConditionVideoPlayer;
 import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
+import org.mateof24.conditionalvideos.debug.DebugLog;
 import org.mateof24.conditionalvideos.video.VideoPlaybackScreen;
 
 public final class PlaybackControlClient {
@@ -27,7 +28,10 @@ public final class PlaybackControlClient {
         Minecraft minecraft = Minecraft.getInstance();
         ConditionVideoPlayer.clearQueue();
         if (minecraft.gui.screen() instanceof VideoPlaybackScreen screen) {
+            DebugLog.client(DebugLog.Area.PLAYLIST, "Stop requested: closing the active video.");
             screen.onClose();
+        } else {
+            DebugLog.client(DebugLog.Area.PLAYLIST, "Stop requested, but no video is playing.");
         }
     }
 
@@ -35,6 +39,8 @@ public final class PlaybackControlClient {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.gui.screen() instanceof VideoPlaybackScreen screen) {
             screen.togglePause();
+        } else {
+            DebugLog.client(DebugLog.Area.PLAYLIST, "Pause toggle requested, but no video is playing.");
         }
     }
 }

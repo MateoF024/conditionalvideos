@@ -2,6 +2,7 @@ package org.mateof24.conditionalvideos.runtime;
 
 import org.mateof24.conditionalvideos.ConditionalVideos;
 import org.mateof24.conditionalvideos.api.PlaybackListener;
+import org.mateof24.conditionalvideos.debug.DebugLog;
 
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -29,6 +30,7 @@ public final class PlaybackEvents {
 
     public static void notifyStarted(String conditionKey) {
         currentConditionKey = conditionKey;
+        DebugLog.client(DebugLog.Area.PLAYBACK, "Playback started: '{}' ({} API listener(s) notified).", conditionKey, LISTENERS.size());
         for (PlaybackListener listener : LISTENERS) {
             try {
                 listener.onPlaybackStarted(conditionKey);
@@ -40,6 +42,7 @@ public final class PlaybackEvents {
 
     public static void notifyEnded(String conditionKey) {
         currentConditionKey = null;
+        DebugLog.client(DebugLog.Area.PLAYBACK, "Playback ended: '{}' ({} API listener(s) notified).", conditionKey, LISTENERS.size());
         for (PlaybackListener listener : LISTENERS) {
             try {
                 listener.onPlaybackEnded(conditionKey);

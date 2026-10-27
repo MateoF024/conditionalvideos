@@ -10,6 +10,9 @@ import org.mateof24.conditionalvideos.ConditionalVideos;
 import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
 import org.mateof24.conditionalvideos.config.CommonConfig;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
+import org.mateof24.conditionalvideos.condition.shared.ConditionRegistry;
+import org.mateof24.conditionalvideos.debug.DebugLog;
+import org.mateof24.conditionalvideos.debug.ServerDebug;
 import org.mateof24.conditionalvideos.video.path.VideoSourceResolver;
 
 import java.io.IOException;
@@ -67,12 +70,14 @@ public final class ConfigSyncNetworking {
         s2cHandlers.put(SERVER_CONFIG_PACKET, data -> {
             FriendlyByteBuf buf = NetworkHelper.fromBytes(data);
             String json = buf.readUtf(262144);
+            DebugLog.client(DebugLog.Area.NETWORK, "Received the server's conditions ({} bytes).", data.length);
             ActiveConfigResolver.setRemoteConfig(ConditionalVideosConfig.fromJson(json));
         });
 
         s2cHandlers.put(SERVER_COMMON_CONFIG_PACKET, data -> {
             FriendlyByteBuf buf = NetworkHelper.fromBytes(data);
             String json = buf.readUtf(262144);
+            DebugLog.client(DebugLog.Area.NETWORK, "Received the server's common config.");
             ActiveConfigResolver.setRemoteCommonConfig(CommonConfig.fromAuthoritativeJson(json));
         });
 
@@ -85,6 +90,7 @@ public final class ConfigSyncNetworking {
                         buf.readUtf(), buf.readUtf(), buf.readUtf(),
                         buf.readVarLong(), buf.readUtf()));
             }
+            DebugLog.client(DebugLog.Area.NETWORK, "Received the server's video manifest: {} file(s).", count);
             ActiveConfigResolver.onManifestReceived();
             ASYNC_IO.execute(() -> {
                 onClientManifest(manifest);
@@ -117,10 +123,14 @@ public final class ConfigSyncNetworking {
         c2sHandlers.put(CLIENT_VIDEO_REQUEST_PACKET, (data, player) -> {
             FriendlyByteBuf buf = NetworkHelper.fromBytes(data);
             String configuredPath = buf.readUtf();
+            DebugLog.server(DebugLog.Area.TRANSFER, "{} requested '{}'.", player.getScoreboardName(), configuredPath);
             ASYNC_IO.execute(() -> sendVideoFile(player, configuredPath));
         });
 
-        c2sHandlers.put(CLIENT_SYNC_REQUEST_PACKET, (data, player) -> sendServerData(player));
+        c2sHandlers.put(CLIENT_SYNC_REQUEST_PACKET, (data, player) -> {
+            DebugLog.server(DebugLog.Area.NETWORK, "{} asked for the ConditionalVideos data.", player.getScoreboardName());
+            sendServerData(player);
+        });
 
         c2sHandlers.put(CLIENT_JOIN_VIDEO_STATE_PACKET, (data, player) -> {
             FriendlyByteBuf buf = NetworkHelper.fromBytes(data);
@@ -146,7 +156,20 @@ public final class ConfigSyncNetworking {
             sendServerConfig(player);
             sendServerCommonConfig(player);
             sendVideoManifest(player);
+        } else {
+            DebugLog.server(DebugLog.Area.NETWORK, "Not sending data to {}: an integrated server (singleplayer/LAN) does not sync its configuration.",
+                    player.getScoreboardName());
         }
+    }
+
+    // Names of the players currently held in spectator for their firstJoin video.
+    public static List<String> protectedPlayerNames(MinecraftServer server) {
+        List<String> names = new ArrayList<>();
+        for (UUID uuid : PLAYER_PRE_VIDEO_GAME_MODES.keySet()) {
+            ServerPlayer player = server.getPlayerList().getPlayer(uuid);
+            names.add(player == null ? uuid.toString() : player.getScoreboardName());
+        }
+        return names;
     }
 
     // Loads the server config, common config and hashed video manifest once and caches them for a short
@@ -160,10 +183,16 @@ public final class ConfigSyncNetworking {
             Path root = server.getServerDirectory();
             ConditionalVideosConfig config = ConditionalVideosConfig.loadServer(root);
             CommonConfig common = CommonConfig.loadServer(root);
+            ServerDebug.applyFlag(common.debugLogging());
             List<VideoManifestEntry> manifest = collectVideoEntries(config, root);
             data = new ServerData(config, common, manifest);
             cachedServerData = data;
             serverDataExpiryMillis = now + SERVER_DATA_TTL_MILLIS;
+            ServerDebug.countConfigReload();
+            if (DebugLog.serverEnabled()) {
+                DebugLog.server(DebugLog.Area.CONFIG, "Loaded the server data: {} playable condition(s), {} file(s) in the video manifest ({} ms).",
+                        ConditionRegistry.listPlayableKeys(config).size(), manifest.size(), System.currentTimeMillis() - now);
+            }
         }
         return data;
     }
@@ -172,16 +201,21 @@ public final class ConfigSyncNetworking {
         String json = serverData(player.server).config().toJson();
         byte[] data = NetworkHelper.toBytes(buf -> buf.writeUtf(json));
         NetworkHelper.sendToPlayer(player, SERVER_CONFIG_PACKET, data);
+        DebugLog.server(DebugLog.Area.NETWORK, "Sent the conditions to {} ({} bytes).", player.getScoreboardName(), data.length);
     }
 
     public static void sendServerCommonConfig(ServerPlayer player) {
         String json = serverData(player.server).common().toAuthoritativeJson();
         byte[] data = NetworkHelper.toBytes(buf -> buf.writeUtf(json));
         NetworkHelper.sendToPlayer(player, SERVER_COMMON_CONFIG_PACKET, data);
+        if (DebugLog.serverEnabled()) {
+            DebugLog.server(DebugLog.Area.NETWORK, "Sent the common config to {}: {}", player.getScoreboardName(), json.replaceAll("\\s+", ""));
+        }
     }
 
     private static void sendVideoManifest(ServerPlayer player) {
         List<VideoManifestEntry> entries = serverData(player.server).manifest();
+        DebugLog.server(DebugLog.Area.NETWORK, "Sending the video manifest to {}: {} file(s).", player.getScoreboardName(), entries.size());
         byte[] data = NetworkHelper.toBytes(buf -> {
             buf.writeVarInt(entries.size());
             for (VideoManifestEntry entry : entries) {
@@ -198,29 +232,34 @@ public final class ConfigSyncNetworking {
     public static void notifyFirstJoinVideoState(boolean playing) {
         NetworkHelper.sendToServer(CLIENT_JOIN_VIDEO_STATE_PACKET,
                 NetworkHelper.toBytes(buf -> buf.writeBoolean(playing)));
+        DebugLog.client(DebugLog.Area.NETWORK, "Told the server the firstJoin video is {}.", playing ? "playing" : "over");
     }
 
     private static void onServerJoinVideoState(ServerPlayer player, boolean playing) {
         UUID uuid = player.getUUID();
         if (playing) {
             GameType current = player.gameMode.getGameModeForPlayer();
-            PLAYER_PRE_VIDEO_GAME_MODES.putIfAbsent(uuid, current);
+            GameType saved = PLAYER_PRE_VIDEO_GAME_MODES.putIfAbsent(uuid, current);
             if (current != GameType.SPECTATOR) {
                 setServerPlayerGameMode(player, GameType.SPECTATOR);
             }
+            DebugLog.server(DebugLog.Area.PROTECT, "{} started the firstJoin video: game mode {} -> spectator (saved mode {}).",
+                    player.getScoreboardName(), current, saved == null ? current : saved);
             return;
         }
         GameType previous = PLAYER_PRE_VIDEO_GAME_MODES.remove(uuid);
         if (previous != null && player.gameMode.getGameModeForPlayer() != previous) {
             setServerPlayerGameMode(player, previous);
         }
+        DebugLog.server(DebugLog.Area.PROTECT, "{} finished the firstJoin video: {}.", player.getScoreboardName(),
+                previous == null ? "no saved game mode to restore" : "game mode restored to " + previous);
     }
 
     private static void setServerPlayerGameMode(ServerPlayer player, GameType gameType) {
         try {
             player.setGameMode(gameType);
         } catch (Throwable throwable) {
-            ConditionalVideos.LOGGER.debug("Failed to set game mode for '{}': {}", player.getScoreboardName(), throwable.toString());
+            DebugLog.server(DebugLog.Area.PROTECT, "Failed to set game mode {} for {}: {}", gameType, player.getScoreboardName(), throwable.toString());
         }
     }
 
@@ -257,7 +296,7 @@ public final class ConfigSyncNetworking {
             return;
         }
         if (VideoSourceResolver.looksLikeUrl(configuredPath)) {
-            ConditionalVideos.LOGGER.debug("Skipping {} URL entry '{}' from manifest; clients will resolve it directly.", conditionType, configuredPath);
+            DebugLog.server(DebugLog.Area.TRANSFER, "Not adding {} URL '{}' to the manifest; clients open it directly.", conditionType, configuredPath);
             return;
         }
         Path resolved = resolveConfigPath(root, configuredPath);
@@ -321,10 +360,14 @@ public final class ConfigSyncNetworking {
                         if (entry.hash().equals(sha256(destination))) {
                             ActiveConfigResolver.setRemoteVideoPath(entry.configuredPath(), destination);
                             needsDownload = false;
+                            DebugLog.client(DebugLog.Area.TRANSFER, "'{}': the cached copy '{}' matches the server's hash; no download needed.",
+                                    entry.configuredPath(), destination);
                         }
                     } catch (IOException lockedEx) {
                         ActiveConfigResolver.setRemoteVideoPath(entry.configuredPath(), destination);
                         needsDownload = false;
+                        DebugLog.client(DebugLog.Area.TRANSFER, "'{}': the cached copy '{}' is in use and cannot be hashed; using it as is.",
+                                entry.configuredPath(), destination);
                     }
                 }
             } catch (IOException exception) {
@@ -334,6 +377,8 @@ public final class ConfigSyncNetworking {
 
             if (needsDownload && !requestedPaths.contains(entry.configuredPath())) {
                 requestedPaths.add(entry.configuredPath());
+                DebugLog.client(DebugLog.Area.TRANSFER, "'{}' needs a download ({} KB, {}).", entry.configuredPath(), entry.size() / 1024,
+                        Files.isRegularFile(destination) ? "the cached copy is outdated" : "no cached copy");
                 net.minecraft.client.Minecraft.getInstance().execute(
                         () -> requestVideoFromServer(entry.configuredPath()));
             }
@@ -349,10 +394,12 @@ public final class ConfigSyncNetworking {
     private static void requestVideoFromServer(String configuredPath) {
         NetworkHelper.sendToServer(CLIENT_VIDEO_REQUEST_PACKET,
                 NetworkHelper.toBytes(buf -> buf.writeUtf(configuredPath)));
+        DebugLog.client(DebugLog.Area.TRANSFER, "Requested '{}' from the server.", configuredPath);
     }
 
     private static void onClientVideoStart(String configuredPath, String conditionType, String hash, String extension, int expectedChunks) {
         if (CLIENT_DOWNLOADS.containsKey(configuredPath)) {
+            DebugLog.client(DebugLog.Area.TRANSFER, "'{}' is already downloading; ignoring a second start.", configuredPath);
             return;
         }
         Path gameDir = net.minecraft.client.Minecraft.getInstance().gameDirectory.toPath();
@@ -368,6 +415,7 @@ public final class ConfigSyncNetworking {
             return;
         }
         CLIENT_DOWNLOADS.put(configuredPath, new DownloadState(configuredPath, hash, target, temp, expectedChunks));
+        DebugLog.client(DebugLog.Area.TRANSFER, "Download of '{}' started: {} chunk(s) into '{}'.", configuredPath, expectedChunks, target);
     }
 
     private static void onClientVideoChunk(String configuredPath, int chunkIndex, byte[] data) {
@@ -383,6 +431,12 @@ public final class ConfigSyncNetworking {
         state.receivedChunks++;
         boolean complete = state.receivedChunks >= state.expectedChunks;
         if (complete) CLIENT_DOWNLOADS.remove(configuredPath);
+        int quarter = state.expectedChunks <= 0 ? 4 : state.receivedChunks * 4 / state.expectedChunks;
+        if (quarter > state.loggedQuarter && quarter < 4) {
+            state.loggedQuarter = quarter;
+            DebugLog.client(DebugLog.Area.TRANSFER, "Download of '{}': {}% ({}/{} chunks).", configuredPath, quarter * 25,
+                    state.receivedChunks, state.expectedChunks);
+        }
 
         ASYNC_IO.execute(() -> {
             try {
@@ -416,6 +470,12 @@ public final class ConfigSyncNetworking {
             }
 
             ActiveConfigResolver.setRemoteVideoPath(state.configuredPath, state.targetPath);
+            if (DebugLog.clientEnabled()) {
+                long millis = Math.max(1L, (System.nanoTime() - state.startNanos) / 1_000_000L);
+                long kilobytes = Files.size(state.targetPath) / 1024;
+                DebugLog.client(DebugLog.Area.TRANSFER, "Download of '{}' finished: {} KB in {} ms ({} KB/s), hash verified.",
+                        state.configuredPath, kilobytes, millis, kilobytes * 1000 / millis);
+            }
         } catch (IOException exception) {
             ConditionalVideos.LOGGER.warn("Failed finalizing video '{}'", state.configuredPath, exception);
         }
@@ -426,10 +486,18 @@ public final class ConfigSyncNetworking {
         VideoManifestEntry targetEntry = entries.stream()
                 .filter(entry -> entry.configuredPath().equals(configuredPath))
                 .findFirst().orElse(null);
-        if (targetEntry == null) return;
+        if (targetEntry == null) {
+            DebugLog.server(DebugLog.Area.TRANSFER, "'{}' requested by {} is not in the manifest; ignoring it.",
+                    configuredPath, player.getScoreboardName());
+            return;
+        }
 
         Path source = resolveConfigPath(player.server.getServerDirectory(), configuredPath);
-        if (source == null || !Files.isRegularFile(source)) return;
+        if (source == null || !Files.isRegularFile(source)) {
+            DebugLog.server(DebugLog.Area.TRANSFER, "'{}' requested by {} is missing on disk; ignoring it.",
+                    configuredPath, player.getScoreboardName());
+            return;
+        }
 
         long size;
         try {
@@ -451,6 +519,10 @@ public final class ConfigSyncNetworking {
             buf.writeUtf(extension);
             buf.writeVarInt(expectedChunks);
         }));
+        long startNanos = System.nanoTime();
+        ServerDebug.countTransferStarted();
+        DebugLog.server(DebugLog.Area.TRANSFER, "Sending '{}' to {}: {} KB in {} chunk(s).", configuredPath,
+                player.getScoreboardName(), size / 1024, expectedChunks);
 
         // Stream the file in chunks straight from disk instead of holding the whole video in memory.
         try (InputStream in = Files.newInputStream(source)) {
@@ -469,13 +541,20 @@ public final class ConfigSyncNetworking {
                 }));
                 index++;
             }
+            ServerDebug.countTransferFinished(size);
+            DebugLog.server(DebugLog.Area.TRANSFER, "Queued all {} chunk(s) of '{}' for {} in {} ms.", index, configuredPath,
+                    player.getScoreboardName(), (System.nanoTime() - startNanos) / 1_000_000L);
         } catch (IOException exception) {
+            ServerDebug.countTransferFailed();
             ConditionalVideos.LOGGER.warn("Failed reading configured video '{}'", configuredPath, exception);
         }
     }
 
     public static void onClientDisconnected() {
         ActiveConfigResolver.resetRemoteSessionState();
+        if (!CLIENT_DOWNLOADS.isEmpty()) {
+            DebugLog.client(DebugLog.Area.TRANSFER, "Dropped {} unfinished download(s) on disconnect.", CLIENT_DOWNLOADS.size());
+        }
         CLIENT_DOWNLOADS.clear();
         clientSyncRequested = false;
     }
@@ -483,6 +562,7 @@ public final class ConfigSyncNetworking {
     public static void requestServerSync(boolean force) {
         if (clientSyncRequested && !force) return;
         NetworkHelper.sendToServer(CLIENT_SYNC_REQUEST_PACKET, new byte[0]);
+        DebugLog.client(DebugLog.Area.NETWORK, "Asked the server for its ConditionalVideos data{}.", clientSyncRequested ? " (retry)" : "");
         clientSyncRequested = true;
     }
 
@@ -500,7 +580,9 @@ public final class ConfigSyncNetworking {
         private final Path targetPath;
         private final Path tempPath;
         private final int expectedChunks;
+        private final long startNanos = System.nanoTime();
         private int receivedChunks;
+        private int loggedQuarter;
 
         private DownloadState(String configuredPath, String hash, Path targetPath, Path tempPath, int expectedChunks) {
             this.configuredPath = configuredPath;

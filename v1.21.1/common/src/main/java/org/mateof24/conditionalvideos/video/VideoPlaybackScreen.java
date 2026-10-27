@@ -14,6 +14,7 @@ import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
 import org.mateof24.conditionalvideos.config.CommonConfig;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig.VideoEntry;
+import org.mateof24.conditionalvideos.debug.DebugLog;
 import org.mateof24.conditionalvideos.runtime.ConditionalVideosKeybinds;
 import org.mateof24.conditionalvideos.video.backend.WaterMediaVideoBackend;
 import org.watermedia.api.media.MediaAPI;
@@ -91,6 +92,7 @@ public final class VideoPlaybackScreen extends Screen {
     private int crossfadeTicks;
 
     private boolean closed;
+    private String closeReason = "closed by request";
     private boolean currentBackendInitialised;
     private int firstFrameWaitTicks;
     private int consecutiveFailures;
@@ -150,8 +152,9 @@ public final class VideoPlaybackScreen extends Screen {
         }
         try {
             MediaAPI.preload(uris.toArray(new URI[0]));
+            DebugLog.client(DebugLog.Area.SOURCE, "Asked WaterMedia to resolve {} playlist source(s) ahead of time.", uris.size());
         } catch (Throwable t) {
-            ConditionalVideos.LOGGER.debug("preload failed: {}", t.toString());
+            DebugLog.client(DebugLog.Area.SOURCE, "WaterMedia preload failed: {}", t.toString());
         }
     }
 
@@ -169,12 +172,17 @@ public final class VideoPlaybackScreen extends Screen {
 
     @Override
     protected void init() {
+        boolean firstInit = !currentBackendInitialised;
         if (!currentBackendInitialised) {
             ensureBackendInitialised(currentBackend);
             currentBackendInitialised = true;
         }
         boolean allowSounds = ActiveConfigResolver.effectiveAllowGameSounds(minecraft);
         alwaysShowCursor = ActiveConfigResolver.effectiveAlwaysShowCursor(minecraft);
+        if (firstInit) {
+            DebugLog.client(DebugLog.Area.PLAYLIST, "Playback screen open for '{}': allowGameSounds={}, alwaysShowCursor={}, forced quality {}.",
+                    conditionKey, allowSounds, alwaysShowCursor, forcedQuality == null ? "none (AUTO)" : forcedQuality);
+        }
         VideoAudioState.setAllowGameSounds(allowSounds);
         VideoAudioState.setVideoPlaying(true);
         if (minecraft != null && !allowSounds) {
@@ -261,12 +269,14 @@ public final class VideoPlaybackScreen extends Screen {
         consecutiveFailures++;
         if (consecutiveFailures >= playlist.size()) {
             ConditionalVideos.LOGGER.warn("All playlist entries failed to play; closing playback.");
-            onClose();
+            close("every entry failed");
             return;
         }
         int target = computeSkipTargetIndex();
+        DebugLog.client(DebugLog.Area.PLAYLIST, "Entry {} failed ({} in a row); {}.", currentIndex, consecutiveFailures,
+                target < 0 ? "no entry left to try" : "advancing to entry " + target);
         if (target < 0) {
-            onClose();
+            close("the failed entry was the last one");
             return;
         }
         if (nextBackend != null && nextIndex != target) {
@@ -280,7 +290,7 @@ public final class VideoPlaybackScreen extends Screen {
             startPreload(target);
         }
         if (nextBackend == null) {
-            onClose();
+            close("no playable entry after the failure");
             return;
         }
         promoteNextEntry();
@@ -288,8 +298,10 @@ public final class VideoPlaybackScreen extends Screen {
 
     private void skipToNextEntry() {
         int target = computeSkipTargetIndex();
+        DebugLog.client(DebugLog.Area.PLAYLIST, "Skip tapped on entry {}; {}.", currentIndex,
+                target < 0 ? "it is the last one, closing" : "jumping to entry " + target);
         if (target < 0) {
-            onClose();
+            close("skipped the last entry");
             return;
         }
         if (skipNextBackend != null && skipNextIndex == target) {
@@ -314,7 +326,7 @@ public final class VideoPlaybackScreen extends Screen {
             startPreload(target);
         }
         if (nextBackend == null) {
-            onClose();
+            close("no playable entry to skip to");
             return;
         }
         promoteNextEntry();
@@ -376,6 +388,8 @@ public final class VideoPlaybackScreen extends Screen {
             currentEntryTicks = 0;
             firstFrameWaitTicks = 0;
             consecutiveFailures = 0;
+            DebugLog.client(DebugLog.Area.PLAYLIST, "Entry {} ('{}') is on screen{}.", currentIndex, currentEntry.source(),
+                    paused ? "; holding it for the pending pause" : "");
             if (paused) {
                 // Pause was requested while this entry was still loading: apply it now that there is a
                 // frame, so it holds on the video instead of on the loading screen.
@@ -439,12 +453,15 @@ public final class VideoPlaybackScreen extends Screen {
             nextBackend.resumePlayback();
             nextBackend.setVolumeMultiplier(0f);
             preResumedBackend = nextBackend;
+            DebugLog.client(DebugLog.Area.PLAYLIST, "Started entry {} muted {} ticks early for a gapless cut.", nextIndex, PRE_RESUME_LEAD_TICKS);
         }
 
         if (!hasNext) {
             boolean naturallyEnded = currentBackend.hasFinished();
             boolean cueReached = endTick > 0 && currentEntryTicks >= endTick;
             if (naturallyEnded || cueReached) {
+                DebugLog.client(DebugLog.Area.PLAYLIST, "Last entry {} {}; fading out.", currentIndex,
+                        naturallyEnded ? "finished" : "reached its nextAt cue");
                 state = State.OUTGOING_FADE;
                 crossfadeTicks = 0;
             }
@@ -522,7 +539,7 @@ public final class VideoPlaybackScreen extends Screen {
         float progress = Math.min(1f, crossfadeTicks / (float) CROSSFADE_TICKS);
         currentBackend.setVolumeMultiplier(1f - progress);
         if (crossfadeTicks >= CROSSFADE_TICKS) {
-            onClose();
+            close("the playlist ended");
         }
     }
 
@@ -552,6 +569,7 @@ public final class VideoPlaybackScreen extends Screen {
         skipNextBackend.setVolumeMultiplier(0f);
         skipNextBackend.setStartPaused(true);
         ensureBackendInitialised(skipNextBackend);
+        DebugLog.client(DebugLog.Area.PLAYLIST, "Preloading entry {} ('{}') paused, ready for a skip.", target, entry.source());
     }
 
     private void disposeSkipPreload() {
@@ -586,12 +604,15 @@ public final class VideoPlaybackScreen extends Screen {
         nextBackend.setVolumeMultiplier(0f);
         nextBackend.setStartPaused(true);
         ensureBackendInitialised(nextBackend);
+        DebugLog.client(DebugLog.Area.PLAYLIST, "Preloading entry {} ('{}') paused{}.", targetIndex, entry.source(),
+                targetIndex == currentIndex ? " for the next loop" : "");
     }
 
     private void enterCrossfading() {
         if (nextBackend != null) {
             nextBackend.resumePlayback();
         }
+        DebugLog.client(DebugLog.Area.PLAYLIST, "Crossfading from entry {} to entry {}.", currentIndex, nextIndex);
         state = State.CROSSFADING;
         crossfadeTicks = 0;
         waitingForNextTicks = 0;
@@ -611,10 +632,13 @@ public final class VideoPlaybackScreen extends Screen {
             if (previous != null) {
                 try { previous.close(); } catch (Throwable ignored) { }
             }
-            onClose();
+            close("no next entry to switch to");
             return;
         }
 
+        DebugLog.client(DebugLog.Area.PLAYLIST, "Switching entry {} -> {} ('{}'){}{}.", currentIndex, nextIndex,
+                nextEntry == null ? "<unresolved>" : nextEntry.source(),
+                loopSwap ? ", a new loop with a fresh player" : "", fromCrossfade ? " after the crossfade" : "");
         boolean wasPreResumed = preResumedBackend == nextBackend;
         if (!wasPreResumed && !fromCrossfade) {
             nextBackend.resumePlayback();
@@ -901,7 +925,7 @@ public final class VideoPlaybackScreen extends Screen {
             skipHoldArmed = false;
             if (armed) {
                 // Held until the progress bar filled, now released: skip the whole playlist.
-                onClose();
+                close("the skip key was held: whole playlist skipped");
             } else if (heldTicks <= SKIP_TAP_MAX_TICKS
                     && state == State.PLAYING && !paused && isCurrentSkippable()) {
                 // Quick tap: skip just the current video to the next entry.
@@ -992,7 +1016,7 @@ public final class VideoPlaybackScreen extends Screen {
         try {
             GLFW.glfwSetInputMode(window, GLFW.GLFW_CURSOR, mode);
         } catch (Throwable t) {
-            ConditionalVideos.LOGGER.debug("Failed to set cursor visibility ({}): {}", visible, t.toString());
+            DebugLog.client(DebugLog.Area.RENDER, "Failed to set the cursor visibility to {}: {}", visible, t.toString());
             return;
         }
         cursorHidden = !visible;
@@ -1020,6 +1044,8 @@ public final class VideoPlaybackScreen extends Screen {
             return;
         }
         paused = value;
+        DebugLog.client(DebugLog.Area.PLAYLIST, "{} entry {}{}.", paused ? "Paused" : "Resumed", currentIndex,
+                currentFirstFrameSeen ? "" : " (applied once its first frame arrives)");
         // Only an entry that already has a frame can be held. Pausing the backend mid-startup stalls
         // it before it ever decodes one; tick() applies a pending pause once the first frame arrives.
         if (currentBackend != null && currentFirstFrameSeen) {
@@ -1029,6 +1055,12 @@ public final class VideoPlaybackScreen extends Screen {
                 currentBackend.resume();
             }
         }
+    }
+
+    // Internal close path that records why playback ended for the debug log.
+    private void close(String reason) {
+        closeReason = reason;
+        onClose();
     }
 
     @Override
@@ -1052,10 +1084,12 @@ public final class VideoPlaybackScreen extends Screen {
         if (closed) {
             return;
         }
+        closeReason = "another screen replaced the video";
         finishPlayback();
     }
 
     private void finishPlayback() {
+        DebugLog.client(DebugLog.Area.PLAYLIST, "Playback of '{}' finished at entry {}: {}.", conditionKey, currentIndex, closeReason);
         closed = true;
         state = State.CLOSED;
         if (cursorHidden) {

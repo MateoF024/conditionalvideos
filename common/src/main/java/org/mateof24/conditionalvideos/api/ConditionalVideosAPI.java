@@ -12,6 +12,8 @@ import org.mateof24.conditionalvideos.ConditionalVideos;
 import org.mateof24.conditionalvideos.condition.server.ServerConditionDispatcher;
 import org.mateof24.conditionalvideos.condition.shared.ConditionRegistry;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
+import org.mateof24.conditionalvideos.debug.DebugLog;
+import org.mateof24.conditionalvideos.debug.ServerDebug;
 import org.mateof24.conditionalvideos.network.PlaybackControlNetworking;
 import org.mateof24.conditionalvideos.runtime.PlaybackControlClient;
 import org.mateof24.conditionalvideos.runtime.PlaybackEvents;
@@ -102,7 +104,11 @@ public final class ConditionalVideosAPI {
         if (player == null || conditionKey == null || conditionKey.isBlank()) {
             return false;
         }
-        return ServerConditionDispatcher.fire(player, conditionKey.trim());
+        ServerDebug.countApiCall();
+        boolean sent = ServerConditionDispatcher.fire(player, conditionKey.trim());
+        DebugLog.server(DebugLog.Area.API, "triggerOnServer('{}', {}) -> {}.", conditionKey.trim(), player.getScoreboardName(),
+                sent ? "order sent" : "not sent (unknown key, no videos, or already fired)");
+        return sent;
     }
 
     /**
@@ -129,23 +135,31 @@ public final class ConditionalVideosAPI {
             return false;
         }
         String key = conditionKey.trim();
+        ServerDebug.countApiCall();
         ConditionalVideosConfig.ConditionConfig resolved =
                 ConditionRegistry.resolve(ServerConditionDispatcher.activeConfig(server), key);
         if (resolved == null || resolved.resolvedPlaylist().isEmpty()) {
+            DebugLog.server(DebugLog.Area.API, "forcePlayOnServer('{}', {}) -> not sent (unknown key or no videos).",
+                    key, player.getScoreboardName());
             return false;
         }
+        DebugLog.server(DebugLog.Area.API, "forcePlayOnServer('{}', {}) -> order sent.", key, player.getScoreboardName());
         PlaybackControlNetworking.sendPlay(player, key);
         return true;
     }
 
     public static void stopOnServer(ServerPlayer player) {
         if (player != null) {
+            ServerDebug.countApiCall();
+            DebugLog.server(DebugLog.Area.API, "stopOnServer({}).", player.getScoreboardName());
             PlaybackControlNetworking.sendStop(player);
         }
     }
 
     public static void togglePauseOnServer(ServerPlayer player) {
         if (player != null) {
+            ServerDebug.countApiCall();
+            DebugLog.server(DebugLog.Area.API, "togglePauseOnServer({}).", player.getScoreboardName());
             PlaybackControlNetworking.sendPause(player);
         }
     }
@@ -156,18 +170,21 @@ public final class ConditionalVideosAPI {
 
     public static void playOnClient(String conditionKey) {
         if (isClient() && conditionKey != null && !conditionKey.isBlank()) {
+            DebugLog.client(DebugLog.Area.API, "playOnClient('{}').", conditionKey.trim());
             PlaybackControlClient.play(conditionKey.trim());
         }
     }
 
     public static void stopOnClient() {
         if (isClient()) {
+            DebugLog.client(DebugLog.Area.API, "stopOnClient().");
             PlaybackControlClient.stop();
         }
     }
 
     public static void togglePauseOnClient() {
         if (isClient()) {
+            DebugLog.client(DebugLog.Area.API, "togglePauseOnClient().");
             PlaybackControlClient.togglePause();
         }
     }
@@ -222,8 +239,11 @@ public final class ConditionalVideosAPI {
     private static void seedRegisteredCustomConditions(MinecraftServer server) {
         Collection<CustomCondition> customs = CustomConditionRegistry.all();
         if (customs.isEmpty()) {
+            DebugLog.server(DebugLog.Area.API, "No custom conditions registered by other mods.");
             return;
         }
+        DebugLog.server(DebugLog.Area.API, "Custom conditions registered by other mods: {}.",
+                customs.stream().map(CustomCondition::id).toList());
         try {
             Path directory = server.getServerDirectory().toPath();
             Path file = server.isDedicatedServer()
@@ -247,9 +267,11 @@ public final class ConditionalVideosAPI {
             if (changed) {
                 config.save(file);
                 ConditionalVideos.LOGGER.info("Seeded {} registered custom condition(s) into '{}'.", customs.size(), file);
+            } else {
+                DebugLog.server(DebugLog.Area.API, "Every registered custom condition is already in '{}'; nothing seeded.", file);
             }
         } catch (Throwable t) {
-            ConditionalVideos.LOGGER.debug("Failed to seed registered custom conditions: {}", t.toString());
+            DebugLog.server(DebugLog.Area.API, "Failed to seed the registered custom conditions: {}", t.toString());
         }
     }
 

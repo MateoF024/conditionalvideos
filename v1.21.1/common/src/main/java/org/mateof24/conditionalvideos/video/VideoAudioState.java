@@ -1,5 +1,7 @@
 package org.mateof24.conditionalvideos.video;
 
+import org.mateof24.conditionalvideos.debug.DebugLog;
+
 public final class VideoAudioState {
     private static boolean videoPlaying = false;
     private static boolean loadingActive = false;
@@ -9,7 +11,9 @@ public final class VideoAudioState {
     }
 
     public static void setAllowGameSounds(boolean allow) {
+        boolean wasMuted = shouldMuteAudio();
         allowGameSounds = allow;
+        logChange(wasMuted);
     }
 
     public static boolean allowGameSounds() {
@@ -17,7 +21,9 @@ public final class VideoAudioState {
     }
 
     public static void setVideoPlaying(boolean playing) {
+        boolean wasMuted = shouldMuteAudio();
         videoPlaying = playing;
+        logChange(wasMuted);
     }
 
     public static boolean isVideoPlaying() {
@@ -25,7 +31,9 @@ public final class VideoAudioState {
     }
 
     public static void setLoadingActive(boolean active) {
+        boolean wasMuted = shouldMuteAudio();
         loadingActive = active;
+        logChange(wasMuted);
     }
 
     public static boolean isLoadingActive() {
@@ -34,5 +42,13 @@ public final class VideoAudioState {
 
     public static boolean shouldMuteAudio() {
         return (videoPlaying || loadingActive) && !allowGameSounds;
+    }
+
+    private static void logChange(boolean wasMuted) {
+        boolean muted = shouldMuteAudio();
+        if (muted != wasMuted) {
+            DebugLog.client(DebugLog.Area.AUDIO, "Game sounds {} (video={}, loading={}, allowGameSounds={}).",
+                    muted ? "blocked" : "allowed again", videoPlaying, loadingActive, allowGameSounds);
+        }
     }
 }

@@ -9,6 +9,7 @@ import com.mojang.blaze3d.vertex.VertexFormat;
 import net.minecraft.client.renderer.GameRenderer;
 import org.mateof24.conditionalvideos.ConditionalVideos;
 import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
+import org.mateof24.conditionalvideos.debug.ClientDebug;
 import org.mateof24.conditionalvideos.debug.DebugLog;
 import org.mateof24.conditionalvideos.debug.VideoDiagnostics;
 import org.watermedia.WaterMediaConfig;
@@ -179,7 +180,7 @@ public final class WaterMediaVideoBackend {
             try {
                 player.start();
             } catch (Throwable t2) {
-                ConditionalVideos.LOGGER.debug("resume()/start() failed for '{}': {}", source, t2.toString());
+                DebugLog.client(DebugLog.Area.PLAYBACK, "resume()/start() failed for '{}': {}", source, t2.toString());
             }
         }
     }
@@ -191,7 +192,7 @@ public final class WaterMediaVideoBackend {
         try {
             player.pause();
         } catch (Throwable t) {
-            ConditionalVideos.LOGGER.debug("pause() failed for '{}': {}", source, t.toString());
+            DebugLog.client(DebugLog.Area.PLAYBACK, "pause() failed for '{}': {}", source, t.toString());
         }
     }
 
@@ -202,12 +203,12 @@ public final class WaterMediaVideoBackend {
         try {
             player.resume();
         } catch (Throwable t) {
-            ConditionalVideos.LOGGER.debug("resume() failed for '{}': {}", source, t.toString());
+            DebugLog.client(DebugLog.Area.PLAYBACK, "resume() failed for '{}': {}", source, t.toString());
         }
     }
 
     public void init() {
-        DebugLog.log(DebugLog.Area.BACKEND, "Initialising backend for '{}'.", source);
+        DebugLog.client(DebugLog.Area.BACKEND, "Initialising backend for '{}'.", source);
         applyMatureContentPolicy();
         if (!createEngines()) {
             return;
@@ -222,13 +223,14 @@ public final class WaterMediaVideoBackend {
         try {
             Thread renderThread = Thread.currentThread();
             Executor renderExecutor = (Runnable r) -> RenderSystem.recordRenderCall(() -> {
-                if (DebugLog.enabled()) {
+                if (DebugLog.clientEnabled()) {
                     glUploadCount.incrementAndGet();
                 }
                 r.run();
             });
             gfx = MediaAPI.glEngine(renderThread, renderExecutor);
             sfx = MediaAPI.alEngine();
+            DebugLog.client(DebugLog.Area.BACKEND, "Created the OpenGL video and OpenAL audio engines for '{}'.", source);
             return true;
         } catch (Throwable throwable) {
             ConditionalVideos.LOGGER.warn("Failed to initialize WATERMeDIA v3 engines for '{}': {}", source, throwable.toString());
@@ -242,7 +244,7 @@ public final class WaterMediaVideoBackend {
         try {
             WaterMediaConfig.platforms.allowMatureContent = !ActiveConfigResolver.effectiveBlockMatureContent();
         } catch (Throwable t) {
-            ConditionalVideos.LOGGER.debug("Failed to apply mature-content policy to WaterMedia: {}", t.toString());
+            DebugLog.client(DebugLog.Area.SOURCE, "Failed to apply mature-content policy to WaterMedia: {}", t.toString());
         }
     }
 
@@ -256,15 +258,15 @@ public final class WaterMediaVideoBackend {
                 try {
                     mrl = mrl.reload();
                 } catch (Throwable t) {
-                    ConditionalVideos.LOGGER.debug("MRL.reload() failed for '{}': {}", source, t.toString());
+                    DebugLog.client(DebugLog.Area.SOURCE, "MRL.reload() failed for '{}': {}", source, t.toString());
                 }
             }
             if (mrl != null) {
                 ConditionalVideos.LOGGER.info("Requested MRL load from WATERMeDIA v3: {}", source);
-                DebugLog.log(DebugLog.Area.SOURCE, "MRL acquired for '{}' (initial status {}).", source, safeStatus());
+                DebugLog.client(DebugLog.Area.SOURCE, "MRL acquired for '{}' (initial status {}).", source, safeStatus());
             }
         } catch (Throwable throwable) {
-            ConditionalVideos.LOGGER.debug("MediaAPI.mrl() not ready yet for '{}': {}", source, throwable.toString());
+            DebugLog.client(DebugLog.Area.SOURCE, "MediaAPI.mrl() not ready yet for '{}': {}", source, throwable.toString());
         }
     }
 
@@ -282,7 +284,7 @@ public final class WaterMediaVideoBackend {
         }
         if (!loggedFirstFrame && renderedAnyFrame) {
             loggedFirstFrame = true;
-            DebugLog.log(DebugLog.Area.BACKEND, "First frame rendered for '{}'.", source);
+            DebugLog.client(DebugLog.Area.RENDER, "First frame rendered for '{}'.", source);
         }
         if (player == null) {
             tickPreStart();
@@ -325,7 +327,7 @@ public final class WaterMediaVideoBackend {
             qualitySettleTicks++;
             if (qualitySettleTicks >= QUALITY_SETTLE_TICKS) {
                 qualityCeilingReached = true;
-                DebugLog.log(DebugLog.Area.QUALITY, "Quality ceiling for '{}': stuck at {} below target {} after {} ticks; stop re-requesting.", source, current, desiredQuality, QUALITY_SETTLE_TICKS);
+                DebugLog.client(DebugLog.Area.QUALITY, "Quality ceiling for '{}': stuck at {} below target {} after {} ticks; stop re-requesting.", source, current, desiredQuality, QUALITY_SETTLE_TICKS);
             }
             return;
         }
@@ -333,7 +335,7 @@ public final class WaterMediaVideoBackend {
             player.quality(desiredQuality);
             lastRequestedQuality = desiredQuality;
             qualitySettleTicks = 0;
-            DebugLog.log(DebugLog.Area.QUALITY, "Requested quality {} for '{}' (was {}).", desiredQuality, source, current);
+            DebugLog.client(DebugLog.Area.QUALITY, "Requested quality {} for '{}' (was {}).", desiredQuality, source, current);
         } catch (Throwable ignored) {
         }
     }
@@ -380,7 +382,7 @@ public final class WaterMediaVideoBackend {
         }
         if (status != lastLoggedStatus) {
             lastLoggedStatus = status;
-            DebugLog.log(DebugLog.Area.SOURCE, "MRL '{}' status -> {}.", source, status);
+            DebugLog.client(DebugLog.Area.SOURCE, "MRL '{}' status -> {}.", source, status);
         }
         if (status == MRL.Status.ERROR) {
             if (mrlReloadAttempts >= MAX_MRL_RELOAD_ATTEMPTS) {
@@ -398,11 +400,11 @@ public final class WaterMediaVideoBackend {
             if (mrlErrorTicks >= MRL_RELOAD_SPACING_TICKS) {
                 mrlErrorTicks = 0;
                 mrlReloadAttempts++;
-                DebugLog.log(DebugLog.Area.SOURCE, "Retrying MRL '{}' (attempt {}/{}).", source, mrlReloadAttempts, MAX_MRL_RELOAD_ATTEMPTS);
+                DebugLog.client(DebugLog.Area.SOURCE, "Retrying MRL '{}' (attempt {}/{}).", source, mrlReloadAttempts, MAX_MRL_RELOAD_ATTEMPTS);
                 try {
                     mrl = mrl.reload();
                 } catch (Throwable t) {
-                    ConditionalVideos.LOGGER.debug("MRL.reload() failed for '{}': {}", source, t.toString());
+                    DebugLog.client(DebugLog.Area.SOURCE, "MRL.reload() failed for '{}': {}", source, t.toString());
                 }
             }
             return;
@@ -417,7 +419,7 @@ public final class WaterMediaVideoBackend {
             try {
                 mrl = mrl.reload();
             } catch (Throwable t) {
-                ConditionalVideos.LOGGER.debug("MRL.reload() failed for '{}': {}", source, t.toString());
+                DebugLog.client(DebugLog.Area.SOURCE, "MRL.reload() failed for '{}': {}", source, t.toString());
             }
             mrlWaitTicks++;
             if (mrlWaitTicks >= loadTimeoutTicks()) {
@@ -483,8 +485,10 @@ public final class WaterMediaVideoBackend {
             return;
         }
         registerStatusListener();
+        DebugLog.client(DebugLog.Area.BACKEND, "Created a WaterMedia player for '{}' (source #{}, {}, {} quality variant(s)).",
+                source, index, preferred.type(), preferred.qualities().size());
         if (ffmpegLoaded()) {
-            DebugLog.applyFfmpegLogLevel();
+            ClientDebug.applyFfmpegLogLevel();
         }
         desiredQuality = resolveDesiredQuality(preferred);
         appliedVolumeIntCache = Integer.MIN_VALUE;
@@ -498,12 +502,12 @@ public final class WaterMediaVideoBackend {
             try {
                 player.startPaused();
             } catch (Throwable t) {
-                ConditionalVideos.LOGGER.debug("startPaused() failed for '{}', falling back to start()+pause(): {}", source, t.toString());
+                DebugLog.client(DebugLog.Area.PLAYBACK, "startPaused() failed for '{}', falling back to start()+pause(): {}", source, t.toString());
                 try {
                     player.start();
                     player.pause();
                 } catch (Throwable t2) {
-                    ConditionalVideos.LOGGER.debug("start()+pause() fallback failed for '{}': {}", source, t2.toString());
+                    DebugLog.client(DebugLog.Area.PLAYBACK, "start()+pause() fallback failed for '{}': {}", source, t2.toString());
                 }
             }
             try {
@@ -524,12 +528,20 @@ public final class WaterMediaVideoBackend {
 
     // Caches player status from the onStatus event (seeded once) so per-tick queries read one volatile
     // field instead of several native getters; the callback may run off-thread, hence volatile. A terminal
-    // status consumes the listener, which is fine because a finished player is never restarted.
+    // status consumes the listener, which is fine because a finished player is never restarted. Every
+    // transition is also logged, with WaterMedia's own failure cause when it lands in ERROR.
     private void registerStatusListener() {
         try {
-            player.onStatus((p, previous, current) -> playerStatus = current);
+            player.onStatus((p, previous, current) -> {
+                playerStatus = current;
+                if (DebugLog.clientEnabled()) {
+                    Throwable cause = current == MediaPlayer.Status.ERROR ? p.exception() : null;
+                    DebugLog.client(DebugLog.Area.PLAYBACK, "Player '{}': {} -> {}{}.", source, previous, current,
+                            cause == null ? "" : " (cause: " + cause + ")");
+                }
+            });
         } catch (Throwable t) {
-            ConditionalVideos.LOGGER.debug("onStatus() registration failed for '{}': {}", source, t.toString());
+            DebugLog.client(DebugLog.Area.PLAYBACK, "onStatus() registration failed for '{}': {}", source, t.toString());
         }
         try {
             playerStatus = player.status();
@@ -601,14 +613,14 @@ public final class WaterMediaVideoBackend {
             available = null;
         }
         if (available == null || available.size() <= 1) {
-            DebugLog.log(DebugLog.Area.QUALITY, "Single-variant source for '{}'; leaving quality unmanaged.", source);
+            DebugLog.client(DebugLog.Area.QUALITY, "Single-variant source for '{}'; leaving quality unmanaged.", source);
             return null;
         }
         MediaQuality target = forcedQuality != null ? forcedQuality : MediaQuality.HIGHEST;
         try {
             MediaQuality picked = MediaQuality.closest(available, target);
             if (picked != null && picked != MediaQuality.UNKNOWN) {
-                DebugLog.log(DebugLog.Area.QUALITY, "Multi-variant source for '{}'; desired quality {} (target {}).", source, picked, target);
+                DebugLog.client(DebugLog.Area.QUALITY, "Multi-variant source for '{}'; desired quality {} (target {}).", source, picked, target);
                 return picked;
             }
         } catch (Throwable ignored) {
@@ -623,7 +635,7 @@ public final class WaterMediaVideoBackend {
         try {
             player.quality(desiredQuality);
         } catch (Throwable t) {
-            ConditionalVideos.LOGGER.debug("player.quality({}) failed for '{}': {}", desiredQuality, source, t.toString());
+            DebugLog.client(DebugLog.Area.QUALITY, "player.quality({}) failed for '{}': {}", desiredQuality, source, t.toString());
         }
     }
 
@@ -703,6 +715,10 @@ public final class WaterMediaVideoBackend {
     // Releases the player and both engines. The engines are released here as well because a source that
     // never got a player still owns them (the AL engine holds an OpenAL source from construction).
     private void cleanup() {
+        if (!closed) {
+            DebugLog.client(DebugLog.Area.BACKEND, "Releasing the backend for '{}' (frames shown: {}, failed: {}).",
+                    source, renderedAnyFrame, errored);
+        }
         closed = true;
         if (player != null) {
             try {
@@ -716,7 +732,7 @@ public final class WaterMediaVideoBackend {
             try {
                 player.release();
             } catch (Throwable t) {
-                ConditionalVideos.LOGGER.debug("Failed to release player for '{}': {}", source, t.toString());
+                DebugLog.client(DebugLog.Area.BACKEND, "Failed to release player for '{}': {}", source, t.toString());
             }
             player = null;
         }
@@ -724,7 +740,7 @@ public final class WaterMediaVideoBackend {
             try {
                 gfx.release();
             } catch (Throwable t) {
-                ConditionalVideos.LOGGER.debug("Failed to release GFX engine for '{}': {}", source, t.toString());
+                DebugLog.client(DebugLog.Area.BACKEND, "Failed to release GFX engine for '{}': {}", source, t.toString());
             }
             gfx = null;
         }
@@ -732,7 +748,7 @@ public final class WaterMediaVideoBackend {
             try {
                 sfx.release();
             } catch (Throwable t) {
-                ConditionalVideos.LOGGER.debug("Failed to release SFX engine for '{}': {}", source, t.toString());
+                DebugLog.client(DebugLog.Area.BACKEND, "Failed to release SFX engine for '{}': {}", source, t.toString());
             }
             sfx = null;
         }

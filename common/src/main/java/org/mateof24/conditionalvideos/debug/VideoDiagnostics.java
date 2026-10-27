@@ -34,7 +34,7 @@ public final class VideoDiagnostics {
     // uploadCounter is incremented by the render executor for every WaterMedia GL task, then read and
     // reset here to report uploads-per-second (0 = WaterMedia submitted no GL work this interval).
     public void sample(URI source, MediaPlayer player, GFXEngine gfx, long textureId, AtomicInteger uploadCounter) {
-        if (!DebugLog.enabled() || player == null) {
+        if (!DebugLog.clientEnabled() || player == null) {
             return;
         }
         long now = System.nanoTime();
@@ -91,7 +91,7 @@ public final class VideoDiagnostics {
                 }
                 line.append(']');
             }
-            DebugLog.log(DebugLog.Area.PLAYBACK, "{} for '{}'", line, source);
+            DebugLog.client(DebugLog.Area.PLAYBACK, "{} for '{}'", line, source);
 
             if (timeMs >= 0) {
                 lastTimeMs = timeMs;
@@ -100,7 +100,7 @@ public final class VideoDiagnostics {
                 lastCentre = centre;
             }
         } catch (Throwable t) {
-            DebugLog.log(DebugLog.Area.PLAYBACK, "diagnostics sample failed for '{}': {}", source, t.toString());
+            DebugLog.client(DebugLog.Area.PLAYBACK, "diagnostics sample failed for '{}': {}", source, t.toString());
         }
     }
 

@@ -6,9 +6,11 @@ import org.mateof24.conditionalvideos.condition.death.PlayerDeathVideoHandler;
 import net.minecraft.resources.ResourceLocation;
 import org.mateof24.conditionalvideos.condition.advancement.AdvancementVideoHandler;
 import org.mateof24.conditionalvideos.condition.dimension.DimensionChangeVideoHandler;
+import org.mateof24.conditionalvideos.condition.join.SessionKeyResolver;
 import org.mateof24.conditionalvideos.condition.kill.KillEntityVideoHandler;
 import org.mateof24.conditionalvideos.condition.shared.ConditionVideoPlayer;
 import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
+import org.mateof24.conditionalvideos.debug.DebugLog;
 import org.mateof24.conditionalvideos.network.ConfigSyncNetworking;
 
 // Per-tick client dispatcher: detects session start/end, the firstJoin flow, death, and dimension
@@ -30,12 +32,14 @@ public final class ClientRuntime {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.level == null || minecraft.player == null) {
             if (wasInSession) {
+                DebugLog.client(DebugLog.Area.LIFECYCLE, "Left the world; resetting the session state.");
                 KillEntityVideoHandler.onSessionEnded();
                 ConfigSyncNetworking.onClientDisconnected();
                 AdvancementVideoHandler.reset();
                 ActiveConfigResolver.invalidateLocalConfigCache();
                 ConditionVideoPlayer.clearQueue();
                 ConditionVideoPlayer.armFirstJoinGuard();
+                DebugLog.setClientSituation(DebugLog.CLIENT_MENU);
             }
             wasInSession = false;
             wasAlive = false;
@@ -49,6 +53,9 @@ public final class ClientRuntime {
 
         if (!wasInSession) {
             wasInSession = true;
+            DebugLog.setClientSituation(minecraft.hasSingleplayerServer() ? DebugLog.CLIENT_LOCAL : DebugLog.CLIENT_REMOTE);
+            DebugLog.client(DebugLog.Area.LIFECYCLE, "Joined a world (session '{}', dimension {}).",
+                    SessionKeyResolver.resolveSessionKey(minecraft), minecraft.level.dimension().location());
             KillEntityVideoHandler.onSessionStarted();
             lastDimension = minecraft.level.dimension().location();
             AdvancementVideoHandler.reset();
@@ -75,6 +82,8 @@ public final class ClientRuntime {
 
         ResourceLocation currentDimension = minecraft.level.dimension().location();
         if (lastDimension != null && !lastDimension.equals(currentDimension)) {
+            DebugLog.client(DebugLog.Area.CONDITION, "Dimension changed {} -> {}; checking its video in {} ticks.",
+                    lastDimension, currentDimension, DIMENSION_VIDEO_DELAY_TICKS);
             pendingDimensionVideoTarget = currentDimension;
             pendingDimensionVideoTicks = 0;
         }
@@ -100,6 +109,8 @@ public final class ClientRuntime {
             } else {
                 multiplayerHandshakeTicks++;
                 if (multiplayerHandshakeTicks >= JOIN_VIDEO_RETRY_TIMEOUT_TICKS) {
+                    DebugLog.client(DebugLog.Area.JOIN, "firstJoin could not start after {} ticks; giving up for this session.",
+                            JOIN_VIDEO_RETRY_TIMEOUT_TICKS);
                     joinVideoHandled = true;
                 }
             }
@@ -107,6 +118,7 @@ public final class ClientRuntime {
         }
 
         if (state == ActiveConfigResolver.RemoteConfigState.UNAVAILABLE) {
+            DebugLog.client(DebugLog.Area.JOIN, "The server has no ConditionalVideos data; firstJoin is skipped.");
             joinVideoHandled = true;
             return;
         }
@@ -116,6 +128,8 @@ public final class ClientRuntime {
             ConfigSyncNetworking.requestServerSync(true);
         }
         if (multiplayerHandshakeTicks >= MULTIPLAYER_HANDSHAKE_TIMEOUT_TICKS) {
+            DebugLog.client(DebugLog.Area.NETWORK, "No ConditionalVideos data from the server after {} ticks; treating it as a server without the mod.",
+                    MULTIPLAYER_HANDSHAKE_TIMEOUT_TICKS);
             ActiveConfigResolver.markRemoteUnavailable();
             joinVideoHandled = true;
         }
