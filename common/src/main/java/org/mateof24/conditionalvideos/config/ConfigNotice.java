@@ -67,6 +67,15 @@ public record ConfigNotice(String key, String english, Object... args) {
                 file, field, value, video, range);
     }
 
+    static ConfigNotice startAfterNext(String file, Object startAt, int video, Object nextAt) {
+        return new ConfigNotice("conditionalvideos.notice.start_after_next", "%s: startAt %s in video %s is not before its nextAt %s; the video is skipped",
+                file, startAt, video, nextAt);
+    }
+
+    static ConfigNotice negativeDelay(String file, Object delay) {
+        return new ConfigNotice("conditionalvideos.notice.negative_delay", "%s: conditionDelay %s cannot be negative; it plays without delay", file, delay);
+    }
+
     static ConfigNotice migrationSuspended(String file, Throwable error) {
         Matcher position = POSITION.matcher(String.valueOf(error.getMessage()));
         if (position.find()) {

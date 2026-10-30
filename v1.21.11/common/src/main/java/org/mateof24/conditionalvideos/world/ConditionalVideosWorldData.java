@@ -56,6 +56,21 @@ public final class ConditionalVideosWorldData extends SavedData {
         return added;
     }
 
+    // Natural playbacks in progress (waiting for their delay, loading or playing); what is left when the player
+    // returns was interrupted.
+    public Set<String> inProgress(UUID player) {
+        PlayerRecord record = players.get(player.toString());
+        return record == null ? Set.of() : Collections.unmodifiableSet(record.inProgress);
+    }
+
+    public void setInProgress(UUID player, String name, String key, boolean value) {
+        PlayerRecord record = players.computeIfAbsent(player.toString(), id -> new PlayerRecord());
+        record.name = name;
+        if (value ? record.inProgress.add(key) : record.inProgress.remove(key)) {
+            setDirty();
+        }
+    }
+
     public Protection protection(UUID player) {
         PlayerRecord record = players.get(player.toString());
         return record == null ? null : record.protection;
@@ -91,6 +106,11 @@ public final class ConditionalVideosWorldData extends SavedData {
             ListTag watched = new ListTag();
             record.watched.forEach(key -> watched.add(StringTag.valueOf(key)));
             playerTag.put("watched", watched);
+            if (!record.inProgress.isEmpty()) {
+                ListTag inProgress = new ListTag();
+                record.inProgress.forEach(key -> inProgress.add(StringTag.valueOf(key)));
+                playerTag.put("inProgress", inProgress);
+            }
             if (record.protection != null) {
                 CompoundTag protectionTag = new CompoundTag();
                 protectionTag.putString("key", record.protection.key());
@@ -116,6 +136,10 @@ public final class ConditionalVideosWorldData extends SavedData {
             for (int i = 0; i < watched.size(); i++) {
                 record.watched.add(watched.getStringOr(i, ""));
             }
+            ListTag inProgress = playerTag.getListOrEmpty("inProgress");
+            for (int i = 0; i < inProgress.size(); i++) {
+                record.inProgress.add(inProgress.getStringOr(i, ""));
+            }
             playerTag.getCompound("protection").ifPresent(protectionTag -> record.protection = new Protection(
                     protectionTag.getStringOr("key", ""), protectionTag.getBooleanOr("invulnerable", false),
                     protectionTag.getStringOr("gameMode", "")));
@@ -128,6 +152,7 @@ public final class ConditionalVideosWorldData extends SavedData {
     private static final class PlayerRecord {
         private String name = "";
         private final Set<String> watched = new LinkedHashSet<>();
+        private final Set<String> inProgress = new LinkedHashSet<>();
         private Protection protection;
     }
 }

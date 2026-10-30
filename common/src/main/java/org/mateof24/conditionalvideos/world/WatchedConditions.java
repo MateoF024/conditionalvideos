@@ -34,6 +34,7 @@ public final class WatchedConditions {
         if (!data.legacyImported() && PlayerRoles.isHost(server, player)) {
             importLegacy(server, player, data);
         }
+        PlaybackSessions.resolveInterrupted(player);
         return List.copyOf(data.watched(player.getUUID()));
     }
 
@@ -41,18 +42,26 @@ public final class WatchedConditions {
         return ConditionalVideosWorldData.get(player.getServer()).watched(player.getUUID()).contains(key);
     }
 
+    public static boolean wasOrdered(ServerPlayer player, String key) {
+        Set<String> ordered = ORDERED.get(player.getUUID());
+        return ordered != null && ordered.contains(key);
+    }
+
     // Remembers a natural order; false when the same condition was already ordered during this connection.
     public static boolean order(ServerPlayer player, String key) {
         return ORDERED.computeIfAbsent(player.getUUID(), id -> new HashSet<>()).add(key);
     }
 
-    // Records a started video as watched when it plays once and came from a natural trigger.
-    public static void onStarted(ServerPlayer player, String key, boolean once) {
+    // Records a started video as watched when it plays once and came from a natural trigger. With
+    // replayOnReconnect it only counts once it ends, so an interrupted one can play again.
+    public static void onStarted(ServerPlayer player, String key, boolean natural) {
         Set<String> ordered = ORDERED.get(player.getUUID());
-        boolean wasOrdered = ordered != null && ordered.remove(key);
+        if (ordered != null) {
+            ordered.remove(key);
+        }
         MinecraftServer server = player.getServer();
         ConditionConfig condition = ConditionRegistry.resolve(ServerConditionDispatcher.activeConfig(server), key);
-        if (condition == null || condition.repeatableInSameSession() || !(once || wasOrdered)) {
+        if (condition == null || condition.repeatableInSameSession() || !natural || condition.resolvedReplayOnReconnect()) {
             return;
         }
         ConditionalVideosWorldData.get(server).markWatched(player.getUUID(), player.getScoreboardName(), List.of(key));

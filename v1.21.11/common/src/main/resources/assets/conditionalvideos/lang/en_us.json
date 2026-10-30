@@ -24,6 +24,8 @@
   "conditionalvideos.notice.invalid_option": "%s: invalid %s '%s' in video %s; %s is used",
   "conditionalvideos.notice.invalid_comparator": "%s: invalid comparator '%s'; greaterOrEqual is used",
   "conditionalvideos.notice.out_of_range": "%s: %s %s in video %s is out of range (%s)",
+  "conditionalvideos.notice.start_after_next": "%s: startAt %s in video %s is not before its nextAt %s; the video is skipped",
+  "conditionalvideos.notice.negative_delay": "%s: conditionDelay %s cannot be negative; it plays without delay",
   "conditionalvideos.notice.migration.syntax": "%s has invalid JSON at line %s, column %s and was not migrated; fix it and restart the game",
   "conditionalvideos.notice.migration.unreadable": "%s could not be read (%s) and was not migrated; fix it and restart the game",
   "conditionalvideos.notice.migration.not_object": "%s does not contain a JSON object and was not migrated; fix it and restart the game",

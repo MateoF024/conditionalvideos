@@ -20,6 +20,7 @@ import org.mateof24.conditionalvideos.condition.server.ServerConditionDispatcher
 import org.mateof24.conditionalvideos.condition.shared.ConditionRegistry;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig.ConditionConfig;
 import org.mateof24.conditionalvideos.debug.DebugLog;
+import org.mateof24.conditionalvideos.network.PlaybackControlNetworking;
 import org.mateof24.conditionalvideos.world.ConditionalVideosWorldData.Protection;
 
 import java.util.ArrayList;
@@ -40,7 +41,7 @@ import java.util.UUID;
 // or a game mode change. A protected player also picks nothing up and is not pushed.
 // The world freezes only while every connected player is in a session whose condition has freezeWorld.
 public final class PlaybackSessions {
-    public enum Phase { LOADING, STARTED, ENDED, ALIVE }
+    public enum Phase { LOADING, STARTED, ENDED, ALIVE, DELAYED }
 
     private static final long SIGNAL_TIMEOUT_MILLIS = 30_000L;
     private static final long FIRST_JOIN_WINDOW_MILLIS = 5 * 60_000L;
@@ -89,11 +90,18 @@ public final class PlaybackSessions {
         events(player.getUUID()).orders.merge(key, 1, Integer::sum);
     }
 
-    public static void onState(ServerPlayer player, String key, Phase phase, boolean once) {
+    // natural is the client's word that its own detection triggered the playback; server orders are known here.
+    public static void onState(ServerPlayer player, String key, Phase phase, boolean reportedNatural) {
         UUID id = player.getUUID();
         Session session = SESSIONS.get(id);
         boolean current = session != null && session.key.equals(key);
+        boolean natural = reportedNatural || WatchedConditions.wasOrdered(player, key);
         switch (phase) {
+            case DELAYED -> {
+                if (natural) {
+                    markInProgress(player, key);
+                }
+            }
             case ALIVE -> {
                 if (current) {
                     session.lastSignal = System.currentTimeMillis();
@@ -103,16 +111,77 @@ public final class PlaybackSessions {
                 if (current) {
                     end(player, id, "the playlist ended", null);
                 }
+                finishInProgress(player, key);
             }
             case LOADING, STARTED -> {
+                if (natural) {
+                    markInProgress(player, key);
+                }
                 if (phase == Phase.STARTED) {
-                    WatchedConditions.onStarted(player, key, once);
+                    events(id).started.add(key);
+                    WatchedConditions.onStarted(player, key, natural);
                 }
                 if (current) {
                     session.lastSignal = System.currentTimeMillis();
                 } else {
                     begin(player, key);
                 }
+            }
+        }
+    }
+
+    // A natural playback stays noted in the world data while it waits, loads or plays, so a disconnect or a
+    // crash in between can be recognised when the player returns.
+    public static void markInProgress(ServerPlayer player, String key) {
+        MinecraftServer server = player.getServer();
+        if (ConditionRegistry.resolve(ServerConditionDispatcher.activeConfig(server), key) != null) {
+            ConditionalVideosWorldData.get(server).setInProgress(player.getUUID(), player.getScoreboardName(), key, true);
+        }
+    }
+
+    public static void clearInProgress(ServerPlayer player, String key) {
+        ConditionalVideosWorldData.get(player.getServer()).setInProgress(player.getUUID(), player.getScoreboardName(), key, false);
+    }
+
+    // A replayOnReconnect video that played to its end counts as watched only now.
+    private static void finishInProgress(ServerPlayer player, String key) {
+        MinecraftServer server = player.getServer();
+        ConditionalVideosWorldData data = ConditionalVideosWorldData.get(server);
+        if (!data.inProgress(player.getUUID()).contains(key)) {
+            return;
+        }
+        data.setInProgress(player.getUUID(), player.getScoreboardName(), key, false);
+        ConditionConfig condition = ConditionRegistry.resolve(ServerConditionDispatcher.activeConfig(server), key);
+        if (condition != null && !condition.repeatableInSameSession() && condition.resolvedReplayOnReconnect() && events(player.getUUID()).started.contains(key)) {
+            data.markWatched(player.getUUID(), player.getScoreboardName(), List.of(key));
+            DebugLog.server(DebugLog.Area.WORLD, "{} finished '{}'; it will not play again for them in this world.", player.getScoreboardName(), key);
+        }
+    }
+
+    // What is still noted when a player arrives was interrupted. With replayOnReconnect it plays again from the
+    // start (firstJoin through its own join flow, the rest by a server order); otherwise it stays watched.
+    public static void resolveInterrupted(ServerPlayer player) {
+        PlayerEvents events = events(player.getUUID());
+        if (events.interruptedResolved) {
+            return;
+        }
+        events.interruptedResolved = true;
+        MinecraftServer server = player.getServer();
+        ConditionalVideosWorldData data = ConditionalVideosWorldData.get(server);
+        for (String key : List.copyOf(data.inProgress(player.getUUID()))) {
+            data.setInProgress(player.getUUID(), player.getScoreboardName(), key, false);
+            ConditionConfig condition = ConditionRegistry.resolve(ServerConditionDispatcher.activeConfig(server), key);
+            if (condition == null || condition.resolvedPlaylist().isEmpty()) {
+                continue;
+            }
+            if (condition.resolvedReplayOnReconnect()) {
+                if (!ConditionRegistry.KEY_FIRST_JOIN.equals(key)) {
+                    events.replays.add(key);
+                }
+                DebugLog.server(DebugLog.Area.WORLD, "{} was interrupted during '{}'; it plays again.", player.getScoreboardName(), key);
+            } else if (!condition.repeatableInSameSession()) {
+                data.markWatched(player.getUUID(), player.getScoreboardName(), List.of(key));
+                DebugLog.server(DebugLog.Area.WORLD, "{} was interrupted during '{}'; it stays watched.", player.getScoreboardName(), key);
             }
         }
     }
@@ -205,12 +274,13 @@ public final class PlaybackSessions {
             return null;
         }
         long now = System.currentTimeMillis();
+        long delayMillis = condition.resolvedDelayTicks() * 50L;
         int slash = key.indexOf('/');
         String type = slash < 0 ? key : key.substring(0, slash);
         String id = slash < 0 ? "" : key.substring(slash + 1);
         switch (type) {
             case ConditionRegistry.KEY_FIRST_JOIN -> {
-                if (now - events.joinedAt > FIRST_JOIN_WINDOW_MILLIS) {
+                if (now - events.joinedAt > FIRST_JOIN_WINDOW_MILLIS + delayMillis) {
                     return "firstJoin is only accepted right after joining";
                 }
                 if (events.firstJoinAccepted) {
@@ -220,7 +290,7 @@ public final class PlaybackSessions {
                 return null;
             }
             case ConditionRegistry.KEY_PLAYER_DEATH, ConditionRegistry.TYPE_DEATH_BY_ENTITY -> {
-                if (now - events.diedAt > RECENT_EVENT_MILLIS) {
+                if (now - events.diedAt > RECENT_EVENT_MILLIS + delayMillis) {
                     return "the player did not die recently";
                 }
                 events.diedAt = Long.MIN_VALUE / 2;
@@ -228,10 +298,11 @@ public final class PlaybackSessions {
             }
             case ConditionRegistry.TYPE_ENTITY_KILLED -> {
                 Long killedAt = events.kills.remove(id);
-                return killedAt != null && now - killedAt <= RECENT_EVENT_MILLIS ? null : "the player did not kill a " + id + " recently";
+                return killedAt != null && now - killedAt <= RECENT_EVENT_MILLIS + delayMillis ? null : "the player did not kill a " + id + " recently";
             }
             case ConditionRegistry.TYPE_DIMENSION -> {
-                if (!dimensionOf(player).equals(id)) {
+                Long seenAt = events.dimensionsSeen.get(id);
+                if (!dimensionOf(player).equals(id) && (seenAt == null || now - seenAt > RECENT_EVENT_MILLIS + delayMillis)) {
                     return "the player is not in " + id;
                 }
                 if (id.equals(events.dimensionAccepted)) {
@@ -256,6 +327,7 @@ public final class PlaybackSessions {
         PlayerEvents events = events(player.getUUID());
         events.joinedAt = System.currentTimeMillis();
         events.dimension = dimensionOf(player);
+        events.dimensionsSeen.put(events.dimension, events.joinedAt);
         MinecraftServer server = player.getServer();
         ConditionalVideosWorldData data = ConditionalVideosWorldData.get(server);
         Protection left = data.protection(player.getUUID());
@@ -295,6 +367,16 @@ public final class PlaybackSessions {
         if (SESSIONS.isEmpty() && EVENTS.isEmpty()) {
             return;
         }
+        EVENTS.forEach((id, events) -> {
+            ServerPlayer player = events.replays.isEmpty() ? null : server.getPlayerList().getPlayer(id);
+            if (player != null) {
+                for (String key : events.replays) {
+                    WatchedConditions.order(player, key);
+                    PlaybackControlNetworking.sendPlay(player, key);
+                }
+                events.replays.clear();
+            }
+        });
         SESSIONS.forEach((id, session) -> {
             ServerPlayer player = session.protect ? server.getPlayerList().getPlayer(id) : null;
             if (player != null && !player.getAbilities().invulnerable) {
@@ -316,6 +398,7 @@ public final class PlaybackSessions {
         EVENTS.forEach((id, events) -> {
             ServerPlayer player = server.getPlayerList().getPlayer(id);
             String dimension = player == null ? events.dimension : dimensionOf(player);
+            events.dimensionsSeen.put(dimension, now);
             if (!dimension.equals(events.dimension)) {
                 events.dimension = dimension;
                 events.dimensionAccepted = null;
@@ -355,6 +438,7 @@ public final class PlaybackSessions {
     private static void reset(MinecraftServer server) {
         SESSIONS.clear();
         EVENTS.clear();
+        ServerConditionDispatcher.clearDelayed();
         ticks = 0;
         WorldFreeze.reset(server);
     }
@@ -400,6 +484,10 @@ public final class PlaybackSessions {
         private final Map<String, Integer> orders = new HashMap<>();
         private final Map<String, Long> kills = new HashMap<>();
         private final Set<String> advancementsAccepted = new HashSet<>();
+        private final Map<String, Long> dimensionsSeen = new HashMap<>();
+        private final Set<String> started = new HashSet<>();
+        private final List<String> replays = new ArrayList<>();
+        private boolean interruptedResolved;
         private long joinedAt = Long.MIN_VALUE / 2;
         private long diedAt = Long.MIN_VALUE / 2;
         private boolean firstJoinAccepted;

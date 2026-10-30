@@ -69,6 +69,7 @@ public final class ClientRuntime {
         }
 
         PlaybackControlNetworking.tickClientSession(ConditionVideoPlayer.isVideoActive(minecraft));
+        ConditionVideoPlayer.tickDelays(minecraft);
 
         if (!joinVideoHandled) {
             tickJoinFlow(minecraft);

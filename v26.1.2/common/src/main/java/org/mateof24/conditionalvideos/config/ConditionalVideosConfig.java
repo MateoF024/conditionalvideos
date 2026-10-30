@@ -88,19 +88,23 @@ public final class ConditionalVideosConfig {
         }
         if (parsed instanceof ScoreboardConditionConfig score) {
             lint(score.videos(), file, notices);
+            lintDelay(score.conditionDelay(), file, notices);
             if (score.comparator() != null && !score.comparator().isBlank() && !isValidComparator(score.comparator())) {
                 notices.add(ConfigNotice.invalidComparator(file, score.comparator()));
             }
             scoreboard.put(key, new ScoreboardConditionConfig(score.repeatableInSameSession(),
                     score.playlistLoop() == null ? Boolean.FALSE : score.playlistLoop(), playable(score.videos()),
-                    score.value(), score.comparator(), score.protectPlayer(), score.freezeWorld()));
+                    score.value(), score.comparator(), score.protectPlayer(), score.freezeWorld(),
+                    score.conditionDelay(), score.replayOnReconnect()));
             return true;
         }
         ConditionConfig condition = (ConditionConfig) parsed;
         lint(condition.videos(), file, notices);
+        lintDelay(condition.conditionDelay(), file, notices);
         ConditionConfig normalised = new ConditionConfig(condition.repeatableInSameSession(),
                 condition.playlistLoop() == null ? Boolean.FALSE : condition.playlistLoop(), playable(condition.videos()),
-                condition.protectPlayer(), condition.freezeWorld() == null && "firstJoin".equals(type) ? Boolean.TRUE : condition.freezeWorld());
+                condition.protectPlayer(), condition.freezeWorld() == null && "firstJoin".equals(type) ? Boolean.TRUE : condition.freezeWorld(),
+                condition.conditionDelay(), condition.replayOnReconnect());
         switch (type) {
             case "firstJoin" -> firstJoin = normalised;
             case "playerDeath" -> playerDeath = normalised;
@@ -186,14 +190,31 @@ public final class ConditionalVideosConfig {
             if (video.descriptionTextScale() != null && video.descriptionTextScale() <= 0f) {
                 notices.add(ConfigNotice.outOfRange(file, "descriptionTextScale", video.descriptionTextScale(), number, "> 0"));
             }
+            if (video.startAt() != null && video.startAt() < 0f) {
+                notices.add(ConfigNotice.outOfRange(file, "startAt", video.startAt(), number, ">= 0"));
+            }
+            if (startsPastNext(video)) {
+                notices.add(ConfigNotice.startAfterNext(file, video.startAt(), number, video.nextAt()));
+            }
         }
+    }
+
+    private static void lintDelay(Float delay, String file, List<ConfigNotice> notices) {
+        if (delay != null && delay < 0f) {
+            notices.add(ConfigNotice.negativeDelay(file, delay));
+        }
+    }
+
+    private static boolean startsPastNext(VideoEntry video) {
+        Float nextAt = video.resolvedNextAt();
+        return nextAt != null && video.resolvedStartAt() >= nextAt;
     }
 
     private static List<VideoEntry> playable(List<VideoEntry> videos) {
         List<VideoEntry> cleaned = new ArrayList<>();
         if (videos != null) {
             for (VideoEntry entry : videos) {
-                if (entry != null && entry.source() != null && !entry.source().isBlank()) {
+                if (entry != null && entry.source() != null && !entry.source().isBlank() && !startsPastNext(entry)) {
                     cleaned.add(entry);
                 }
             }
@@ -350,7 +371,7 @@ public final class ConditionalVideosConfig {
     }
 
     private static ConditionConfig emptyCondition() {
-        return new ConditionConfig(false, Boolean.FALSE, new ArrayList<>(), null, null);
+        return new ConditionConfig(false, Boolean.FALSE, new ArrayList<>(), null, null, null, null);
     }
 
     public ConditionConfig firstJoin() {
@@ -454,7 +475,9 @@ public final class ConditionalVideosConfig {
             Boolean playlistLoop,
             List<VideoEntry> videos,
             Boolean protectPlayer,
-            Boolean freezeWorld
+            Boolean freezeWorld,
+            Float conditionDelay,
+            Boolean replayOnReconnect
     ) {
         public boolean resolvedPlaylistLoop() {
             return playlistLoop != null && playlistLoop;
@@ -462,6 +485,14 @@ public final class ConditionalVideosConfig {
 
         public List<VideoEntry> resolvedPlaylist() {
             return playable(videos);
+        }
+
+        public int resolvedDelayTicks() {
+            return conditionDelay != null && conditionDelay > 0f ? Math.round(conditionDelay * 20f) : 0;
+        }
+
+        public boolean resolvedReplayOnReconnect() {
+            return replayOnReconnect != null && replayOnReconnect;
         }
 
         public boolean resolvedProtectPlayer() {
@@ -480,7 +511,9 @@ public final class ConditionalVideosConfig {
             Integer value,
             String comparator,
             Boolean protectPlayer,
-            Boolean freezeWorld
+            Boolean freezeWorld,
+            Float conditionDelay,
+            Boolean replayOnReconnect
     ) {
         public boolean resolvedPlaylistLoop() {
             return playlistLoop != null && playlistLoop;
@@ -518,7 +551,7 @@ public final class ConditionalVideosConfig {
         }
 
         public ConditionConfig toConditionConfig() {
-            return new ConditionConfig(repeatableInSameSession, playlistLoop, videos, protectPlayer, freezeWorld);
+            return new ConditionConfig(repeatableInSameSession, playlistLoop, videos, protectPlayer, freezeWorld, conditionDelay, replayOnReconnect);
         }
     }
 
@@ -537,10 +570,11 @@ public final class ConditionalVideosConfig {
             Float textBoxOpacity,
             Float videoVolume,
             String transition,
-            Float nextAt
+            Float nextAt,
+            Float startAt
     ) {
         public VideoEntry(String source) {
-            this(source, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+            this(source, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
         }
 
         public boolean resolvedSkippable() {
@@ -612,6 +646,10 @@ public final class ConditionalVideosConfig {
                 return TRANSITION_FADE;
             }
             return TRANSITION_CUT;
+        }
+
+        public float resolvedStartAt() {
+            return startAt != null && startAt > 0f ? startAt : 0f;
         }
 
         public Float resolvedNextAt() {

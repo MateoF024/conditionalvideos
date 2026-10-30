@@ -59,6 +59,10 @@ public final class WaterMediaVideoBackend {
     private boolean startPaused;
     private boolean resumeOnReady;
     private boolean holdAtZero;
+    // startAt: the player stays paused until the source is open, validated and sought there.
+    private long startAtMillis;
+    private boolean startAtPending;
+    private boolean resumeAfterStartAt;
 
     private MRL mrl;
     private MediaPlayer player;
@@ -170,6 +174,11 @@ public final class WaterMediaVideoBackend {
         this.holdAtZero = value;
     }
 
+    public void setStartAt(float seconds) {
+        startAtMillis = Math.round(seconds * 1000d);
+        startAtPending = startAtMillis > 0L;
+    }
+
     public void resumePlayback() {
         if (closed) {
             return;
@@ -179,10 +188,14 @@ public final class WaterMediaVideoBackend {
             resumeOnReady = true;
             return;
         }
+        if (startAtPending) {
+            resumeAfterStartAt = true;
+            return;
+        }
         boolean needsSeek = true;
         try {
             long ms = player.time();
-            if (ms >= 0L && ms < 100L) {
+            if (ms >= startAtMillis && ms < startAtMillis + 100L) {
                 needsSeek = false;
             }
         } catch (Throwable ignored) {
@@ -190,7 +203,7 @@ public final class WaterMediaVideoBackend {
         if (needsSeek) {
             try {
                 if (player.canSeek()) {
-                    player.seek(0L);
+                    player.seek(startAtMillis);
                 }
             } catch (Throwable ignored) {
             }
@@ -442,6 +455,7 @@ public final class WaterMediaVideoBackend {
             return;
         }
         reinforceQuality();
+        tickStartAt();
         enforceHoldAtZero();
     }
 
@@ -491,6 +505,43 @@ public final class WaterMediaVideoBackend {
         }
     }
 
+    // Once the source is open: a live stream, one that cannot seek or one shorter than startAt cannot honour it,
+    // so the entry fails and the playlist moves on. Otherwise it seeks there and resumes if it was meant to play.
+    private void tickStartAt() {
+        if (!startAtPending || closed) {
+            return;
+        }
+        MediaPlayer.Status status = playerStatus;
+        if (status == MediaPlayer.Status.ERROR || status == MediaPlayer.Status.ENDED || status == MediaPlayer.Status.STOPPED) {
+            startAtPending = false;
+            return;
+        }
+        if (status != MediaPlayer.Status.PAUSED && status != MediaPlayer.Status.PLAYING && status != MediaPlayer.Status.BUFFERING) {
+            return;
+        }
+        try {
+            boolean live = player.live();
+            long duration = player.duration();
+            if (live || !player.canSeek() || (duration > 0L && startAtMillis >= duration)) {
+                ConditionalVideos.LOGGER.warn("Video '{}' cannot start at {} s ({}); skipping it.", source, startAtMillis / 1000d,
+                        live ? "it is a live source" : duration > 0L ? "it lasts " + duration / 1000d + " s" : "it cannot seek");
+                startAtPending = false;
+                errored = true;
+                return;
+            }
+            if (player.seek(startAtMillis)) {
+                startAtPending = false;
+                DebugLog.client(DebugLog.Area.PLAYBACK, "'{}' starts at {} s.", source, startAtMillis / 1000d);
+                if (resumeAfterStartAt) {
+                    resumeAfterStartAt = false;
+                    player.resume();
+                }
+            }
+        } catch (Throwable throwable) {
+            DebugLog.client(DebugLog.Area.PLAYBACK, "Could not seek '{}' to its startAt yet: {}", source, throwable.toString());
+        }
+    }
+
     private void enforceHoldAtZero() {
         if (!holdAtZero || !playerStarted || player == null || closed) {
             return;
@@ -501,8 +552,8 @@ public final class WaterMediaVideoBackend {
             }
             try { player.pause(); } catch (Throwable ignored) { }
             try {
-                if (player.time() > HOLD_AT_ZERO_THRESHOLD_MS && player.canSeek()) {
-                    player.seek(0L);
+                if (player.time() > startAtMillis + HOLD_AT_ZERO_THRESHOLD_MS && player.canSeek()) {
+                    player.seek(startAtMillis);
                 }
             } catch (Throwable ignored) {
             }
@@ -647,7 +698,9 @@ public final class WaterMediaVideoBackend {
         qualitySettleTicks = 0;
         applyQualityIfPossible();
         applyVolumeIfPossible();
-        boolean willStartPaused = startPaused && !resumeOnReady;
+        boolean holdRequested = startPaused && !resumeOnReady;
+        boolean willStartPaused = holdRequested || startAtPending;
+        resumeAfterStartAt = startAtPending && !holdRequested;
         if (willStartPaused) {
             try {
                 player.startPaused();
@@ -661,7 +714,7 @@ public final class WaterMediaVideoBackend {
                 }
             }
             try {
-                if (player.canSeek()) {
+                if (!startAtPending && player.canSeek()) {
                     player.seek(0L);
                 }
             } catch (Throwable ignored) {

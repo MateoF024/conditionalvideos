@@ -165,6 +165,10 @@ public final class ServerDebug {
             DebugLog.server(DebugLog.Area.STATS, "Watching: {} | world {}", String.join(", ", watching),
                     WorldFreeze.isFrozen() ? "frozen" : "running");
         }
+        int delayed = ServerConditionDispatcher.delayedCount();
+        if (delayed > 0) {
+            DebugLog.server(DebugLog.Area.STATS, "Conditions waiting for their delay: {}", delayed);
+        }
         synchronized (ServerDebug.class) {
             int orders = ORDERS.values().stream().mapToInt(Integer::intValue).sum();
             if (orders > 0 || commands > 0 || apiCalls > 0) {

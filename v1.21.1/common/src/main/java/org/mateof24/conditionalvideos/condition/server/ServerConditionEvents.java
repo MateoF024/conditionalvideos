@@ -40,6 +40,7 @@ public final class ServerConditionEvents {
         PlayerEvent.PLAYER_QUIT.register(player -> {
             DebugLog.server(DebugLog.Area.JOIN, "{} left; cleared its pending orders and tracking state.", player.getScoreboardName());
             WatchedConditions.clearPlayer(player);
+            ServerConditionDispatcher.clearPlayer(player);
             sleepingState.remove(player.getUUID());
             scoreboardArmed.remove(player.getUUID());
         });
@@ -94,6 +95,7 @@ public final class ServerConditionEvents {
     }
 
     private static void onServerTick(MinecraftServer server) {
+        ServerConditionDispatcher.tickDelayed(server);
         ConditionalVideosConfig config = ServerConditionDispatcher.activeConfig(server);
         Map<String, ScoreboardConditionConfig> scoreboardConditions = config.scoreboard();
         ConditionalVideosConfig.ConditionConfig bedSleep = config.bedSleep();

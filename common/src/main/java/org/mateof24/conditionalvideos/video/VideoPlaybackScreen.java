@@ -142,6 +142,7 @@ public final class VideoPlaybackScreen extends Screen {
         applyCurrentEntryVisuals();
         coverTransition(currentEntry);
         this.currentBackend = new WaterMediaVideoBackend(firstSourceUri, currentEntry.resolvedVolume(defaultVolume));
+        this.currentBackend.setStartAt(currentEntry.resolvedStartAt());
         this.currentBackend.setForcedQuality(forcedQuality);
 
         warmAllPlaylistMrls(firstSourceUri);
@@ -575,6 +576,7 @@ public final class VideoPlaybackScreen extends Screen {
         skipNextBackend.setForcedQuality(forcedQuality);
         skipNextBackend.setVolumeMultiplier(0f);
         skipNextBackend.setStartPaused(true);
+        skipNextBackend.setStartAt(entry.resolvedStartAt());
         ensureBackendInitialised(skipNextBackend);
         DebugLog.client(DebugLog.Area.PLAYLIST, "Preloading entry {} ('{}') paused, ready for a skip.", target, entry.source());
     }
@@ -610,6 +612,7 @@ public final class VideoPlaybackScreen extends Screen {
         nextBackend.setForcedQuality(forcedQuality);
         nextBackend.setVolumeMultiplier(0f);
         nextBackend.setStartPaused(true);
+        nextBackend.setStartAt(entry.resolvedStartAt());
         ensureBackendInitialised(nextBackend);
         DebugLog.client(DebugLog.Area.PLAYLIST, "Preloading entry {} ('{}') paused{}.", targetIndex, entry.source(),
                 targetIndex == currentIndex ? " for the next loop" : "");
@@ -723,14 +726,16 @@ public final class VideoPlaybackScreen extends Screen {
         return -1;
     }
 
+    // Ticks the entry stays on screen; nextAt and the duration are absolute, so startAt comes off both.
     private int computeCurrentEndTick() {
+        float startAt = currentEntry.resolvedStartAt();
         Float nextAt = currentEntry.resolvedNextAt();
         if (nextAt != null) {
-            return Math.round(nextAt * 20f);
+            return Math.round((nextAt - startAt) * 20f);
         }
         double duration = currentBackend.durationSeconds();
         if (duration > 0d) {
-            return (int) Math.round(duration * 20d);
+            return (int) Math.round((duration - startAt) * 20d);
         }
         return -1;
     }
@@ -983,7 +988,7 @@ public final class VideoPlaybackScreen extends Screen {
         boolean newReady = false;
         try {
             double pos = currentBackend.positionSeconds();
-            newReady = pos >= TRAILING_RELEASE_POSITION_SECONDS;
+            newReady = pos >= currentEntry.resolvedStartAt() + TRAILING_RELEASE_POSITION_SECONDS;
         } catch (Throwable ignored) {
         }
         if (newReady || trailingBackendTicks >= TRAILING_MAX_TICKS) {
@@ -998,7 +1003,7 @@ public final class VideoPlaybackScreen extends Screen {
     // A texture alone can still be empty; once the clock has moved it holds a real picture.
     private boolean currentHasPicture() {
         try {
-            return currentBackend.hasTextureValid() && currentBackend.positionSeconds() >= TRAILING_RELEASE_POSITION_SECONDS;
+            return currentBackend.hasTextureValid() && currentBackend.positionSeconds() >= currentEntry.resolvedStartAt() + TRAILING_RELEASE_POSITION_SECONDS;
         } catch (Throwable ignored) {
             return false;
         }

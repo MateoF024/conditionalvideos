@@ -5,6 +5,7 @@ import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerPlayer;
 import org.mateof24.conditionalvideos.ConditionalVideos;
+import org.mateof24.conditionalvideos.condition.server.ServerConditionDispatcher;
 import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
 import org.mateof24.conditionalvideos.debug.DebugLog;
 import org.mateof24.conditionalvideos.debug.ServerDebug;
@@ -76,9 +77,9 @@ public final class PlaybackControlNetworking {
             FriendlyByteBuf buf = NetworkHelper.fromBytes(data);
             String conditionKey = buf.readUtf();
             int phase = buf.readVarInt();
-            boolean once = buf.readBoolean();
+            boolean natural = buf.readBoolean();
             if (phase >= 0 && phase < PlaybackSessions.Phase.values().length) {
-                PlaybackSessions.onState(player, conditionKey, PlaybackSessions.Phase.values()[phase], once);
+                PlaybackSessions.onState(player, conditionKey, PlaybackSessions.Phase.values()[phase], natural);
             }
         });
     }
@@ -92,6 +93,7 @@ public final class PlaybackControlNetworking {
     }
 
     public static void sendStop(ServerPlayer player) {
+        ServerConditionDispatcher.cancelDelayed(player);
         NetworkHelper.sendToPlayer(player, CONTROL_STOP, new byte[0]);
         DebugLog.server(DebugLog.Area.NETWORK, "Sent a stop order to {}.", player.getScoreboardName());
     }
@@ -112,21 +114,21 @@ public final class PlaybackControlNetworking {
     }
 
     // Reports a phase of this client's playback (loading screen, video, end) and keeps the local session in
-    // step: the pulse that keeps it alive on the server and the push immunity of a protected video. once
-    // marks a natural start of a condition that plays once per world.
-    public static void notifyPlayback(String conditionKey, PlaybackSessions.Phase phase, boolean once, boolean protect) {
+    // step: the pulse that keeps it alive on the server and the push immunity of a protected video. natural
+    // marks what this client's own detection triggered. A delay only informs the server: nothing is on screen.
+    public static void notifyPlayback(String conditionKey, PlaybackSessions.Phase phase, boolean natural, boolean protect) {
         if (phase == PlaybackSessions.Phase.ENDED) {
             if (conditionKey.equals(clientSession)) {
                 resetClientSession();
             }
-        } else {
+        } else if (phase != PlaybackSessions.Phase.DELAYED) {
             Minecraft minecraft = Minecraft.getInstance();
             clientSession = conditionKey;
             aliveTicks = 0;
             offScreenTicks = 0;
             PlaybackSessions.setClientImmune(protect && minecraft.player != null ? minecraft.player.getUUID() : null);
         }
-        sendState(conditionKey, phase, once);
+        sendState(conditionKey, phase, natural);
     }
 
     // Sends the pulse while the session lasts, and ends it when no video screen has been open for a while
@@ -153,14 +155,14 @@ public final class PlaybackControlNetworking {
     }
 
     // Only servers that sent a watched list know this message.
-    private static void sendState(String conditionKey, PlaybackSessions.Phase phase, boolean once) {
+    private static void sendState(String conditionKey, PlaybackSessions.Phase phase, boolean natural) {
         if (!ActiveConfigResolver.watchedFromServer() || Minecraft.getInstance().getConnection() == null) {
             return;
         }
         NetworkHelper.sendToServer(PLAYBACK_STATE, NetworkHelper.toBytes(buf -> {
             buf.writeUtf(conditionKey);
             buf.writeVarInt(phase.ordinal());
-            buf.writeBoolean(once);
+            buf.writeBoolean(natural);
         }));
         if (phase != PlaybackSessions.Phase.ALIVE) {
             DebugLog.client(DebugLog.Area.NETWORK, "Told the server '{}': {}.", conditionKey, phase);
