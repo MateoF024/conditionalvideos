@@ -95,7 +95,7 @@ public final class ConditionalVideosConfig {
             scoreboard.put(key, new ScoreboardConditionConfig(score.repeatableInSameSession(),
                     score.playlistLoop() == null ? Boolean.FALSE : score.playlistLoop(), playable(score.videos()),
                     score.value(), score.comparator(), score.protectPlayer(), score.freezeWorld(),
-                    score.conditionDelay(), score.replayOnReconnect()));
+                    score.conditionDelay(), score.replayOnReconnect(), score.disableLoadingScreen()));
             return true;
         }
         ConditionConfig condition = (ConditionConfig) parsed;
@@ -104,7 +104,7 @@ public final class ConditionalVideosConfig {
         ConditionConfig normalised = new ConditionConfig(condition.repeatableInSameSession(),
                 condition.playlistLoop() == null ? Boolean.FALSE : condition.playlistLoop(), playable(condition.videos()),
                 condition.protectPlayer(), condition.freezeWorld() == null && "firstJoin".equals(type) ? Boolean.TRUE : condition.freezeWorld(),
-                condition.conditionDelay(), condition.replayOnReconnect());
+                condition.conditionDelay(), condition.replayOnReconnect(), condition.disableLoadingScreen());
         switch (type) {
             case "firstJoin" -> firstJoin = normalised;
             case "playerDeath" -> playerDeath = normalised;
@@ -371,7 +371,7 @@ public final class ConditionalVideosConfig {
     }
 
     private static ConditionConfig emptyCondition() {
-        return new ConditionConfig(false, Boolean.FALSE, new ArrayList<>(), null, null, null, null);
+        return new ConditionConfig(false, Boolean.FALSE, new ArrayList<>(), null, null, null, null, null);
     }
 
     public ConditionConfig firstJoin() {
@@ -477,7 +477,8 @@ public final class ConditionalVideosConfig {
             Boolean protectPlayer,
             Boolean freezeWorld,
             Float conditionDelay,
-            Boolean replayOnReconnect
+            Boolean replayOnReconnect,
+            Boolean disableLoadingScreen
     ) {
         public boolean resolvedPlaylistLoop() {
             return playlistLoop != null && playlistLoop;
@@ -493,6 +494,10 @@ public final class ConditionalVideosConfig {
 
         public boolean resolvedReplayOnReconnect() {
             return replayOnReconnect != null && replayOnReconnect;
+        }
+
+        public boolean resolvedDisableLoadingScreen() {
+            return disableLoadingScreen != null && disableLoadingScreen;
         }
 
         public boolean resolvedProtectPlayer() {
@@ -513,7 +518,8 @@ public final class ConditionalVideosConfig {
             Boolean protectPlayer,
             Boolean freezeWorld,
             Float conditionDelay,
-            Boolean replayOnReconnect
+            Boolean replayOnReconnect,
+            Boolean disableLoadingScreen
     ) {
         public boolean resolvedPlaylistLoop() {
             return playlistLoop != null && playlistLoop;
@@ -551,7 +557,7 @@ public final class ConditionalVideosConfig {
         }
 
         public ConditionConfig toConditionConfig() {
-            return new ConditionConfig(repeatableInSameSession, playlistLoop, videos, protectPlayer, freezeWorld, conditionDelay, replayOnReconnect);
+            return new ConditionConfig(repeatableInSameSession, playlistLoop, videos, protectPlayer, freezeWorld, conditionDelay, replayOnReconnect, disableLoadingScreen);
         }
     }
 

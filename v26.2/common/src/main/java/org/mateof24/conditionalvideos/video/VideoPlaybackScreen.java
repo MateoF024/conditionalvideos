@@ -49,7 +49,7 @@ public final class VideoPlaybackScreen extends Screen {
     private static final int LOOP_PRELOAD_LEAD_TICKS = 20 * 20;
     private static final int PRE_RESUME_LEAD_TICKS = 5;
     private static final int TRAILING_MAX_TICKS = 40;
-    private static final double TRAILING_RELEASE_POSITION_SECONDS = 0.04;
+    static final double TRAILING_RELEASE_POSITION_SECONDS = 0.04;
 
     private final ConditionalVideosConfig config;
     private final List<VideoEntry> playlist;
@@ -59,6 +59,9 @@ public final class VideoPlaybackScreen extends Screen {
     private final Runnable onPlaylistEnd;
     private final MediaQuality forcedQuality;
     private final float defaultVolume;
+    // disableLoadingScreen: while no video is really playing nothing is drawn at all, and the game shows through.
+    private final boolean hideGaps;
+    private boolean endedBeforeNext;
 
     private State state = State.PLAYING;
 
@@ -126,7 +129,9 @@ public final class VideoPlaybackScreen extends Screen {
             Function<VideoEntry, URI> sourceResolver,
             URI firstSourceUri,
             String conditionKey,
-            Runnable onPlaylistEnd
+            Runnable onPlaylistEnd,
+            WaterMediaVideoBackend preparedBackend,
+            int startIndex
     ) {
         super(Component.literal("Conditional Video"));
         this.config = config;
@@ -138,13 +143,21 @@ public final class VideoPlaybackScreen extends Screen {
         this.forcedQuality = resolveForcedQuality(ActiveConfigResolver.effectiveVideoQuality(Minecraft.getInstance()));
         this.defaultVolume = ActiveConfigResolver.effectiveDefaultVolume(Minecraft.getInstance());
 
-        this.currentIndex = 0;
-        this.currentEntry = playlist.get(0);
+        this.hideGaps = conditionConfig.resolvedDisableLoadingScreen();
+
+        this.currentIndex = startIndex;
+        this.currentEntry = playlist.get(startIndex);
         applyCurrentEntryVisuals();
         coverTransition(currentEntry);
-        this.currentBackend = new WaterMediaVideoBackend(firstSourceUri, currentEntry.resolvedVolume(defaultVolume));
-        this.currentBackend.setStartAt(currentEntry.resolvedStartAt());
-        this.currentBackend.setForcedQuality(forcedQuality);
+        if (preparedBackend != null) {
+            this.currentBackend = preparedBackend;
+            this.currentBackend.setVolumeMultiplier(1f);
+            this.currentBackendInitialised = true;
+        } else {
+            this.currentBackend = new WaterMediaVideoBackend(firstSourceUri, currentEntry.resolvedVolume(defaultVolume));
+            this.currentBackend.setStartAt(currentEntry.resolvedStartAt());
+            this.currentBackend.setForcedQuality(forcedQuality);
+        }
 
         warmAllPlaylistMrls(firstSourceUri);
     }
@@ -152,8 +165,8 @@ public final class VideoPlaybackScreen extends Screen {
     private void warmAllPlaylistMrls(URI firstSourceUri) {
         List<URI> uris = new ArrayList<>(playlist.size());
         uris.add(firstSourceUri);
-        for (int i = 1; i < playlist.size(); i++) {
-            URI uri = sourceResolver.apply(playlist.get(i));
+        for (int i = 0; i < playlist.size(); i++) {
+            URI uri = i == currentIndex ? null : sourceResolver.apply(playlist.get(i));
             if (uri != null) {
                 uris.add(uri);
             }
@@ -206,7 +219,7 @@ public final class VideoPlaybackScreen extends Screen {
         resolveSkipBinding();
     }
 
-    private static MediaQuality resolveForcedQuality(String value) {
+    static MediaQuality resolveForcedQuality(String value) {
         if (value == null || value.isBlank() || CommonConfig.QUALITY_AUTO.equalsIgnoreCase(value.trim())) {
             return null;
         }
@@ -308,6 +321,7 @@ public final class VideoPlaybackScreen extends Screen {
             close("no playable entry after the failure");
             return;
         }
+        endedBeforeNext = hideGaps;
         promoteNextEntry();
     }
 
@@ -403,7 +417,9 @@ public final class VideoPlaybackScreen extends Screen {
             return;
         }
 
-        hintTicks++;
+        if (!showsNothing()) {
+            hintTicks++;
+        }
         if (!currentFirstFrameSeen && currentBackend.hasRenderedAnyFrame()) {
             currentFirstFrameSeen = true;
             currentEntryTicks = 0;
@@ -516,6 +532,7 @@ public final class VideoPlaybackScreen extends Screen {
                 promoteNextEntry();
                 return;
             }
+            noteEndBeforeNext(endTick);
             waitingForNextTicks++;
             if (waitingForNextTicks >= CROSSFADE_WAIT_MAX_TICKS) {
                 ConditionalVideos.LOGGER.warn("Next playlist entry '{}' did not load in time; promoting anyway.",
@@ -526,7 +543,11 @@ public final class VideoPlaybackScreen extends Screen {
         }
 
         if (nextBackend != null && nextBackend.isReadyToRender()) {
-            enterCrossfading();
+            if (endedBeforeNext) {
+                promoteNextEntry();
+            } else {
+                enterCrossfading();
+            }
             return;
         }
         if (nextBackend != null && nextBackend.hasError()) {
@@ -535,11 +556,21 @@ public final class VideoPlaybackScreen extends Screen {
             promoteNextEntry();
             return;
         }
+        noteEndBeforeNext(endTick);
         waitingForNextTicks++;
         if (waitingForNextTicks >= CROSSFADE_WAIT_MAX_TICKS) {
             ConditionalVideos.LOGGER.warn("Next playlist entry '{}' did not produce a frame in time; cutting without fade.",
                     nextEntry == null ? "<unresolved>" : nextEntry.source());
             promoteNextEntry();
+        }
+    }
+
+    // The video on screen is over and the next one is not ready: from here on it is hidden and muted.
+    private void noteEndBeforeNext(int endTick) {
+        if (hideGaps && !endedBeforeNext && (currentBackend.hasFinished() || (endTick > 0 && currentEntryTicks >= endTick))) {
+            endedBeforeNext = true;
+            currentBackend.setVolumeMultiplier(0f);
+            DebugLog.client(DebugLog.Area.PLAYLIST, "Entry {} ended before the next one was ready; showing nothing until it plays.", currentIndex);
         }
     }
 
@@ -635,7 +666,7 @@ public final class VideoPlaybackScreen extends Screen {
     private void coverTransition(VideoEntry incoming) {
         int color = currentEnableBackground ? currentBackgroundColor : config.resolveBackgroundColor(incoming, 0xFF000000);
         transitionBackdrop = 0xFF000000 | color;
-        coveringTransition = true;
+        coveringTransition = !hideGaps;
         coveringTicks = 0;
     }
 
@@ -693,7 +724,10 @@ public final class VideoPlaybackScreen extends Screen {
         if (trailingBackend != null && trailingBackend != previous) {
             try { trailingBackend.close(); } catch (Throwable ignored) { }
         }
-        if (previous != null && previous != currentBackend) {
+        if (previous != null && previous != currentBackend && endedBeforeNext) {
+            try { previous.close(); } catch (Throwable ignored) { }
+            trailingBackend = null;
+        } else if (previous != null && previous != currentBackend) {
             trailingBackend = previous;
             trailingBackendTicks = 0;
             try { trailingBackend.setVolumeMultiplier(0f); } catch (Throwable ignored) { }
@@ -705,6 +739,7 @@ public final class VideoPlaybackScreen extends Screen {
         nextEntry = null;
         nextIndex = -1;
         waitingForNextTicks = 0;
+        endedBeforeNext = false;
 
         state = State.PLAYING;
         crossfadeTicks = 0;
@@ -761,12 +796,15 @@ public final class VideoPlaybackScreen extends Screen {
 
     @Override
     public void extractRenderState(GuiGraphicsExtractor guiGraphics, int mouseX, int mouseY, float partialTick) {
+        if (showsNothing()) {
+            return;
+        }
         WaterMediaVideoBackend renderTarget = chooseRenderTarget();
         if (coveringTransition && state != State.CROSSFADING && renderTarget == currentBackend && currentHasPicture()) {
             coveringTransition = false;
         }
 
-        if (!currentFirstFrameSeen && renderTarget == currentBackend) {
+        if (!hideGaps && !currentFirstFrameSeen && renderTarget == currentBackend) {
             if (currentBackend.hasRenderedAnyFrame() && currentEnableBackground) {
                 guiGraphics.fill(0, 0, width, height, currentBackgroundColor);
             } else {
@@ -1003,6 +1041,11 @@ public final class VideoPlaybackScreen extends Screen {
         } catch (Throwable ignored) {
             return false;
         }
+    }
+
+    private boolean showsNothing() {
+        return hideGaps && state != State.CROSSFADING
+                && (endedBeforeNext || (!currentHasPicture() && (trailingBackend == null || !trailingBackend.hasTextureValid())));
     }
 
     private WaterMediaVideoBackend chooseRenderTarget() {

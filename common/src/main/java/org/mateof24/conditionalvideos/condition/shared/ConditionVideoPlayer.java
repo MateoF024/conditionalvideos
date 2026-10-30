@@ -8,8 +8,10 @@ import org.mateof24.conditionalvideos.config.ConditionalVideosConfig.VideoEntry;
 import org.mateof24.conditionalvideos.debug.DebugLog;
 import org.mateof24.conditionalvideos.network.PlaybackControlNetworking;
 import org.mateof24.conditionalvideos.world.PlaybackSessions;
+import org.mateof24.conditionalvideos.video.SilentVideoPreparation;
 import org.mateof24.conditionalvideos.video.VideoLoadingScreen;
 import org.mateof24.conditionalvideos.video.VideoPlaybackScreen;
+import org.mateof24.conditionalvideos.video.backend.WaterMediaVideoBackend;
 import org.mateof24.conditionalvideos.video.path.VideoPathResolver;
 import org.mateof24.conditionalvideos.video.path.VideoSourceResolver;
 
@@ -34,6 +36,8 @@ public final class ConditionVideoPlayer {
     private static final Deque<QueuedPlayback> QUEUE = new ArrayDeque<>();
     // Conditions waiting for their conditionDelay, in the order they fired.
     private static final Map<String, DelayedPlayback> DELAYED = new LinkedHashMap<>();
+    // The condition getting its first video ready with nothing on screen (disableLoadingScreen).
+    private static PreparingPlayback preparing;
     // Last logged resolution per configured source, so a source re-resolved every tick logs only on change.
     private static final Map<String, String> LOGGED_RESOLUTIONS = new HashMap<>();
 
@@ -75,7 +79,7 @@ public final class ConditionVideoPlayer {
 
     public static boolean isVideoActive(Minecraft minecraft) {
         return minecraft != null
-                && (minecraft.screen instanceof VideoPlaybackScreen
+                && (preparing != null || minecraft.screen instanceof VideoPlaybackScreen
                 || minecraft.screen instanceof VideoLoadingScreen);
     }
 
@@ -138,7 +142,44 @@ public final class ConditionVideoPlayer {
         }
     }
 
+    // Advances the silent preparation; the video appears as soon as it has a picture.
+    public static void tickPreparation(Minecraft minecraft) {
+        if (preparing == null) {
+            return;
+        }
+        PreparingPlayback current = preparing;
+        QueuedPlayback item = current.item();
+        switch (current.preparation().tick(minecraft.isPaused())) {
+            case WAITING -> { }
+            case READY -> {
+                preparing = null;
+                startPlayback(minecraft, item.config(), item.conditionConfig(), item.conditionId(), current.playlist(), current.sourceResolver(),
+                        current.preparation().backend().source(), item.onCloseCallback(), item.force(), current.preparation().backend(), current.preparation().index());
+            }
+            case FAILED -> {
+                preparing = null;
+                current.preparation().cancel();
+                DebugLog.client(DebugLog.Area.PLAYLIST, "Discarded '{}': no video could be prepared.", item.conditionId());
+                PlaybackControlNetworking.notifyPlayback(item.conditionId(), PlaybackSessions.Phase.ENDED, false, false);
+                if (item.onCloseCallback() != null) {
+                    item.onCloseCallback().run();
+                }
+                playNextInQueue(minecraft);
+            }
+        }
+    }
+
+    private static void cancelPreparation() {
+        if (preparing != null) {
+            DebugLog.client(DebugLog.Area.PLAYLIST, "Cancelled the silent preparation of '{}'.", preparing.item().conditionId());
+            preparing.preparation().cancel();
+            PlaybackControlNetworking.notifyPlayback(preparing.item().conditionId(), PlaybackSessions.Phase.ENDED, false, false);
+            preparing = null;
+        }
+    }
+
     public static void clearQueue() {
+        cancelPreparation();
         if (!QUEUE.isEmpty() || !DELAYED.isEmpty()) {
             DebugLog.client(DebugLog.Area.QUEUE, "Cleared {} queued and {} delayed condition(s).", QUEUE.size(), DELAYED.size());
         }
@@ -215,6 +256,11 @@ public final class ConditionVideoPlayer {
             return true;
         }
 
+        if (preparing != null && preparing.item().conditionId().equals(conditionId)) {
+            DebugLog.client(DebugLog.Area.QUEUE, "'{}' is already being prepared; ignoring the repeat.", conditionId);
+            return true;
+        }
+
         if (isVideoActive(minecraft)) {
             enqueue(new QueuedPlayback(config, conditionConfig, conditionId, logName, onCloseCallback, force), "the active video");
             return true;
@@ -226,6 +272,13 @@ public final class ConditionVideoPlayer {
 
         VideoEntry firstEntry = playlist.get(0);
         URI firstSourceUri = sourceResolver.apply(firstEntry);
+        if (conditionConfig.resolvedDisableLoadingScreen() && (firstSourceUri != null || isDownloadPending(minecraft, firstEntry.source()))) {
+            preparing = new PreparingPlayback(new QueuedPlayback(config, conditionConfig, conditionId, logName, onCloseCallback, force), playlist, sourceResolver,
+                    new SilentVideoPreparation(playlist, sourceResolver, path -> isDownloadPending(minecraft, path), LOADING_SCREEN_TIMEOUT_TICKS));
+            PlaybackControlNetworking.notifyPlayback(conditionId, PlaybackSessions.Phase.DELAYED, !force, false);
+            DebugLog.client(DebugLog.Area.CONDITION, "{} ('{}') prepares its video without a loading screen.", logName, conditionId);
+            return true;
+        }
         if (firstSourceUri == null) {
             String configuredPath = firstEntry.source();
             if (isDownloadPending(minecraft, configuredPath)) {
@@ -242,7 +295,7 @@ public final class ConditionVideoPlayer {
         }
 
         startPlayback(minecraft, config, conditionConfig, conditionId,
-                playlist, sourceResolver, firstSourceUri, onCloseCallback, force);
+                playlist, sourceResolver, firstSourceUri, onCloseCallback, force, null, 0);
         return true;
     }
 
@@ -277,7 +330,7 @@ public final class ConditionVideoPlayer {
                         return;
                     }
                     startPlayback(minecraft, config, conditionConfig, conditionId,
-                            playlist, sourceResolver, readyUri, onCloseCallback, force);
+                            playlist, sourceResolver, readyUri, onCloseCallback, force, null, 0);
                 },
                 () -> {
                     ConditionalVideos.LOGGER.warn("Timed out waiting for {} video '{}'.", logName, configuredPath);
@@ -305,7 +358,9 @@ public final class ConditionVideoPlayer {
                                       Function<VideoEntry, URI> sourceResolver,
                                       URI firstSourceUri,
                                       Runnable onCloseCallback,
-                                      boolean force) {
+                                      boolean force,
+                                      WaterMediaVideoBackend preparedBackend,
+                                      int startIndex) {
         boolean once = !force && !conditionConfig.repeatableInSameSession();
         if (once) {
             ActiveConfigResolver.markWatched(conditionId);
@@ -336,7 +391,9 @@ public final class ConditionVideoPlayer {
                 sourceResolver,
                 firstSourceUri,
                 conditionId,
-                playlistEnd
+                playlistEnd,
+                preparedBackend,
+                startIndex
         ));
         org.mateof24.conditionalvideos.runtime.PlaybackEvents.notifyStarted(conditionId);
     }
@@ -382,6 +439,9 @@ public final class ConditionVideoPlayer {
         if (DebugLog.clientEnabled() && !result.equals(LOGGED_RESOLUTIONS.put(configuredPath, result))) {
             DebugLog.client(DebugLog.Area.SOURCE, "Source '{}' -> {}.", configuredPath, result);
         }
+    }
+
+    private record PreparingPlayback(QueuedPlayback item, List<VideoEntry> playlist, Function<VideoEntry, URI> sourceResolver, SilentVideoPreparation preparation) {
     }
 
     private static final class DelayedPlayback {

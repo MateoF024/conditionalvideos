@@ -98,6 +98,7 @@ public final class PlaybackSessions {
         boolean natural = reportedNatural || WatchedConditions.wasOrdered(player, key);
         switch (phase) {
             case DELAYED -> {
+                events(id).waitingSince.putIfAbsent(key, System.currentTimeMillis());
                 if (natural) {
                     markInProgress(player, key);
                 }
@@ -111,6 +112,7 @@ public final class PlaybackSessions {
                 if (current) {
                     end(player, id, "the playlist ended", null);
                 }
+                events(id).waitingSince.remove(key);
                 finishInProgress(player, key);
             }
             case LOADING, STARTED -> {
@@ -126,6 +128,7 @@ public final class PlaybackSessions {
                 } else {
                     begin(player, key);
                 }
+                events(id).waitingSince.remove(key);
             }
         }
     }
@@ -275,6 +278,11 @@ public final class PlaybackSessions {
         }
         long now = System.currentTimeMillis();
         long delayMillis = condition.resolvedDelayTicks() * 50L;
+        // A video that waited or prepared in silence is judged by when it fired, within a limit.
+        Long waitingSince = events.waitingSince.get(key);
+        if (waitingSince != null && now - waitingSince <= delayMillis + FIRST_JOIN_WINDOW_MILLIS) {
+            now = waitingSince;
+        }
         int slash = key.indexOf('/');
         String type = slash < 0 ? key : key.substring(0, slash);
         String id = slash < 0 ? "" : key.substring(slash + 1);
@@ -485,6 +493,7 @@ public final class PlaybackSessions {
         private final Map<String, Long> kills = new HashMap<>();
         private final Set<String> advancementsAccepted = new HashSet<>();
         private final Map<String, Long> dimensionsSeen = new HashMap<>();
+        private final Map<String, Long> waitingSince = new HashMap<>();
         private final Set<String> started = new HashSet<>();
         private final List<String> replays = new ArrayList<>();
         private boolean interruptedResolved;
