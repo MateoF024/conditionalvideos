@@ -43,6 +43,7 @@ public final class ServerConditionEvents {
             scoreboardArmed.remove(player.getUUID());
         });
         TickEvent.SERVER_POST.register(ServerConditionEvents::onServerTick);
+        WorldPositionConditions.init();
     }
 
     // Seed the armed state from the CURRENT scores at join, WITHOUT firing. The scoreboard scores

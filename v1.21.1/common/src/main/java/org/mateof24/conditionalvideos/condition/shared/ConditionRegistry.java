@@ -3,6 +3,7 @@ package org.mateof24.conditionalvideos.condition.shared;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig.ConditionConfig;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig.ScoreboardConditionConfig;
+import org.mateof24.conditionalvideos.config.ConditionalVideosConfig.WorldPositionConditionConfig;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -22,6 +23,7 @@ public final class ConditionRegistry {
     public static final String TYPE_RECIPE_UNLOCKED = "recipeUnlocked";
     public static final String TYPE_SCOREBOARD = "scoreboard";
     public static final String TYPE_CUSTOM = "custom";
+    public static final String TYPE_WORLD_POSITION = "worldPosition";
 
     private ConditionRegistry() {
     }
@@ -46,6 +48,11 @@ public final class ConditionRegistry {
         for (Map.Entry<String, ScoreboardConditionConfig> entry : config.scoreboard().entrySet()) {
             if (entry.getValue() != null && !entry.getValue().resolvedPlaylist().isEmpty()) {
                 keys.add(TYPE_SCOREBOARD + "/" + entry.getKey());
+            }
+        }
+        for (Map.Entry<String, WorldPositionConditionConfig> entry : config.worldPosition().entrySet()) {
+            if (entry.getValue() != null && !entry.getValue().resolvedPlaylist().isEmpty()) {
+                keys.add(TYPE_WORLD_POSITION + "/" + entry.getKey());
             }
         }
         return keys;
@@ -77,6 +84,10 @@ public final class ConditionRegistry {
         if (TYPE_SCOREBOARD.equals(type)) {
             ScoreboardConditionConfig scoreboard = config.scoreboard().get(mapKey);
             return scoreboard == null ? null : scoreboard.toConditionConfig();
+        }
+        if (TYPE_WORLD_POSITION.equals(type)) {
+            WorldPositionConditionConfig area = config.worldPosition().get(mapKey);
+            return area == null ? null : area.toConditionConfig();
         }
         return switch (type) {
             case TYPE_ENTITY_KILLED -> config.entityKilled().get(mapKey);

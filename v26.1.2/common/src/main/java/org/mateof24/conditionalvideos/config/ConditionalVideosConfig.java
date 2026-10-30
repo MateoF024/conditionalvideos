@@ -27,6 +27,8 @@ public final class ConditionalVideosConfig {
     public static final String COMPARATOR_EQUAL = "equal";
     public static final String COMPARATOR_LESS = "less";
     public static final String COMPARATOR_GREATER = "greater";
+    public static final String TRIGGER_ENTER = "enter";
+    public static final String TRIGGER_EXIT = "exit";
     public static final String COMPARATOR_LESS_OR_EQUAL = "lessOrEqual";
     public static final String COMPARATOR_GREATER_OR_EQUAL = "greaterOrEqual";
     private static final String[] VALID_COMPARATORS = {
@@ -38,7 +40,7 @@ public final class ConditionalVideosConfig {
     public static final List<String> SIMPLE_CONDITIONS = List.of("firstJoin", "playerDeath", "totemUsed", "bedSleep");
     public static final List<String> NAMESPACED_TYPES = List.of("entityKilled", "deathByEntity", "advancementCompleted",
             "dimensionChanged", "itemObtained", "itemCrafted", "recipeUnlocked");
-    public static final List<String> FLAT_TYPES = List.of("scoreboard", "custom");
+    public static final List<String> FLAT_TYPES = List.of("scoreboard", "custom", "worldPosition");
     // The conditions that existed in 1.1.x and may still use its single-video format.
     static final Set<String> LEGACY_SHAPED = Set.of("firstJoin", "playerDeath", "entityKilled", "deathByEntity",
             "advancementCompleted", "dimensionChanged");
@@ -63,6 +65,7 @@ public final class ConditionalVideosConfig {
     private final Map<String, ConditionConfig> recipeUnlocked = new HashMap<>();
     private final Map<String, ScoreboardConditionConfig> scoreboard = new HashMap<>();
     private final Map<String, ConditionConfig> custom = new HashMap<>();
+    private final Map<String, WorldPositionConditionConfig> worldPosition = new HashMap<>();
 
     // Reads one condition into this config. Returns false when it is skipped; every problem found,
     // fatal or not, is added to notices with the given file label.
@@ -76,9 +79,10 @@ public final class ConditionalVideosConfig {
         }
         JsonObject object = LEGACY_SHAPED.contains(type) ? convertLegacy(element.getAsJsonObject()) : element.getAsJsonObject();
         boolean isScoreboard = "scoreboard".equals(type);
+        boolean isWorldPosition = "worldPosition".equals(type);
         Object parsed;
         try {
-            parsed = GSON.fromJson(object, isScoreboard ? ScoreboardConditionConfig.class : ConditionConfig.class);
+            parsed = GSON.fromJson(object, isScoreboard ? ScoreboardConditionConfig.class : isWorldPosition ? WorldPositionConditionConfig.class : ConditionConfig.class);
         } catch (RuntimeException exception) {
             notices.add(ConfigNotice.invalidContent(file, locate(object, exception)));
             return false;
@@ -97,6 +101,24 @@ public final class ConditionalVideosConfig {
                     score.value(), score.comparator(), score.protectPlayer(), score.freezeWorld(),
                     score.conditionDelay(), score.replayOnReconnect(), score.disableLoadingScreen(),
                     score.excludePlayers(), score.excludeTeams(), score.excludeOps()));
+            return true;
+        }
+        if (parsed instanceof WorldPositionConditionConfig area) {
+            lint(area.videos(), file, notices);
+            lintDelay(area.conditionDelay(), file, notices);
+            if (!area.isValidTrigger()) {
+                notices.add(ConfigNotice.invalidTrigger(file, area.trigger()));
+            }
+            ConfigNotice problem = area.problem(file);
+            if (problem != null) {
+                notices.add(problem);
+                return false;
+            }
+            worldPosition.put(key, new WorldPositionConditionConfig(area.repeatableInSameSession(),
+                    area.playlistLoop() == null ? Boolean.FALSE : area.playlistLoop(), playable(area.videos()),
+                    area.dimension(), area.from(), area.to(), area.trigger(), area.protectPlayer(), area.freezeWorld(),
+                    area.conditionDelay(), area.replayOnReconnect(), area.disableLoadingScreen(),
+                    area.excludePlayers(), area.excludeTeams(), area.excludeOps()));
             return true;
         }
         ConditionConfig condition = (ConditionConfig) parsed;
@@ -324,6 +346,13 @@ public final class ConditionalVideosConfig {
         }
         root.add("scoreboard", scores);
         root.add("custom", conditionMapTree(custom, viewer));
+        JsonObject areas = new JsonObject();
+        for (Map.Entry<String, WorldPositionConditionConfig> entry : worldPosition.entrySet()) {
+            if (!leftOut(entry.getValue().toConditionConfig(), viewer)) {
+                areas.add(entry.getKey(), withoutRules(GSON.toJsonTree(entry.getValue())));
+            }
+        }
+        root.add("worldPosition", areas);
         return GSON.toJson(root);
     }
 
@@ -451,6 +480,10 @@ public final class ConditionalVideosConfig {
 
     public Map<String, ConditionConfig> custom() {
         return custom;
+    }
+
+    public Map<String, WorldPositionConditionConfig> worldPosition() {
+        return worldPosition;
     }
 
     public int resolveBackgroundColor(VideoEntry entry, int fallbackColor) {
@@ -615,6 +648,77 @@ public final class ConditionalVideosConfig {
         public ConditionConfig toConditionConfig() {
             return new ConditionConfig(repeatableInSameSession, playlistLoop, videos, protectPlayer, freezeWorld, conditionDelay, replayOnReconnect, disableLoadingScreen,
                     excludePlayers, excludeTeams, excludeOps);
+        }
+    }
+
+    // One corner of a worldPosition area, in block coordinates.
+    public record AreaCorner(Double x, Double y, Double z) {
+    }
+
+    // A zone of one dimension, fired when a player's feet enter or leave it. Without y it covers any height.
+    public record WorldPositionConditionConfig(
+            boolean repeatableInSameSession,
+            Boolean playlistLoop,
+            List<VideoEntry> videos,
+            String dimension,
+            AreaCorner from,
+            AreaCorner to,
+            String trigger,
+            Boolean protectPlayer,
+            Boolean freezeWorld,
+            Float conditionDelay,
+            Boolean replayOnReconnect,
+            Boolean disableLoadingScreen,
+            List<String> excludePlayers,
+            List<String> excludeTeams,
+            Boolean excludeOps
+    ) {
+        public List<VideoEntry> resolvedPlaylist() {
+            return playable(videos);
+        }
+
+        public ConditionConfig toConditionConfig() {
+            return new ConditionConfig(repeatableInSameSession, playlistLoop, videos, protectPlayer, freezeWorld, conditionDelay, replayOnReconnect, disableLoadingScreen,
+                    excludePlayers, excludeTeams, excludeOps);
+        }
+
+        public boolean firesOnEnter() {
+            return !TRIGGER_EXIT.equalsIgnoreCase(trigger == null ? "" : trigger.trim());
+        }
+
+        boolean isValidTrigger() {
+            return trigger == null || trigger.isBlank() || TRIGGER_ENTER.equalsIgnoreCase(trigger.trim()) || TRIGGER_EXIT.equalsIgnoreCase(trigger.trim());
+        }
+
+        // What keeps this area from working; null when it is complete.
+        ConfigNotice problem(String file) {
+            if (dimension == null || dimension.isBlank()) {
+                return ConfigNotice.areaWithoutDimension(file);
+            }
+            if (from == null || to == null || from.x() == null || from.z() == null || to.x() == null || to.z() == null) {
+                return ConfigNotice.areaWithoutCorners(file);
+            }
+            if ((from.y() == null) != (to.y() == null)) {
+                return ConfigNotice.areaWithOneHeight(file);
+            }
+            return null;
+        }
+
+        // Whole blocks, both corners included and in any order.
+        public boolean contains(String currentDimension, int x, int y, int z) {
+            return resolvedDimension().equals(currentDimension)
+                    && within(x, from.x(), to.x())
+                    && within(z, from.z(), to.z())
+                    && (from.y() == null || within(y, from.y(), to.y()));
+        }
+
+        private String resolvedDimension() {
+            String id = dimension.trim();
+            return id.indexOf(':') < 0 ? "minecraft:" + id : id;
+        }
+
+        private static boolean within(int block, double first, double second) {
+            return block >= Math.floor(Math.min(first, second)) && block <= Math.floor(Math.max(first, second));
         }
     }
 

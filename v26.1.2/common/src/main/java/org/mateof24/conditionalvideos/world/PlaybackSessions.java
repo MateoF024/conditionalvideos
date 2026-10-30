@@ -17,6 +17,7 @@ import net.minecraft.world.entity.player.Abilities;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.GameType;
 import org.mateof24.conditionalvideos.condition.server.ServerConditionDispatcher;
+import org.mateof24.conditionalvideos.condition.server.WorldPositionConditions;
 import org.mateof24.conditionalvideos.condition.shared.ConditionRegistry;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig.ConditionConfig;
 import org.mateof24.conditionalvideos.debug.DebugLog;
@@ -383,8 +384,9 @@ public final class PlaybackSessions {
             ServerPlayer player = events.replays.isEmpty() ? null : server.getPlayerList().getPlayer(id);
             if (player != null) {
                 for (String key : events.replays) {
-                    WatchedConditions.order(player, key);
-                    PlaybackControlNetworking.sendPlay(player, key);
+                    if (WatchedConditions.order(player, key)) {
+                        PlaybackControlNetworking.sendPlay(player, key);
+                    }
                 }
                 events.replays.clear();
             }
@@ -451,6 +453,7 @@ public final class PlaybackSessions {
         SESSIONS.clear();
         EVENTS.clear();
         ServerConditionDispatcher.clearDelayed();
+        WorldPositionConditions.reset();
         PlayerExclusions.reset();
         ticks = 0;
         WorldFreeze.reset(server);
@@ -468,7 +471,7 @@ public final class PlaybackSessions {
         return EVENTS.computeIfAbsent(player, id -> new PlayerEvents());
     }
 
-    private static String dimensionOf(ServerPlayer player) {
+    public static String dimensionOf(ServerPlayer player) {
         return player.level().dimension().identifier().toString();
     }
 

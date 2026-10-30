@@ -251,6 +251,7 @@ public final class ConfigSyncNetworking {
         config.itemCrafted().forEach((key, value) -> addPlaylistEntries(entries, "item_crafted", value, serverRoot));
         config.recipeUnlocked().forEach((key, value) -> addPlaylistEntries(entries, "recipe_unlocked", value, serverRoot));
         config.custom().forEach((key, value) -> addPlaylistEntries(entries, "custom", value, serverRoot));
+        config.worldPosition().forEach((key, value) -> addPlaylistEntries(entries, "world_position", value.toConditionConfig(), serverRoot));
         config.scoreboard().forEach((key, value) -> addPlaylistEntries(entries, "scoreboard", value.toConditionConfig(), serverRoot));
         return entries;
     }

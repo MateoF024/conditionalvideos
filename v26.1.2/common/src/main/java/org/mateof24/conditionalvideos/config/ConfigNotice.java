@@ -57,6 +57,22 @@ public record ConfigNotice(String key, String english, Object... args) {
                 file, field, value, video, fallback);
     }
 
+    static ConfigNotice invalidTrigger(String file, Object value) {
+        return new ConfigNotice("conditionalvideos.notice.invalid_trigger", "%s: invalid trigger '%s'; enter is used", file, value);
+    }
+
+    static ConfigNotice areaWithoutDimension(String file) {
+        return new ConfigNotice("conditionalvideos.notice.area_no_dimension", "%s: a worldPosition needs its dimension; the condition is skipped", file);
+    }
+
+    static ConfigNotice areaWithoutCorners(String file) {
+        return new ConfigNotice("conditionalvideos.notice.area_no_corners", "%s: a worldPosition needs from and to, each with x and z; the condition is skipped", file);
+    }
+
+    static ConfigNotice areaWithOneHeight(String file) {
+        return new ConfigNotice("conditionalvideos.notice.area_one_height", "%s: y must be in both from and to, or in neither; the condition is skipped", file);
+    }
+
     static ConfigNotice invalidComparator(String file, Object value) {
         return new ConfigNotice("conditionalvideos.notice.invalid_comparator", "%s: invalid comparator '%s'; greaterOrEqual is used",
                 file, value);

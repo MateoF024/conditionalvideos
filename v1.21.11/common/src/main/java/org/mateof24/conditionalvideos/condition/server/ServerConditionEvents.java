@@ -45,6 +45,7 @@ public final class ServerConditionEvents {
             scoreboardArmed.remove(player.getUUID());
         });
         TickEvent.SERVER_POST.register(ServerConditionEvents::onServerTick);
+        WorldPositionConditions.init();
     }
 
     private static void onItemObtained(Player player, ItemStack stack) {
