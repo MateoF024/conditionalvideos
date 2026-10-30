@@ -66,6 +66,11 @@ public final class VideoPlaybackScreen extends Screen {
     private VideoEntry currentEntry;
     private WaterMediaVideoBackend currentBackend;
     private boolean currentFirstFrameSeen;
+    // While one video replaces another an opaque backdrop hides the world: the incoming entry may not paint a
+    // background, and a texture that was just created holds no picture yet.
+    private boolean coveringTransition;
+    private int transitionBackdrop;
+    private int coveringTicks;
     private int currentEntryTicks;
     private int hintTicks;
 
@@ -136,6 +141,7 @@ public final class VideoPlaybackScreen extends Screen {
         this.currentIndex = 0;
         this.currentEntry = playlist.get(0);
         applyCurrentEntryVisuals();
+        coverTransition(currentEntry);
         this.currentBackend = new WaterMediaVideoBackend(firstSourceUri, currentEntry.resolvedVolume(defaultVolume));
         this.currentBackend.setForcedQuality(forcedQuality);
 
@@ -360,6 +366,11 @@ public final class VideoPlaybackScreen extends Screen {
     public void tick() {
         if (closed) {
             return;
+        }
+
+        if (coveringTransition && currentFirstFrameSeen && state != State.CROSSFADING && ++coveringTicks > TRAILING_MAX_TICKS) {
+            coveringTransition = false;
+            DebugLog.client(DebugLog.Area.RENDER, "Entry {} has shown no picture after {} ticks; removing the transition backdrop.", currentIndex, TRAILING_MAX_TICKS);
         }
 
         tickSkipHold();
@@ -617,11 +628,20 @@ public final class VideoPlaybackScreen extends Screen {
                 targetIndex == currentIndex ? " for the next loop" : "");
     }
 
+    // Takes the color of the entry on screen, or of the incoming one when the current has no background.
+    private void coverTransition(VideoEntry incoming) {
+        int color = currentEnableBackground ? currentBackgroundColor : config.resolveBackgroundColor(incoming, 0xFF000000);
+        transitionBackdrop = 0xFF000000 | color;
+        coveringTransition = true;
+        coveringTicks = 0;
+    }
+
     private void enterCrossfading() {
         if (nextBackend != null) {
             nextBackend.resumePlayback();
         }
         DebugLog.client(DebugLog.Area.PLAYLIST, "Crossfading from entry {} to entry {}.", currentIndex, nextIndex);
+        coverTransition(nextEntry);
         state = State.CROSSFADING;
         crossfadeTicks = 0;
         waitingForNextTicks = 0;
@@ -654,6 +674,7 @@ public final class VideoPlaybackScreen extends Screen {
         }
         preResumedBackend = null;
 
+        coverTransition(nextEntry);
         currentBackend = nextBackend;
         currentEntry = nextEntry;
         currentIndex = nextIndex;
@@ -736,6 +757,9 @@ public final class VideoPlaybackScreen extends Screen {
     @Override
     public void extractRenderState(GuiGraphicsExtractor guiGraphics, int mouseX, int mouseY, float partialTick) {
         WaterMediaVideoBackend renderTarget = chooseRenderTarget();
+        if (coveringTransition && state != State.CROSSFADING && renderTarget == currentBackend && currentHasPicture()) {
+            coveringTransition = false;
+        }
 
         if (!currentFirstFrameSeen && renderTarget == currentBackend) {
             if (currentBackend.hasRenderedAnyFrame() && currentEnableBackground) {
@@ -747,7 +771,9 @@ public final class VideoPlaybackScreen extends Screen {
             return;
         }
 
-        if (currentEnableBackground) {
+        if (coveringTransition) {
+            guiGraphics.fill(0, 0, width, height, transitionBackdrop);
+        } else if (currentEnableBackground) {
             guiGraphics.fill(0, 0, width, height, currentBackgroundColor);
         }
 
@@ -830,8 +856,9 @@ public final class VideoPlaybackScreen extends Screen {
         int scaledTextHeight = Math.round(baseTextHeight * scale);
         int boxHeight = scaledTextHeight + TEXT_BOX_PADDING * 2;
 
-        pushTextBox(guiGraphics, position, boxHeight);
-        fillTextBox(guiGraphics, 0, 0, TEXT_BOX_WIDTH, boxHeight, alpha);
+        int boxWidth = fittedBoxWidth(lines, scale);
+        pushTextBox(guiGraphics, position, boxWidth, boxHeight);
+        fillTextBox(guiGraphics, 0, 0, boxWidth, boxHeight, alpha);
 
         drawScaledLines(guiGraphics, lines, TEXT_BOX_PADDING, TEXT_BOX_PADDING, scale, alpha);
         popTextBox(guiGraphics);
@@ -848,8 +875,9 @@ public final class VideoPlaybackScreen extends Screen {
         int gap = Math.round((font.lineHeight + LINE_SPACING) * Math.max(currentTitleScale, currentDescriptionScale));
         int boxHeight = titleBlockHeight + gap + descBlockHeight + TEXT_BOX_PADDING * 2;
 
-        pushTextBox(guiGraphics, currentTitlePosition, boxHeight);
-        fillTextBox(guiGraphics, 0, 0, TEXT_BOX_WIDTH, boxHeight, alpha);
+        int boxWidth = Math.max(fittedBoxWidth(titleLines, currentTitleScale), fittedBoxWidth(descLines, currentDescriptionScale));
+        pushTextBox(guiGraphics, currentTitlePosition, boxWidth, boxHeight);
+        fillTextBox(guiGraphics, 0, 0, boxWidth, boxHeight, alpha);
 
         drawScaledLines(guiGraphics, titleLines, TEXT_BOX_PADDING, TEXT_BOX_PADDING, currentTitleScale, alpha);
         int descTopY = TEXT_BOX_PADDING + titleBlockHeight + gap;
@@ -857,11 +885,21 @@ public final class VideoPlaybackScreen extends Screen {
         popTextBox(guiGraphics);
     }
 
+    // A box is only as wide as its longest line, so a short text reaches the corner it is anchored to. Text
+    // wraps at TEXT_BOX_WIDTH.
+    private int fittedBoxWidth(List<FormattedCharSequence> lines, float scale) {
+        int longest = 0;
+        for (FormattedCharSequence line : lines) {
+            longest = Math.max(longest, font.width(line));
+        }
+        return Math.min(TEXT_BOX_WIDTH, (int) Math.ceil(longest * scale) + TEXT_BOX_PADDING * 2);
+    }
+
     // Moves drawing to the box's corner. The offset is fractional so an exact position lands on its real pixel
     // whatever the GUI scale is. The bottom corners stay above the skip hint.
-    private void pushTextBox(GuiGraphicsExtractor guiGraphics, TextPosition position, int boxHeight) {
+    private void pushTextBox(GuiGraphicsExtractor guiGraphics, TextPosition position, int boxWidth, int boxHeight) {
         double guiScale = minecraft.getWindow().getGuiScale();
-        float x = position.left(width, TEXT_BOX_WIDTH, TEXT_BOX_MARGIN, guiScale);
+        float x = position.left(width, boxWidth, TEXT_BOX_MARGIN, guiScale);
         float y = position.top(height, boxHeight, TEXT_BOX_MARGIN, height - 24 - TEXT_BOX_MARGIN, guiScale);
         Matrix3x2fStack pose = guiGraphics.pose();
         pose.pushMatrix();
@@ -989,18 +1027,20 @@ public final class VideoPlaybackScreen extends Screen {
         }
     }
 
+    // A texture alone can still be empty; once the clock has moved it holds a real picture.
+    private boolean currentHasPicture() {
+        try {
+            return currentBackend.hasTextureValid() && currentBackend.positionSeconds() >= TRAILING_RELEASE_POSITION_SECONDS;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
     private WaterMediaVideoBackend chooseRenderTarget() {
         if (trailingBackend == null) {
             return currentBackend;
         }
-        boolean newHasTexture = currentBackend.hasTextureValid();
-        boolean newHasContent;
-        try {
-            newHasContent = currentBackend.positionSeconds() >= TRAILING_RELEASE_POSITION_SECONDS;
-        } catch (Throwable ignored) {
-            newHasContent = false;
-        }
-        if (newHasTexture && newHasContent) {
+        if (currentHasPicture()) {
             return currentBackend;
         }
         if (trailingBackend.hasTextureValid()) {
