@@ -8,6 +8,7 @@
     "ClientPacketListenerMixin",
     "GpuDeviceAccessor",
     "PlayerAttackMixin",
+    "SilentCategoriesMixin",
     "SoundManagerMixin",
     "ToastComponentMixin",
     "VulkanDeviceMixin",
