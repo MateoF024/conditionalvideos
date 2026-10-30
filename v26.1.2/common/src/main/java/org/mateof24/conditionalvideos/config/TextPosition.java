@@ -63,6 +63,23 @@ public record TextPosition(boolean exact, double x, boolean fromRight, double y,
         return clamp(fromBottom ? screenHeight - y / guiScale - boxHeight : y / guiScale, screenHeight - boxHeight);
     }
 
+    // Boxes that really overlap are moved apart: the title goes right above the description or, without room
+    // above, the description right below the title. Returns the new tops {title, description}.
+    public static float[] separate(float titleLeft, float titleTop, int titleWidth, int titleHeight,
+                                   float descriptionLeft, float descriptionTop, int descriptionWidth, int descriptionHeight, int gap) {
+        boolean overlap = titleLeft < descriptionLeft + descriptionWidth && descriptionLeft < titleLeft + titleWidth
+                && titleTop < descriptionTop + descriptionHeight && descriptionTop < titleTop + titleHeight;
+        if (!overlap) {
+            return new float[]{titleTop, descriptionTop};
+        }
+        float raised = descriptionTop - gap - titleHeight;
+        if (raised >= 0f) {
+            return new float[]{raised, descriptionTop};
+        }
+        float top = Math.max(0f, Math.min(titleTop, descriptionTop));
+        return new float[]{top, top + titleHeight + gap};
+    }
+
     private static float clamp(double value, int max) {
         return (float) Math.max(0d, Math.min(value, Math.max(0, max)));
     }

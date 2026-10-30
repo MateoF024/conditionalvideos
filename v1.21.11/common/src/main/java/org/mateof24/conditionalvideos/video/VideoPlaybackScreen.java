@@ -33,7 +33,7 @@ public final class VideoPlaybackScreen extends Screen {
     private static final int HINT_VISIBLE_TICKS = 120;
     private static final int HINT_FADE_IN_TICKS = 30;
     private static final int HINT_FADE_OUT_TICKS = 40;
-    private static final int TEXT_BOX_WIDTH = 220;
+    private static final int TEXT_BOX_GAP = 4;
     private static final int TEXT_BOX_PADDING = 6;
     private static final int TEXT_BOX_MARGIN = 10;
     private static final int LINE_SPACING = 2;
@@ -832,82 +832,46 @@ public final class VideoPlaybackScreen extends Screen {
             return;
         }
 
-        if (hasTitle && hasDescription && currentTitlePosition.equals(currentDescriptionPosition)) {
-            drawCombinedTextBlock(guiGraphics, alpha);
-            return;
+        TextBox title = hasTitle ? measureTextBox(currentTitle, currentTitlePosition, currentTitleScale) : null;
+        TextBox description = hasDescription ? measureTextBox(currentDescription, currentDescriptionPosition, currentDescriptionScale) : null;
+        if (hasTitle && hasDescription) {
+            float[] tops = TextPosition.separate(title.x(), title.y(), title.width(), title.height(),
+                    description.x(), description.y(), description.width(), description.height(), TEXT_BOX_GAP);
+            title = title.atTop(tops[0]);
+            description = description.atTop(tops[1]);
         }
-
         if (hasTitle) {
-            drawTextBlock(guiGraphics, currentTitle, currentTitlePosition, currentTitleScale, alpha);
+            drawTextBox(guiGraphics, title, alpha);
         }
         if (hasDescription) {
-            drawTextBlock(guiGraphics, currentDescription, currentDescriptionPosition, currentDescriptionScale, alpha);
+            drawTextBox(guiGraphics, description, alpha);
         }
     }
 
-    private void drawTextBlock(GuiGraphics guiGraphics, Component text, TextPosition position, float scale, int alpha) {
-        int innerWidth = Math.max(1, Math.round((TEXT_BOX_WIDTH - TEXT_BOX_PADDING * 2) / scale));
-        List<FormattedCharSequence> lines = font.split(text, innerWidth);
-        if (lines.isEmpty()) {
-            return;
-        }
-
-        int baseTextHeight = lines.size() * (font.lineHeight + LINE_SPACING) - LINE_SPACING;
-        int scaledTextHeight = Math.round(baseTextHeight * scale);
-        int boxHeight = scaledTextHeight + TEXT_BOX_PADDING * 2;
-
-        int boxWidth = fittedBoxWidth(lines, scale);
-        pushTextBox(guiGraphics, position, boxWidth, boxHeight);
-        fillTextBox(guiGraphics, 0, 0, boxWidth, boxHeight, alpha);
-
-        drawScaledLines(guiGraphics, lines, TEXT_BOX_PADDING, TEXT_BOX_PADDING, scale, alpha);
-        popTextBox(guiGraphics);
-    }
-
-    private void drawCombinedTextBlock(GuiGraphics guiGraphics, int alpha) {
-        int titleInnerWidth = Math.max(1, Math.round((TEXT_BOX_WIDTH - TEXT_BOX_PADDING * 2) / currentTitleScale));
-        int descInnerWidth = Math.max(1, Math.round((TEXT_BOX_WIDTH - TEXT_BOX_PADDING * 2) / currentDescriptionScale));
-        List<FormattedCharSequence> titleLines = font.split(currentTitle, titleInnerWidth);
-        List<FormattedCharSequence> descLines = font.split(currentDescription, descInnerWidth);
-
-        int titleBlockHeight = Math.round((titleLines.size() * (font.lineHeight + LINE_SPACING) - LINE_SPACING) * currentTitleScale);
-        int descBlockHeight = Math.round((descLines.size() * (font.lineHeight + LINE_SPACING) - LINE_SPACING) * currentDescriptionScale);
-        int gap = Math.round((font.lineHeight + LINE_SPACING) * Math.max(currentTitleScale, currentDescriptionScale));
-        int boxHeight = titleBlockHeight + gap + descBlockHeight + TEXT_BOX_PADDING * 2;
-
-        int boxWidth = Math.max(fittedBoxWidth(titleLines, currentTitleScale), fittedBoxWidth(descLines, currentDescriptionScale));
-        pushTextBox(guiGraphics, currentTitlePosition, boxWidth, boxHeight);
-        fillTextBox(guiGraphics, 0, 0, boxWidth, boxHeight, alpha);
-
-        drawScaledLines(guiGraphics, titleLines, TEXT_BOX_PADDING, TEXT_BOX_PADDING, currentTitleScale, alpha);
-        int descTopY = TEXT_BOX_PADDING + titleBlockHeight + gap;
-        drawScaledLines(guiGraphics, descLines, TEXT_BOX_PADDING, descTopY, currentDescriptionScale, alpha);
-        popTextBox(guiGraphics);
-    }
-
-    // A box is only as wide as its longest line, so a short text reaches the corner it is anchored to. Text
-    // wraps at TEXT_BOX_WIDTH.
-    private int fittedBoxWidth(List<FormattedCharSequence> lines, float scale) {
+    // Lines only break where the text has a line break (\n in the JSON; \\n shows those two characters), and
+    // the box is as wide as its longest line. The bottom corners stay above the skip hint.
+    private TextBox measureTextBox(Component text, TextPosition position, float scale) {
+        List<FormattedCharSequence> lines = font.split(text, Integer.MAX_VALUE);
         int longest = 0;
         for (FormattedCharSequence line : lines) {
             longest = Math.max(longest, font.width(line));
         }
-        return Math.min(TEXT_BOX_WIDTH, (int) Math.ceil(longest * scale) + TEXT_BOX_PADDING * 2);
+        int boxWidth = (int) Math.ceil(longest * scale) + TEXT_BOX_PADDING * 2;
+        int textHeight = lines.size() * (font.lineHeight + LINE_SPACING) - LINE_SPACING;
+        int boxHeight = Math.round(textHeight * scale) + TEXT_BOX_PADDING * 2;
+        double guiScale = minecraft.getWindow().getGuiScale();
+        return new TextBox(lines, scale, position.left(width, boxWidth, TEXT_BOX_MARGIN, guiScale),
+                position.top(height, boxHeight, TEXT_BOX_MARGIN, height - 24 - TEXT_BOX_MARGIN, guiScale), boxWidth, boxHeight);
     }
 
-    // Moves drawing to the box's corner. The offset is fractional so an exact position lands on its real pixel
-    // whatever the GUI scale is. The bottom corners stay above the skip hint.
-    private void pushTextBox(GuiGraphics guiGraphics, TextPosition position, int boxWidth, int boxHeight) {
-        double guiScale = minecraft.getWindow().getGuiScale();
-        float x = position.left(width, boxWidth, TEXT_BOX_MARGIN, guiScale);
-        float y = position.top(height, boxHeight, TEXT_BOX_MARGIN, height - 24 - TEXT_BOX_MARGIN, guiScale);
+    // The offset is fractional so an exact position lands on its real pixel whatever the GUI scale is.
+    private void drawTextBox(GuiGraphics guiGraphics, TextBox box, int alpha) {
         Matrix3x2fStack pose = guiGraphics.pose();
         pose.pushMatrix();
-        pose.translate(x, y);
-    }
-
-    private void popTextBox(GuiGraphics guiGraphics) {
-        guiGraphics.pose().popMatrix();
+        pose.translate(box.x(), box.y());
+        fillTextBox(guiGraphics, 0, 0, box.width(), box.height(), alpha);
+        drawScaledLines(guiGraphics, box.lines(), TEXT_BOX_PADDING, TEXT_BOX_PADDING, box.scale(), alpha);
+        pose.popMatrix();
     }
 
     private void drawScaledLines(GuiGraphics guiGraphics, List<FormattedCharSequence> lines, int originX, int originY, float scale, int alpha) {
@@ -1173,6 +1137,12 @@ public final class VideoPlaybackScreen extends Screen {
     @Override
     public boolean isPauseScreen() {
         return false;
+    }
+
+    private record TextBox(List<FormattedCharSequence> lines, float scale, float x, float y, int width, int height) {
+        TextBox atTop(float top) {
+            return new TextBox(lines, scale, x, top, width, height);
+        }
     }
 
     private enum State {
