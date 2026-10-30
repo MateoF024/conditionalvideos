@@ -20,7 +20,6 @@ public final class ConditionalVideosConfig {
 
     public static final int CURRENT_CONFIG_VERSION = 4;
     static final float DEFAULT_TEXT_SCALE = 1.0f;
-    static final float DEFAULT_VIDEO_VOLUME = 1.0f;
     static final float TEXT_BOX_OPACITY_LEGACY = -1.0f;
     public static final String TRANSITION_CUT = "cut";
     public static final String TRANSITION_FADE = "fadeOut/In";
@@ -34,7 +33,6 @@ public final class ConditionalVideosConfig {
             COMPARATOR_EQUAL, COMPARATOR_LESS, COMPARATOR_GREATER,
             COMPARATOR_LESS_OR_EQUAL, COMPARATOR_GREATER_OR_EQUAL
     };
-    private static final Set<String> TEXT_POSITIONS = Set.of("topleft", "topright", "bottomleft", "bottomright");
 
     // Condition names as they appear in the files, the folders and the synced JSON.
     public static final List<String> SIMPLE_CONDITIONS = List.of("firstJoin", "playerDeath", "totemUsed", "bedSleep");
@@ -437,7 +435,7 @@ public final class ConditionalVideosConfig {
     }
 
     private static boolean isValidPosition(String position) {
-        return position == null || position.isBlank() || TEXT_POSITIONS.contains(position.trim().toLowerCase());
+        return TextPosition.parse(position) != null;
     }
 
     private static boolean isValidComparator(String comparator) {
@@ -595,9 +593,9 @@ public final class ConditionalVideosConfig {
             return Math.max(0f, Math.min(1f, textBoxOpacity));
         }
 
-        public float resolvedVolume() {
+        public float resolvedVolume(float defaultVolume) {
             if (videoVolume == null) {
-                return DEFAULT_VIDEO_VOLUME;
+                return defaultVolume;
             }
             return Math.max(0f, Math.min(1f, videoVolume));
         }

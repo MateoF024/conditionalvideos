@@ -78,7 +78,7 @@ public final class ConfigSyncNetworking {
             FriendlyByteBuf buf = NetworkHelper.fromBytes(data);
             String json = buf.readUtf(MAX_JSON_LENGTH);
             DebugLog.client(DebugLog.Area.NETWORK, "Received the server's common config.");
-            ActiveConfigResolver.setRemoteCommonConfig(CommonConfig.fromAuthoritativeJson(json));
+            ActiveConfigResolver.setRemoteCommonConfig(CommonConfig.fromAuthoritativeJson(json, ActiveConfigResolver.localCommonConfig()));
         });
 
         s2cHandlers.put(SERVER_VIDEO_MANIFEST_PACKET, data -> {

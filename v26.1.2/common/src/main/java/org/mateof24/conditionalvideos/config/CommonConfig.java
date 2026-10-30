@@ -11,19 +11,20 @@ import org.mateof24.conditionalvideos.ConditionalVideos;
 
 import java.io.IOException;
 import java.io.Reader;
-import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
 
 public final class CommonConfig {
-    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+    private static final Gson GSON = new GsonBuilder().create();
     private static final String FILE_NAME = "conditionalvideos-common.json";
 
     public static final int CURRENT_COMMON_VERSION = 1;
     public static final String QUALITY_AUTO = "AUTO";
     public static final int DEFAULT_LOAD_TIMEOUT_SECONDS = 180;
     public static final int MIN_LOAD_TIMEOUT_SECONDS = 30;
+    public static final float DEFAULT_VOLUME = 1.0f;
 
     private Integer configVersion;
     private String videoQuality;
@@ -32,6 +33,7 @@ public final class CommonConfig {
     private Boolean blockMatureContent;
     private Boolean debugLogging;
     private Integer videoLoadTimeoutSeconds;
+    private Float defaultVolume;
 
     public static CommonConfig load() {
         return load(configPath());
@@ -59,11 +61,13 @@ public final class CommonConfig {
         }
     }
 
+    // A missing file is created with the defaults. An existing one only gets the options it lacks: what it
+    // already holds, unknown options and questionable values included, stays exactly as written.
     public static CommonConfig load(Path file) {
         if (!Files.isRegularFile(file)) {
             CommonConfig config = new CommonConfig();
             config.ensureDefaults();
-            config.save(file);
+            write(file, GSON.toJsonTree(config));
             return config;
         }
         JsonObject root;
@@ -91,11 +95,28 @@ public final class CommonConfig {
         config.blockMatureContent = readBool(root, "blockMatureContent");
         config.debugLogging = readBool(root, "debugLogging");
         config.videoLoadTimeoutSeconds = readInt(root, "videoLoadTimeoutSeconds");
-        boolean changed = config.ensureDefaults();
-        if (changed) {
-            config.save(file);
+        config.defaultVolume = readFloat(root, "defaultVolume");
+        config.ensureDefaults();
+
+        boolean added = false;
+        for (Map.Entry<String, JsonElement> option : GSON.toJsonTree(config).getAsJsonObject().entrySet()) {
+            if (!root.has(option.getKey())) {
+                root.add(option.getKey(), option.getValue());
+                added = true;
+            }
+        }
+        if (added) {
+            write(file, root);
         }
         return config;
+    }
+
+    private static void write(Path file, JsonElement content) {
+        try {
+            ConditionFiles.writeAtomically(file, content);
+        } catch (IOException exception) {
+            ConditionalVideos.LOGGER.error("Failed to save common config '{}'.", file, exception);
+        }
     }
 
     private static Boolean readBool(JsonObject root, String key) {
@@ -128,56 +149,41 @@ public final class CommonConfig {
         return null;
     }
 
-    public void save() {
-        save(configPath());
-    }
-
-    public void saveServer(Path gameDirectory) {
-        save(configPath(gameDirectory));
-    }
-
-    public void save(Path file) {
-        try {
-            Files.createDirectories(file.getParent());
-            try (Writer writer = Files.newBufferedWriter(file, StandardCharsets.UTF_8)) {
-                GSON.toJson(this, writer);
+    private static Float readFloat(JsonObject root, String key) {
+        if (root.has(key) && root.get(key).isJsonPrimitive()) {
+            try {
+                return root.get(key).getAsFloat();
+            } catch (RuntimeException ignored) {
             }
-        } catch (IOException exception) {
-            ConditionalVideos.LOGGER.error("Failed to save common config '{}'.", file, exception);
         }
+        return null;
     }
 
-    private boolean ensureDefaults() {
-        boolean changed = false;
+    private void ensureDefaults() {
         if (videoQuality == null || videoQuality.isBlank()) {
             videoQuality = QUALITY_AUTO;
-            changed = true;
         }
         if (alwaysShowCursor == null) {
             alwaysShowCursor = Boolean.FALSE;
-            changed = true;
         }
         if (allowGameSounds == null) {
             allowGameSounds = Boolean.FALSE;
-            changed = true;
         }
         if (blockMatureContent == null) {
             blockMatureContent = Boolean.TRUE;
-            changed = true;
         }
         if (debugLogging == null) {
             debugLogging = Boolean.FALSE;
-            changed = true;
         }
         if (videoLoadTimeoutSeconds == null) {
             videoLoadTimeoutSeconds = DEFAULT_LOAD_TIMEOUT_SECONDS;
-            changed = true;
         }
-        if (configVersion == null || configVersion < CURRENT_COMMON_VERSION) {
+        if (defaultVolume == null) {
+            defaultVolume = DEFAULT_VOLUME;
+        }
+        if (configVersion == null) {
             configVersion = CURRENT_COMMON_VERSION;
-            changed = true;
         }
-        return changed;
     }
 
     public String videoQuality() {
@@ -209,36 +215,50 @@ public final class CommonConfig {
         return Math.max(MIN_LOAD_TIMEOUT_SECONDS, videoLoadTimeoutSeconds);
     }
 
+    // Volume of a video without its own videoVolume. Clamped here, like the option above.
+    public float defaultVolume() {
+        if (defaultVolume == null || defaultVolume.isNaN()) {
+            return DEFAULT_VOLUME;
+        }
+        return Math.max(0f, Math.min(1f, defaultVolume));
+    }
+
     public boolean isAutoQuality() {
         return QUALITY_AUTO.equalsIgnoreCase(videoQuality());
     }
 
+    // What the server dictates to its clients; blockMatureContent and debugLogging stay per installation.
     public String toAuthoritativeJson() {
         JsonObject root = new JsonObject();
         root.addProperty("videoQuality", videoQuality());
         root.addProperty("alwaysShowCursor", alwaysShowCursor());
         root.addProperty("allowGameSounds", allowGameSounds());
+        root.addProperty("videoLoadTimeoutSeconds", videoLoadTimeoutSeconds());
+        root.addProperty("defaultVolume", defaultVolume());
         return GSON.toJson(root);
     }
 
-    public static CommonConfig fromAuthoritativeJson(String rawJson) {
+    // A server older than 1.6.0 sends neither the load timeout nor the default volume: those stay local.
+    public static CommonConfig fromAuthoritativeJson(String rawJson, CommonConfig local) {
         CommonConfig config = new CommonConfig();
         try {
             JsonElement parsed = JsonParser.parseString(rawJson);
             if (parsed != null && parsed.isJsonObject()) {
                 JsonObject root = parsed.getAsJsonObject();
-                if (root.has("videoQuality") && root.get("videoQuality").isJsonPrimitive()) {
-                    config.videoQuality = root.get("videoQuality").getAsString();
-                }
-                if (root.has("alwaysShowCursor") && root.get("alwaysShowCursor").isJsonPrimitive()) {
-                    config.alwaysShowCursor = root.get("alwaysShowCursor").getAsBoolean();
-                }
-                if (root.has("allowGameSounds") && root.get("allowGameSounds").isJsonPrimitive()) {
-                    config.allowGameSounds = root.get("allowGameSounds").getAsBoolean();
-                }
+                config.videoQuality = readString(root, "videoQuality");
+                config.alwaysShowCursor = readBool(root, "alwaysShowCursor");
+                config.allowGameSounds = readBool(root, "allowGameSounds");
+                config.videoLoadTimeoutSeconds = readInt(root, "videoLoadTimeoutSeconds");
+                config.defaultVolume = readFloat(root, "defaultVolume");
             }
         } catch (JsonSyntaxException exception) {
             ConditionalVideos.LOGGER.warn("Failed to parse synced common config JSON. Falling back to defaults.");
+        }
+        if (config.videoLoadTimeoutSeconds == null) {
+            config.videoLoadTimeoutSeconds = local.videoLoadTimeoutSeconds;
+        }
+        if (config.defaultVolume == null) {
+            config.defaultVolume = local.defaultVolume;
         }
         config.ensureDefaults();
         return config;

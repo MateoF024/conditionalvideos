@@ -49,15 +49,15 @@ public final class ActiveConfigResolver {
     public static void reloadLocalCommonConfig() {
         localCommonConfig = CommonConfig.load();
         ClientDebug.applyFlag(localCommonConfig.debugLogging());
-        DebugLog.client(DebugLog.Area.CONFIG, "Local common config '{}': videoQuality={}, alwaysShowCursor={}, allowGameSounds={}, blockMatureContent={}, videoLoadTimeoutSeconds={}.",
+        DebugLog.client(DebugLog.Area.CONFIG, "Local common config '{}': videoQuality={}, alwaysShowCursor={}, allowGameSounds={}, blockMatureContent={}, videoLoadTimeoutSeconds={}, defaultVolume={}.",
                 CommonConfig.configPath(), localCommonConfig.videoQuality(), localCommonConfig.alwaysShowCursor(),
-                localCommonConfig.allowGameSounds(), localCommonConfig.blockMatureContent(), localCommonConfig.videoLoadTimeoutSeconds());
+                localCommonConfig.allowGameSounds(), localCommonConfig.blockMatureContent(), localCommonConfig.videoLoadTimeoutSeconds(), localCommonConfig.defaultVolume());
     }
 
     public static void setRemoteCommonConfig(CommonConfig config) {
         remoteCommonConfig = config;
-        DebugLog.client(DebugLog.Area.CONFIG, "The server dictates: videoQuality={}, alwaysShowCursor={}, allowGameSounds={}.",
-                config.videoQuality(), config.alwaysShowCursor(), config.allowGameSounds());
+        DebugLog.client(DebugLog.Area.CONFIG, "The server dictates: videoQuality={}, alwaysShowCursor={}, allowGameSounds={}, videoLoadTimeoutSeconds={}, defaultVolume={}.",
+                config.videoQuality(), config.alwaysShowCursor(), config.allowGameSounds(), config.videoLoadTimeoutSeconds(), config.defaultVolume());
     }
 
     private static CommonConfig authoritativeCommonConfig(Minecraft minecraft) {
@@ -84,7 +84,11 @@ public final class ActiveConfigResolver {
     }
 
     public static int effectiveVideoLoadTimeoutSeconds() {
-        return localCommonConfig().videoLoadTimeoutSeconds();
+        return authoritativeCommonConfig(Minecraft.getInstance()).videoLoadTimeoutSeconds();
+    }
+
+    public static float effectiveDefaultVolume(Minecraft minecraft) {
+        return authoritativeCommonConfig(minecraft).defaultVolume();
     }
 
     public static ConditionalVideosConfig resolve(Minecraft minecraft) {

@@ -14,6 +14,7 @@ import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
 import org.mateof24.conditionalvideos.config.CommonConfig;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig.VideoEntry;
+import org.mateof24.conditionalvideos.config.TextPosition;
 import org.mateof24.conditionalvideos.debug.DebugLog;
 import org.mateof24.conditionalvideos.runtime.ConditionalVideosKeybinds;
 import org.mateof24.conditionalvideos.video.backend.WaterMediaVideoBackend;
@@ -56,6 +57,7 @@ public final class VideoPlaybackScreen extends Screen {
     private final String conditionKey;
     private final Runnable onPlaylistEnd;
     private final MediaQuality forcedQuality;
+    private final float defaultVolume;
 
     private State state = State.PLAYING;
 
@@ -67,10 +69,10 @@ public final class VideoPlaybackScreen extends Screen {
     private int hintTicks;
 
     private Component currentTitle;
-    private TextAnchor currentTitleAnchor;
+    private TextPosition currentTitlePosition;
     private float currentTitleScale;
     private Component currentDescription;
-    private TextAnchor currentDescriptionAnchor;
+    private TextPosition currentDescriptionPosition;
     private float currentDescriptionScale;
     private float currentTextBoxOpacity;
     private boolean currentEnableBackground;
@@ -128,11 +130,12 @@ public final class VideoPlaybackScreen extends Screen {
         this.conditionKey = conditionKey;
         this.onPlaylistEnd = onPlaylistEnd == null ? () -> { } : onPlaylistEnd;
         this.forcedQuality = resolveForcedQuality(ActiveConfigResolver.effectiveVideoQuality(Minecraft.getInstance()));
+        this.defaultVolume = ActiveConfigResolver.effectiveDefaultVolume(Minecraft.getInstance());
 
         this.currentIndex = 0;
         this.currentEntry = playlist.get(0);
         applyCurrentEntryVisuals();
-        this.currentBackend = new WaterMediaVideoBackend(firstSourceUri, currentEntry.resolvedVolume());
+        this.currentBackend = new WaterMediaVideoBackend(firstSourceUri, currentEntry.resolvedVolume(defaultVolume));
         this.currentBackend.setForcedQuality(forcedQuality);
 
         warmAllPlaylistMrls(firstSourceUri);
@@ -162,14 +165,16 @@ public final class VideoPlaybackScreen extends Screen {
 
     private void applyCurrentEntryVisuals() {
         currentTitle = LegacyFormatParser.parse(currentEntry.resolvedVideoTitle());
-        currentTitleAnchor = TextAnchor.fromConfig(currentEntry.resolvedVideoTitlePosition());
+        currentTitlePosition = TextPosition.resolve(currentEntry.resolvedVideoTitlePosition());
         currentTitleScale = currentEntry.resolvedTitleScale();
         currentDescription = LegacyFormatParser.parse(currentEntry.resolvedVideoDescription());
-        currentDescriptionAnchor = TextAnchor.fromConfig(currentEntry.resolvedVideoDescriptionPosition());
+        currentDescriptionPosition = TextPosition.resolve(currentEntry.resolvedVideoDescriptionPosition());
         currentDescriptionScale = currentEntry.resolvedDescriptionScale();
         currentTextBoxOpacity = currentEntry.resolvedTextBoxOpacity();
         currentEnableBackground = currentEntry.resolvedEnableBackground();
         currentBackgroundColor = config.resolveBackgroundColor(currentEntry, 0xFF000000);
+        DebugLog.client(DebugLog.Area.RENDER, "Entry {}: title at {}, description at {}, volume {} (default {}).", currentIndex,
+                currentEntry.resolvedVideoTitlePosition(), currentEntry.resolvedVideoDescriptionPosition(), currentEntry.resolvedVolume(defaultVolume), defaultVolume);
     }
 
     @Override
@@ -555,7 +560,7 @@ public final class VideoPlaybackScreen extends Screen {
         }
         skipNextIndex = target;
         skipNextEntry = entry;
-        skipNextBackend = new WaterMediaVideoBackend(uri, entry.resolvedVolume());
+        skipNextBackend = new WaterMediaVideoBackend(uri, entry.resolvedVolume(defaultVolume));
         skipNextBackend.setForcedQuality(forcedQuality);
         skipNextBackend.setVolumeMultiplier(0f);
         skipNextBackend.setStartPaused(true);
@@ -590,7 +595,7 @@ public final class VideoPlaybackScreen extends Screen {
         }
         nextIndex = targetIndex;
         nextEntry = entry;
-        nextBackend = new WaterMediaVideoBackend(uri, entry.resolvedVolume());
+        nextBackend = new WaterMediaVideoBackend(uri, entry.resolvedVolume(defaultVolume));
         nextBackend.setForcedQuality(forcedQuality);
         nextBackend.setVolumeMultiplier(0f);
         nextBackend.setStartPaused(true);
@@ -802,20 +807,20 @@ public final class VideoPlaybackScreen extends Screen {
             return;
         }
 
-        if (hasTitle && hasDescription && currentTitleAnchor == currentDescriptionAnchor) {
+        if (hasTitle && hasDescription && currentTitlePosition.equals(currentDescriptionPosition)) {
             drawCombinedTextBlock(guiGraphics, alpha);
             return;
         }
 
         if (hasTitle) {
-            drawTextBlock(guiGraphics, currentTitle, currentTitleAnchor, currentTitleScale, alpha);
+            drawTextBlock(guiGraphics, currentTitle, currentTitlePosition, currentTitleScale, alpha);
         }
         if (hasDescription) {
-            drawTextBlock(guiGraphics, currentDescription, currentDescriptionAnchor, currentDescriptionScale, alpha);
+            drawTextBlock(guiGraphics, currentDescription, currentDescriptionPosition, currentDescriptionScale, alpha);
         }
     }
 
-    private void drawTextBlock(GuiGraphics guiGraphics, Component text, TextAnchor anchor, float scale, int alpha) {
+    private void drawTextBlock(GuiGraphics guiGraphics, Component text, TextPosition position, float scale, int alpha) {
         int innerWidth = Math.max(1, Math.round((TEXT_BOX_WIDTH - TEXT_BOX_PADDING * 2) / scale));
         List<FormattedCharSequence> lines = font.split(text, innerWidth);
         if (lines.isEmpty()) {
@@ -826,14 +831,11 @@ public final class VideoPlaybackScreen extends Screen {
         int scaledTextHeight = Math.round(baseTextHeight * scale);
         int boxHeight = scaledTextHeight + TEXT_BOX_PADDING * 2;
 
-        int x = anchor.isRightAligned()
-                ? width - TEXT_BOX_MARGIN - TEXT_BOX_WIDTH
-                : TEXT_BOX_MARGIN;
-        int y = anchor.resolveY(height, boxHeight);
+        pushTextBox(guiGraphics, position, boxHeight);
+        fillTextBox(guiGraphics, 0, 0, TEXT_BOX_WIDTH, boxHeight, alpha);
 
-        fillTextBox(guiGraphics, x, y, x + TEXT_BOX_WIDTH, y + boxHeight, alpha);
-
-        drawScaledLines(guiGraphics, lines, x + TEXT_BOX_PADDING, y + TEXT_BOX_PADDING, scale, alpha);
+        drawScaledLines(guiGraphics, lines, TEXT_BOX_PADDING, TEXT_BOX_PADDING, scale, alpha);
+        popTextBox(guiGraphics);
     }
 
     private void drawCombinedTextBlock(GuiGraphics guiGraphics, int alpha) {
@@ -847,16 +849,28 @@ public final class VideoPlaybackScreen extends Screen {
         int gap = Math.round((font.lineHeight + LINE_SPACING) * Math.max(currentTitleScale, currentDescriptionScale));
         int boxHeight = titleBlockHeight + gap + descBlockHeight + TEXT_BOX_PADDING * 2;
 
-        int x = currentTitleAnchor.isRightAligned()
-                ? width - TEXT_BOX_MARGIN - TEXT_BOX_WIDTH
-                : TEXT_BOX_MARGIN;
-        int y = currentTitleAnchor.resolveY(height, boxHeight);
+        pushTextBox(guiGraphics, currentTitlePosition, boxHeight);
+        fillTextBox(guiGraphics, 0, 0, TEXT_BOX_WIDTH, boxHeight, alpha);
 
-        fillTextBox(guiGraphics, x, y, x + TEXT_BOX_WIDTH, y + boxHeight, alpha);
+        drawScaledLines(guiGraphics, titleLines, TEXT_BOX_PADDING, TEXT_BOX_PADDING, currentTitleScale, alpha);
+        int descTopY = TEXT_BOX_PADDING + titleBlockHeight + gap;
+        drawScaledLines(guiGraphics, descLines, TEXT_BOX_PADDING, descTopY, currentDescriptionScale, alpha);
+        popTextBox(guiGraphics);
+    }
 
-        drawScaledLines(guiGraphics, titleLines, x + TEXT_BOX_PADDING, y + TEXT_BOX_PADDING, currentTitleScale, alpha);
-        int descTopY = y + TEXT_BOX_PADDING + titleBlockHeight + gap;
-        drawScaledLines(guiGraphics, descLines, x + TEXT_BOX_PADDING, descTopY, currentDescriptionScale, alpha);
+    // Moves drawing to the box's corner. The offset is fractional so an exact position lands on its real pixel
+    // whatever the GUI scale is. The bottom corners stay above the skip hint.
+    private void pushTextBox(GuiGraphics guiGraphics, TextPosition position, int boxHeight) {
+        double guiScale = minecraft.getWindow().getGuiScale();
+        float x = position.left(width, TEXT_BOX_WIDTH, TEXT_BOX_MARGIN, guiScale);
+        float y = position.top(height, boxHeight, TEXT_BOX_MARGIN, height - 24 - TEXT_BOX_MARGIN, guiScale);
+        PoseStack pose = guiGraphics.pose();
+        pose.pushPose();
+        pose.translate(x, y, 0f);
+    }
+
+    private void popTextBox(GuiGraphics guiGraphics) {
+        guiGraphics.pose().popPose();
     }
 
     private void drawScaledLines(GuiGraphics guiGraphics, List<FormattedCharSequence> lines, int originX, int originY, float scale, int alpha) {
@@ -1130,37 +1144,5 @@ public final class VideoPlaybackScreen extends Screen {
         CROSSFADING,
         OUTGOING_FADE,
         CLOSED
-    }
-
-    private enum TextAnchor {
-        TOP_LEFT,
-        TOP_RIGHT,
-        BOTTOM_LEFT,
-        BOTTOM_RIGHT;
-
-        static TextAnchor fromConfig(String value) {
-            if (value == null) {
-                return BOTTOM_LEFT;
-            }
-            return switch (value.trim().toLowerCase()) {
-                case "topleft" -> TOP_LEFT;
-                case "topright" -> TOP_RIGHT;
-                case "bottomright" -> BOTTOM_RIGHT;
-                default -> BOTTOM_LEFT;
-            };
-        }
-
-        boolean isRightAligned() {
-            return this == TOP_RIGHT || this == BOTTOM_RIGHT;
-        }
-
-        int resolveY(int screenHeight, int boxHeight) {
-            if (this == TOP_LEFT || this == TOP_RIGHT) {
-                return TEXT_BOX_MARGIN;
-            }
-            int skipHintTopY = screenHeight - 24;
-            int bottomLimit = skipHintTopY - TEXT_BOX_MARGIN;
-            return Math.max(TEXT_BOX_MARGIN, bottomLimit - boxHeight);
-        }
     }
 }

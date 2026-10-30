@@ -13,11 +13,13 @@ import org.mateof24.conditionalvideos.debug.DebugLog;
 import java.io.IOException;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.FileVisitOption;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -351,6 +353,22 @@ public final class ConditionFiles {
         try {
             Files.writeString(temporary, PRETTY.toJson(content) + "\n", StandardCharsets.UTF_8);
             Files.move(temporary, target);
+        } finally {
+            Files.deleteIfExists(temporary);
+        }
+    }
+
+    // Writes a file through a temporary sibling, so a crash or a locked file never leaves it half written.
+    static void writeAtomically(Path target, JsonElement content) throws IOException {
+        Files.createDirectories(target.getParent());
+        Path temporary = target.resolveSibling("." + target.getFileName() + ".tmp");
+        try {
+            Files.writeString(temporary, PRETTY.toJson(content) + "\n", StandardCharsets.UTF_8);
+            try {
+                Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE);
+            } catch (AtomicMoveNotSupportedException exception) {
+                Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
+            }
         } finally {
             Files.deleteIfExists(temporary);
         }

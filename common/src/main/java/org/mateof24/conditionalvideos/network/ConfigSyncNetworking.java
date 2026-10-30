@@ -73,7 +73,7 @@ public final class ConfigSyncNetworking {
                 String json = buffer.readUtf(MAX_JSON_LENGTH);
                 context.queue(() -> {
                     DebugLog.client(DebugLog.Area.NETWORK, "Received the server's common config.");
-                    ActiveConfigResolver.setRemoteCommonConfig(CommonConfig.fromAuthoritativeJson(json));
+                    ActiveConfigResolver.setRemoteCommonConfig(CommonConfig.fromAuthoritativeJson(json, ActiveConfigResolver.localCommonConfig()));
                 });
             });
 
