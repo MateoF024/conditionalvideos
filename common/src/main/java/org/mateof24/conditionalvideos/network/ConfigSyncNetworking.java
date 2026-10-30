@@ -19,7 +19,6 @@ import org.mateof24.conditionalvideos.debug.DebugLog;
 import org.mateof24.conditionalvideos.debug.ServerDebug;
 import org.mateof24.conditionalvideos.video.path.VideoSourceResolver;
 import org.mateof24.conditionalvideos.world.PlayerExclusions;
-import org.mateof24.conditionalvideos.world.PlayerRoles;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -180,8 +179,25 @@ public final class ConfigSyncNetworking {
         return data;
     }
 
+    // After a change made by command: whoever is connected gets it now. A host reads their own files.
+    public static void resendConditions(MinecraftServer server) {
+        cachedServerData = null;
+        if (server.isDedicatedServer()) {
+            server.getPlayerList().getPlayers().forEach(ConfigSyncNetworking::sendServerConfig);
+        }
+    }
+
+    public static void resendCommonConfig(MinecraftServer server) {
+        cachedServerData = null;
+        if (server.isDedicatedServer()) {
+            server.getPlayerList().getPlayers().forEach(ConfigSyncNetworking::sendServerCommonConfig);
+        } else {
+            ActiveConfigResolver.reloadLocalCommonConfig();
+        }
+    }
+
     public static void sendServerConfig(ServerPlayer player) {
-        String json = serverData(player.server).config().toJsonFor(PlayerRoles.viewer(player));
+        String json = serverData(player.server).config().toJsonFor(PlayerExclusions.deliveryViewer(player));
         FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
         buffer.writeUtf(json, MAX_JSON_LENGTH);
         NetworkManager.sendToPlayer(player, SERVER_CONFIG_PACKET, buffer);
@@ -201,7 +217,7 @@ public final class ConfigSyncNetworking {
     // The files of the conditions this player can see; one shared with another condition stays.
     private static List<VideoManifestEntry> visibleVideos(ServerPlayer player, ServerData data) {
         Set<String> visible = new HashSet<>();
-        ConditionalVideosConfig.Viewer viewer = PlayerRoles.viewer(player);
+        ConditionalVideosConfig.Viewer viewer = PlayerExclusions.deliveryViewer(player);
         for (String key : ConditionRegistry.listPlayableKeys(data.config())) {
             ConditionalVideosConfig.ConditionConfig condition = ConditionRegistry.resolve(data.config(), key);
             if (condition.exclusionReason(viewer) == null) {

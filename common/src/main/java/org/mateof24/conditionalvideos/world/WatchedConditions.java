@@ -8,6 +8,7 @@ import org.mateof24.conditionalvideos.condition.server.ServerConditionDispatcher
 import org.mateof24.conditionalvideos.condition.shared.ConditionRegistry;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig.ConditionConfig;
 import org.mateof24.conditionalvideos.debug.DebugLog;
+import org.mateof24.conditionalvideos.network.PlaybackControlNetworking;
 
 import java.util.HashMap;
 import java.util.HashSet;
@@ -23,6 +24,8 @@ import java.util.UUID;
 public final class WatchedConditions {
     // Natural orders for non-repeatable conditions sent during each connection, until their start arrives.
     private static final Map<UUID, Set<String>> ORDERED = new HashMap<>();
+    // Repeatable conditions a playback asked to count as watched this one time.
+    private static final Map<UUID, Set<String>> COUNT_ONCE = new HashMap<>();
 
     private WatchedConditions() {
     }
@@ -47,6 +50,10 @@ public final class WatchedConditions {
         return ordered != null && ordered.contains(key);
     }
 
+    public static void countOnce(ServerPlayer player, String key) {
+        COUNT_ONCE.computeIfAbsent(player.getUUID(), id -> new HashSet<>()).add(key);
+    }
+
     // Remembers a natural order; false when the same condition was already ordered during this connection.
     public static boolean order(ServerPlayer player, String key) {
         return ORDERED.computeIfAbsent(player.getUUID(), id -> new HashSet<>()).add(key);
@@ -61,7 +68,9 @@ public final class WatchedConditions {
         }
         MinecraftServer server = player.getServer();
         ConditionConfig condition = ConditionRegistry.resolve(ServerConditionDispatcher.activeConfig(server), key);
-        if (condition == null || condition.repeatableInSameSession() || !natural || condition.resolvedReplayOnReconnect()) {
+        Set<String> countOnce = COUNT_ONCE.get(player.getUUID());
+        boolean forced = countOnce != null && countOnce.remove(key);
+        if (condition == null || !natural || (!forced && (condition.repeatableInSameSession() || condition.resolvedReplayOnReconnect()))) {
             return;
         }
         ConditionalVideosWorldData.get(server).markWatched(player.getUUID(), player.getScoreboardName(), List.of(key));
@@ -69,8 +78,24 @@ public final class WatchedConditions {
                 player.getScoreboardName(), key);
     }
 
+    // Forgets what the player watched (one condition, or all with a null key) so it can play again right away.
+    public static int forget(MinecraftServer server, ServerPlayer player, String key) {
+        int removed = ConditionalVideosWorldData.get(server).clearWatched(player.getUUID(), key);
+        Set<String> ordered = ORDERED.get(player.getUUID());
+        if (ordered != null && key == null) {
+            ordered.clear();
+        } else if (ordered != null) {
+            ordered.remove(key);
+        }
+        PlaybackSessions.forgetAccepted(player, key);
+        PlaybackControlNetworking.sendWatched(player);
+        DebugLog.server(DebugLog.Area.WORLD, "Forgot {} watched condition(s) of {} ({}).", removed, player.getScoreboardName(), key == null ? "all" : key);
+        return removed;
+    }
+
     public static void clearPlayer(ServerPlayer player) {
         ORDERED.remove(player.getUUID());
+        COUNT_ONCE.remove(player.getUUID());
     }
 
     private static void importLegacy(MinecraftServer server, ServerPlayer host, ConditionalVideosWorldData data) {

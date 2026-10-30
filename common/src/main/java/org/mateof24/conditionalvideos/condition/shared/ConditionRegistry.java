@@ -102,6 +102,18 @@ public final class ConditionRegistry {
         };
     }
 
+    // The name a condition has in its folder, which two types spell differently from their command key.
+    public static String fileKey(String key) {
+        String trimmed = key.trim();
+        if (trimmed.startsWith(TYPE_ADVANCEMENT + "/")) {
+            return "advancementCompleted/" + trimmed.substring(TYPE_ADVANCEMENT.length() + 1);
+        }
+        if (trimmed.startsWith(TYPE_DIMENSION + "/")) {
+            return "dimensionChanged/" + trimmed.substring(TYPE_DIMENSION.length() + 1);
+        }
+        return trimmed;
+    }
+
     private static void addIfPlayable(List<String> keys, String key, ConditionConfig config) {
         if (config != null && !config.resolvedPlaylist().isEmpty()) {
             keys.add(key);

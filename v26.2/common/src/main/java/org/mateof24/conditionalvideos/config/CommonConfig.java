@@ -111,6 +111,20 @@ public final class CommonConfig {
         return config;
     }
 
+    // Only that option changes in the file; a file that cannot be read is left alone.
+    public static void writeDefaultVolume(Path file, float volume) throws IOException {
+        if (!Files.isRegularFile(file)) {
+            load(file);
+        }
+        JsonElement parsed = JsonParser.parseString(ConditionFiles.readText(file));
+        if (!parsed.isJsonObject()) {
+            throw new IOException("'" + file.getFileName() + "' does not contain a JSON object");
+        }
+        JsonObject root = parsed.getAsJsonObject();
+        root.addProperty("defaultVolume", volume);
+        ConditionFiles.writeAtomically(file, root);
+    }
+
     private static void write(Path file, JsonElement content) {
         try {
             ConditionFiles.writeAtomically(file, content);

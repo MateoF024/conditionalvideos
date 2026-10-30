@@ -7,6 +7,7 @@ import org.mateof24.conditionalvideos.network.ConfigSyncNetworking;
 import dev.architectury.platform.Platform;
 import dev.architectury.utils.Env;
 import org.mateof24.conditionalvideos.config.ConfigAnnouncer;
+import org.mateof24.conditionalvideos.config.ConditionFiles;
 import org.mateof24.conditionalvideos.config.LegacyMigration;
 import org.mateof24.conditionalvideos.debug.ClientDebug;
 import org.mateof24.conditionalvideos.debug.DebugLog;
@@ -31,6 +32,7 @@ public final class ConditionalVideos {
         }
         ServerDebug.init();
         LegacyMigration.run(!client);
+        ConditionFiles.active(!client).config();
         ConfigAnnouncer.init();
         PlaybackSessions.init();
         PlayerExclusions.init();

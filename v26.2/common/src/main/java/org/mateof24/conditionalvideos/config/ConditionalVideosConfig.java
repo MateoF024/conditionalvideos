@@ -96,7 +96,7 @@ public final class ConditionalVideosConfig {
             if (score.comparator() != null && !score.comparator().isBlank() && !isValidComparator(score.comparator())) {
                 notices.add(ConfigNotice.invalidComparator(file, score.comparator()));
             }
-            scoreboard.put(key, new ScoreboardConditionConfig(score.repeatableInSameSession(),
+            scoreboard.put(key, new ScoreboardConditionConfig(resolvedRepeatable(type, score.repeatableInSameSession()),
                     score.playlistLoop() == null ? Boolean.FALSE : score.playlistLoop(), playable(score.videos()),
                     score.value(), score.comparator(), score.protectPlayer(), score.freezeWorld(),
                     score.conditionDelay(), score.replayOnReconnect(), score.disableLoadingScreen(),
@@ -114,7 +114,7 @@ public final class ConditionalVideosConfig {
                 notices.add(problem);
                 return false;
             }
-            worldPosition.put(key, new WorldPositionConditionConfig(area.repeatableInSameSession(),
+            worldPosition.put(key, new WorldPositionConditionConfig(resolvedRepeatable(type, area.repeatableInSameSession()),
                     area.playlistLoop() == null ? Boolean.FALSE : area.playlistLoop(), playable(area.videos()),
                     area.dimension(), area.from(), area.to(), area.trigger(), area.protectPlayer(), area.freezeWorld(),
                     area.conditionDelay(), area.replayOnReconnect(), area.disableLoadingScreen(),
@@ -124,7 +124,7 @@ public final class ConditionalVideosConfig {
         ConditionConfig condition = (ConditionConfig) parsed;
         lint(condition.videos(), file, notices);
         lintDelay(condition.conditionDelay(), file, notices);
-        ConditionConfig normalised = new ConditionConfig(condition.repeatableInSameSession(),
+        ConditionConfig normalised = new ConditionConfig(resolvedRepeatable(type, condition.repeatableInSameSession()),
                 condition.playlistLoop() == null ? Boolean.FALSE : condition.playlistLoop(), playable(condition.videos()),
                 condition.protectPlayer(), condition.freezeWorld() == null && "firstJoin".equals(type) ? Boolean.TRUE : condition.freezeWorld(),
                 condition.conditionDelay(), condition.replayOnReconnect(), condition.disableLoadingScreen(),
@@ -143,6 +143,10 @@ public final class ConditionalVideosConfig {
             }
         }
         return true;
+    }
+
+    private static boolean resolvedRepeatable(String type, Boolean written) {
+        return written == null ? ConditionDefaults.repeatable(type) : written;
     }
 
     private Map<String, ConditionConfig> conditionMap(String type) {
@@ -420,10 +424,7 @@ public final class ConditionalVideosConfig {
     }
 
     private static boolean isEmptyCondition(ConditionConfig config) {
-        return config == null
-                || (!config.repeatableInSameSession()
-                && !config.resolvedPlaylistLoop()
-                && config.resolvedPlaylist().isEmpty());
+        return config == null || (!config.resolvedPlaylistLoop() && config.resolvedPlaylist().isEmpty());
     }
 
     private static ConditionConfig emptyCondition() {
@@ -531,7 +532,7 @@ public final class ConditionalVideosConfig {
 
     // protectPlayer is on unless set to false; freezeWorld is off unless set (firstJoin turns it on when it is missing).
     public record ConditionConfig(
-            boolean repeatableInSameSession,
+            Boolean repeatableInSameSession,
             Boolean playlistLoop,
             List<VideoEntry> videos,
             Boolean protectPlayer,
@@ -563,12 +564,19 @@ public final class ConditionalVideosConfig {
             return disableLoadingScreen != null && disableLoadingScreen;
         }
 
+        public boolean resolvedExcludeOps() {
+            return excludeOps != null && excludeOps;
+        }
+
         public boolean hasExclusions() {
             return (excludeOps != null && excludeOps) || (excludePlayers != null && !excludePlayers.isEmpty()) || (excludeTeams != null && !excludeTeams.isEmpty());
         }
 
         // Why this viewer is left out; null when they are not. Names ignore case, teams are exact.
         public String exclusionReason(Viewer viewer) {
+            if (viewer.allowed().contains(this)) {
+                return null;
+            }
             if (excludePlayers != null) {
                 for (String name : excludePlayers) {
                     if (name != null && name.trim().equalsIgnoreCase(viewer.name())) {
@@ -591,12 +599,15 @@ public final class ConditionalVideosConfig {
         }
     }
 
-    // Who a condition is being decided for.
-    public record Viewer(String name, String team, boolean operator) {
+    // Who a condition is being decided for. What is allowed reached them anyway, whatever the rules say.
+    public record Viewer(String name, String team, boolean operator, Set<ConditionConfig> allowed) {
+        public Viewer(String name, String team, boolean operator) {
+            this(name, team, operator, Set.of());
+        }
     }
 
     public record ScoreboardConditionConfig(
-            boolean repeatableInSameSession,
+            Boolean repeatableInSameSession,
             Boolean playlistLoop,
             List<VideoEntry> videos,
             Integer value,
@@ -657,7 +668,7 @@ public final class ConditionalVideosConfig {
 
     // A zone of one dimension, fired when a player's feet enter or leave it. Without y it covers any height.
     public record WorldPositionConditionConfig(
-            boolean repeatableInSameSession,
+            Boolean repeatableInSameSession,
             Boolean playlistLoop,
             List<VideoEntry> videos,
             String dimension,

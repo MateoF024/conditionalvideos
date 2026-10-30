@@ -130,7 +130,8 @@ public final class VideoPlaybackScreen extends Screen {
             String conditionKey,
             Runnable onPlaylistEnd,
             WaterMediaVideoBackend preparedBackend,
-            int startIndex
+            int startIndex,
+            SyncPoint syncPoint
     ) {
         super(Component.literal("Conditional Video"));
         this.config = config;
@@ -154,7 +155,11 @@ public final class VideoPlaybackScreen extends Screen {
             this.currentBackendInitialised = true;
         } else {
             this.currentBackend = new WaterMediaVideoBackend(firstSourceUri, currentEntry.resolvedVolume(defaultVolume));
-            this.currentBackend.setStartAt(currentEntry.resolvedStartAt());
+            if (syncPoint != null) {
+                this.currentBackend.setSyncPoint(syncPoint);
+            } else {
+                this.currentBackend.setStartAt(currentEntry.resolvedStartAt());
+            }
             this.currentBackend.setForcedQuality(forcedQuality);
         }
 
@@ -773,7 +778,7 @@ public final class VideoPlaybackScreen extends Screen {
 
     // Ticks the entry stays on screen; nextAt and the duration are absolute, so startAt comes off both.
     private int computeCurrentEndTick() {
-        float startAt = currentEntry.resolvedStartAt();
+        float startAt = (float) currentBackend.startOffsetSeconds();
         Float nextAt = currentEntry.resolvedNextAt();
         if (nextAt != null) {
             return Math.round((nextAt - startAt) * 20f);
@@ -1021,7 +1026,7 @@ public final class VideoPlaybackScreen extends Screen {
         boolean newReady = false;
         try {
             double pos = currentBackend.positionSeconds();
-            newReady = pos >= currentEntry.resolvedStartAt() + TRAILING_RELEASE_POSITION_SECONDS;
+            newReady = pos >= currentBackend.startOffsetSeconds() + TRAILING_RELEASE_POSITION_SECONDS;
         } catch (Throwable ignored) {
         }
         if (newReady || trailingBackendTicks >= TRAILING_MAX_TICKS) {
@@ -1036,7 +1041,7 @@ public final class VideoPlaybackScreen extends Screen {
     // A texture alone can still be empty; once the clock has moved it holds a real picture.
     private boolean currentHasPicture() {
         try {
-            return currentBackend.hasTextureValid() && currentBackend.positionSeconds() >= currentEntry.resolvedStartAt() + TRAILING_RELEASE_POSITION_SECONDS;
+            return currentBackend.hasTextureValid() && currentBackend.positionSeconds() >= currentBackend.startOffsetSeconds() + TRAILING_RELEASE_POSITION_SECONDS;
         } catch (Throwable ignored) {
             return false;
         }
@@ -1102,6 +1107,19 @@ public final class VideoPlaybackScreen extends Screen {
 
     public boolean isPaused() {
         return paused;
+    }
+
+    public String conditionKey() {
+        return conditionKey;
+    }
+
+    public int currentEntryIndex() {
+        return currentIndex;
+    }
+
+    // Where the video on screen is; negative while it has no picture yet.
+    public double shownPositionSeconds() {
+        return currentHasPicture() ? currentBackend.positionSeconds() : -1d;
     }
 
     public void togglePause() {

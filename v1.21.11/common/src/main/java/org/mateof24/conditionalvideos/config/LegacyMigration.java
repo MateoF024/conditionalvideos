@@ -217,7 +217,7 @@ public final class LegacyMigration {
         }
         if (unrecognized.size() > 0) {
             plan.files.put(ConditionFiles.UNRECOGNIZED_FILE, unrecognized);
-            plan.originals.put(ConditionFiles.UNRECOGNIZED_FILE, new Origin(unrecognized, false, null));
+            plan.originals.put(ConditionFiles.UNRECOGNIZED_FILE, new Origin(unrecognized, false, null, false));
         }
         return plan;
     }
@@ -301,7 +301,18 @@ public final class LegacyMigration {
 
     // Where a planned file came from: the original value, whether it was converted from the 1.1.x shape and
     // the exact key added as "id" (null when none).
-    private record Origin(JsonElement original, boolean legacy, String id) {
+    private record Origin(JsonElement original, boolean legacy, String id, boolean pinned) {
+    }
+
+    // In 1.5.1 a condition with videos that did not say repeatableInSameSession played once. The default is no longer
+    // that for most types, so the value it worked with is written down and it keeps playing the way it did.
+    private static boolean playedOnce(String type, JsonElement content) {
+        if (!content.isJsonObject() || "firstJoin".equals(type)) {
+            return false;
+        }
+        JsonObject condition = content.getAsJsonObject();
+        JsonElement videos = condition.get("videos");
+        return !condition.has("repeatableInSameSession") && videos != null && videos.isJsonArray() && videos.getAsJsonArray().size() > 0;
     }
 
     private static final class Plan {
@@ -334,12 +345,24 @@ public final class LegacyMigration {
             if (legacy) {
                 converted++;
             }
+            boolean pinned = playedOnce(type, content);
+            if (pinned) {
+                JsonObject withValue = new JsonObject();
+                content.getAsJsonObject().entrySet().stream().filter(member -> member.getKey().equals("id"))
+                        .forEach(member -> withValue.add(member.getKey(), member.getValue()));
+                withValue.addProperty("repeatableInSameSession", false);
+                for (Map.Entry<String, JsonElement> member : content.getAsJsonObject().entrySet()) {
+                    withValue.add(member.getKey(), member.getValue());
+                }
+                content = withValue;
+            }
             files.put(path, content);
-            originals.put(path, new Origin(original, legacy, id));
+            originals.put(path, new Origin(original, legacy, id, pinned));
         }
 
-        // Checks every planned file against the value it came from: identical, apart from the added "id"
-        // and the documented 1.1.x conversion, whose every original value must still be found in place.
+        // Checks every planned file against the value it came from: identical, apart from the added "id", the
+        // written repeatableInSameSession and the documented 1.1.x conversion, whose every original value must
+        // still be found in place.
         private void verify() {
             for (Map.Entry<String, JsonElement> file : files.entrySet()) {
                 Origin origin = originals.get(file.getKey());
@@ -348,6 +371,11 @@ public final class LegacyMigration {
                     JsonObject withoutId = content.getAsJsonObject().deepCopy();
                     withoutId.remove("id");
                     content = withoutId;
+                }
+                if (origin.pinned()) {
+                    JsonObject withoutValue = content.getAsJsonObject().deepCopy();
+                    withoutValue.remove("repeatableInSameSession");
+                    content = withoutValue;
                 }
                 boolean same = origin.legacy()
                         ? legacyPreserved(origin.original().getAsJsonObject(), content.getAsJsonObject())

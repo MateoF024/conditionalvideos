@@ -9,6 +9,7 @@ import org.mateof24.conditionalvideos.debug.DebugLog;
 import org.mateof24.conditionalvideos.network.PlaybackControlNetworking;
 import org.mateof24.conditionalvideos.world.PlaybackSessions;
 import org.mateof24.conditionalvideos.video.SilentVideoPreparation;
+import org.mateof24.conditionalvideos.video.SyncPoint;
 import org.mateof24.conditionalvideos.video.VideoLoadingScreen;
 import org.mateof24.conditionalvideos.video.VideoPlaybackScreen;
 import org.mateof24.conditionalvideos.video.backend.WaterMediaVideoBackend;
@@ -113,7 +114,7 @@ public final class ConditionVideoPlayer {
             }
             DebugLog.client(DebugLog.Area.QUEUE, "Starting queued '{}' ({} left).", next.conditionId(), QUEUE.size());
             boolean started = play(minecraft, next.config(), next.conditionConfig(),
-                    next.conditionId(), next.logName(), next.onCloseCallback(), next.force(), true);
+                    next.conditionId(), next.logName(), next.onCloseCallback(), next.force(), true, null);
             if (started) {
                 return;
             }
@@ -136,7 +137,7 @@ public final class ConditionVideoPlayer {
         for (DelayedPlayback delayed : due) {
             QueuedPlayback item = delayed.item;
             DebugLog.client(DebugLog.Area.SCHEDULE, "The delay of '{}' ran out.", item.conditionId());
-            if (!play(minecraft, item.config(), item.conditionConfig(), item.conditionId(), item.logName(), item.onCloseCallback(), false, true)) {
+            if (!play(minecraft, item.config(), item.conditionConfig(), item.conditionId(), item.logName(), item.onCloseCallback(), false, true, null)) {
                 PlaybackControlNetworking.notifyPlayback(item.conditionId(), PlaybackSessions.Phase.ENDED, false, false);
             }
         }
@@ -154,7 +155,7 @@ public final class ConditionVideoPlayer {
             case READY -> {
                 preparing = null;
                 startPlayback(minecraft, item.config(), item.conditionConfig(), item.conditionId(), current.playlist(), current.sourceResolver(),
-                        current.preparation().backend().source(), item.onCloseCallback(), item.force(), current.preparation().backend(), current.preparation().index());
+                        current.preparation().backend().source(), item.onCloseCallback(), item.force(), current.preparation().backend(), current.preparation().index(), null);
             }
             case FAILED -> {
                 preparing = null;
@@ -202,7 +203,7 @@ public final class ConditionVideoPlayer {
                                String conditionId,
                                String logName,
                                Runnable onCloseCallback) {
-        return play(minecraft, config, conditionConfig, conditionId, logName, onCloseCallback, false, false);
+        return play(minecraft, config, conditionConfig, conditionId, logName, onCloseCallback, false, false, null);
     }
 
     public static boolean playForced(Minecraft minecraft,
@@ -210,7 +211,17 @@ public final class ConditionVideoPlayer {
                                      ConditionalVideosConfig.ConditionConfig conditionConfig,
                                      String conditionId,
                                      String logName) {
-        return play(minecraft, config, conditionConfig, conditionId, logName, null, true, true);
+        return play(minecraft, config, conditionConfig, conditionId, logName, null, true, true, null);
+    }
+
+    // An order to join others at the point they are.
+    public static boolean playForcedAt(Minecraft minecraft,
+                                       ConditionalVideosConfig config,
+                                       ConditionalVideosConfig.ConditionConfig conditionConfig,
+                                       String conditionId,
+                                       String logName,
+                                       SyncPoint syncPoint) {
+        return play(minecraft, config, conditionConfig, conditionId, logName, null, true, true, syncPoint);
     }
 
     private static boolean play(Minecraft minecraft,
@@ -220,7 +231,8 @@ public final class ConditionVideoPlayer {
                                 String logName,
                                 Runnable onCloseCallback,
                                 boolean force,
-                                boolean delayDone) {
+                                boolean delayDone,
+                                SyncPoint requestedSync) {
         if (conditionConfig == null) {
             DebugLog.client(DebugLog.Area.CONDITION, "No video configured for {} ('{}'); nothing to play.", logName, conditionId);
             return false;
@@ -275,11 +287,13 @@ public final class ConditionVideoPlayer {
                 force ? " (forced, session gate skipped)" : "", playlist.size());
         Function<VideoEntry, URI> sourceResolver = entry -> resolveSource(minecraft, entry.source(), logName);
 
-        VideoEntry firstEntry = playlist.get(0);
+        SyncPoint syncPoint = requestedSync != null && requestedSync.entry() >= 0 && requestedSync.entry() < playlist.size() ? requestedSync : null;
+        int firstIndex = syncPoint == null ? 0 : syncPoint.entry();
+        VideoEntry firstEntry = playlist.get(firstIndex);
         URI firstSourceUri = sourceResolver.apply(firstEntry);
         if (conditionConfig.resolvedDisableLoadingScreen() && (firstSourceUri != null || isDownloadPending(minecraft, firstEntry.source()))) {
             preparing = new PreparingPlayback(new QueuedPlayback(config, conditionConfig, conditionId, logName, onCloseCallback, force), playlist, sourceResolver,
-                    new SilentVideoPreparation(playlist, sourceResolver, path -> isDownloadPending(minecraft, path), LOADING_SCREEN_TIMEOUT_TICKS));
+                    new SilentVideoPreparation(playlist, sourceResolver, path -> isDownloadPending(minecraft, path), LOADING_SCREEN_TIMEOUT_TICKS, syncPoint));
             PlaybackControlNetworking.notifyPlayback(conditionId, PlaybackSessions.Phase.DELAYED, !force, false);
             DebugLog.client(DebugLog.Area.CONDITION, "{} ('{}') prepares its video without a loading screen.", logName, conditionId);
             return true;
@@ -292,7 +306,7 @@ public final class ConditionVideoPlayer {
                     return true;
                 }
                 openLoadingScreen(minecraft, config, conditionConfig, conditionId,
-                        playlist, sourceResolver, configuredPath, logName, onCloseCallback, force);
+                        playlist, sourceResolver, firstIndex, syncPoint, configuredPath, logName, onCloseCallback, force);
                 return true;
             }
             PlaybackControlNetworking.notifyPlayback(conditionId, PlaybackSessions.Phase.ENDED, false, false);
@@ -300,7 +314,7 @@ public final class ConditionVideoPlayer {
         }
 
         startPlayback(minecraft, config, conditionConfig, conditionId,
-                playlist, sourceResolver, firstSourceUri, onCloseCallback, force, null, 0);
+                playlist, sourceResolver, firstSourceUri, onCloseCallback, force, null, firstIndex, syncPoint);
         return true;
     }
 
@@ -310,12 +324,14 @@ public final class ConditionVideoPlayer {
                                           String conditionId,
                                           List<VideoEntry> playlist,
                                           Function<VideoEntry, URI> sourceResolver,
+                                          int firstIndex,
+                                          SyncPoint syncPoint,
                                           String configuredPath,
                                           String logName,
                                           Runnable onCloseCallback,
                                           boolean force) {
         DebugLog.client(DebugLog.Area.TRANSFER, "Opened the loading screen for {}: waiting for '{}' from the server.", logName, configuredPath);
-        VideoEntry firstEntry = playlist.get(0);
+        VideoEntry firstEntry = playlist.get(firstIndex);
         VideoLoadingScreen screen = new VideoLoadingScreen(
                 () -> ActiveConfigResolver.resolveRemoteVideoPath(configuredPath) != null,
                 () -> {
@@ -335,7 +351,7 @@ public final class ConditionVideoPlayer {
                         return;
                     }
                     startPlayback(minecraft, config, conditionConfig, conditionId,
-                            playlist, sourceResolver, readyUri, onCloseCallback, force, null, 0);
+                            playlist, sourceResolver, readyUri, onCloseCallback, force, null, firstIndex, syncPoint);
                 },
                 () -> {
                     ConditionalVideos.LOGGER.warn("Timed out waiting for {} video '{}'.", logName, configuredPath);
@@ -365,7 +381,8 @@ public final class ConditionVideoPlayer {
                                       Runnable onCloseCallback,
                                       boolean force,
                                       WaterMediaVideoBackend preparedBackend,
-                                      int startIndex) {
+                                      int startIndex,
+                                      SyncPoint syncPoint) {
         boolean once = !force && !conditionConfig.repeatableInSameSession();
         if (once) {
             ActiveConfigResolver.markWatched(conditionId);
@@ -398,7 +415,8 @@ public final class ConditionVideoPlayer {
                 conditionId,
                 playlistEnd,
                 preparedBackend,
-                startIndex
+                startIndex,
+                syncPoint
         ));
         org.mateof24.conditionalvideos.runtime.PlaybackEvents.notifyStarted(conditionId);
     }

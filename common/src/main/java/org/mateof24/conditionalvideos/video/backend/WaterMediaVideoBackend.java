@@ -11,6 +11,7 @@ import org.mateof24.conditionalvideos.ConditionalVideos;
 import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
 import org.mateof24.conditionalvideos.debug.ClientDebug;
 import org.mateof24.conditionalvideos.debug.DebugLog;
+import org.mateof24.conditionalvideos.video.SyncPoint;
 import org.mateof24.conditionalvideos.debug.VideoDiagnostics;
 import org.watermedia.WaterMediaConfig;
 import org.watermedia.api.media.GFXEngine;
@@ -47,6 +48,7 @@ public final class WaterMediaVideoBackend {
     private long startAtMillis;
     private boolean startAtPending;
     private boolean resumeAfterStartAt;
+    private long syncNanos;
 
     private MRL mrl;
     private MediaPlayer player;
@@ -155,6 +157,18 @@ public final class WaterMediaVideoBackend {
     public void setStartPaused(boolean value) {
         this.startPaused = value;
         this.holdAtZero = value;
+    }
+
+    // Joining someone already watching: the seek adds the time that passed since they reported their position,
+    // and a source that cannot seek is simply joined where it is.
+    public void setSyncPoint(SyncPoint point) {
+        startAtMillis = Math.round(point.seconds() * 1000d);
+        startAtPending = true;
+        syncNanos = point.receivedNanos();
+    }
+
+    public double startOffsetSeconds() {
+        return startAtMillis / 1000d;
     }
 
     public void setStartAt(float seconds) {
@@ -361,6 +375,10 @@ public final class WaterMediaVideoBackend {
         try {
             boolean live = player.live();
             long duration = player.duration();
+            if (syncNanos != 0L) {
+                tickSyncSeek(live);
+                return;
+            }
             if (live || !player.canSeek() || (duration > 0L && startAtMillis >= duration)) {
                 ConditionalVideos.LOGGER.warn("Video '{}' cannot start at {} s ({}); skipping it.", source, startAtMillis / 1000d,
                         live ? "it is a live source" : duration > 0L ? "it lasts " + duration / 1000d + " s" : "it cannot seek");
@@ -378,6 +396,26 @@ public final class WaterMediaVideoBackend {
             }
         } catch (Throwable throwable) {
             DebugLog.client(DebugLog.Area.PLAYBACK, "Could not seek '{}' to its startAt yet: {}", source, throwable.toString());
+        }
+    }
+
+    private void tickSyncSeek(boolean live) {
+        if (live || !player.canSeek()) {
+            startAtMillis = 0L;
+            startAtPending = false;
+            DebugLog.client(DebugLog.Area.PLAYBACK, "'{}' cannot seek; it joins where the source is.", source);
+        } else {
+            long target = startAtMillis + (System.nanoTime() - syncNanos) / 1_000_000L;
+            if (!player.seek(target)) {
+                return;
+            }
+            startAtMillis = target;
+            startAtPending = false;
+            DebugLog.client(DebugLog.Area.PLAYBACK, "'{}' joins the others at {} s.", source, target / 1000d);
+        }
+        if (resumeAfterStartAt) {
+            resumeAfterStartAt = false;
+            player.resume();
         }
     }
 

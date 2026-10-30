@@ -24,7 +24,9 @@ public final class SilentVideoPreparation {
     private final Predicate<String> downloadPending;
     private final int downloadTimeoutTicks;
     private final float defaultVolume;
+    private final int firstIndex;
 
+    private SyncPoint syncPoint;
     private int index;
     private VideoEntry entry;
     private WaterMediaVideoBackend backend;
@@ -34,12 +36,15 @@ public final class SilentVideoPreparation {
     private boolean heldForPause;
 
     public SilentVideoPreparation(List<VideoEntry> playlist, Function<VideoEntry, URI> sourceResolver,
-                                  Predicate<String> downloadPending, int downloadTimeoutTicks) {
+                                  Predicate<String> downloadPending, int downloadTimeoutTicks, SyncPoint syncPoint) {
         this.playlist = playlist;
         this.sourceResolver = sourceResolver;
         this.downloadPending = downloadPending;
         this.downloadTimeoutTicks = downloadTimeoutTicks;
         this.defaultVolume = ActiveConfigResolver.effectiveDefaultVolume(Minecraft.getInstance());
+        this.syncPoint = syncPoint;
+        this.firstIndex = syncPoint == null ? 0 : syncPoint.entry();
+        this.index = firstIndex;
     }
 
     // A game paused while the video is ready holds it there, so the pause does not eat into the video.
@@ -55,7 +60,7 @@ public final class SilentVideoPreparation {
         if (backend.hasError()) {
             return nextEntry("it reported an error");
         }
-        if (backend.hasTextureValid() && backend.positionSeconds() >= entry.resolvedStartAt() + VideoPlaybackScreen.TRAILING_RELEASE_POSITION_SECONDS) {
+        if (backend.hasTextureValid() && backend.positionSeconds() >= backend.startOffsetSeconds() + VideoPlaybackScreen.TRAILING_RELEASE_POSITION_SECONDS) {
             if (gamePaused) {
                 if (!heldForPause) {
                     heldForPause = true;
@@ -89,7 +94,11 @@ public final class SilentVideoPreparation {
                 backend = new WaterMediaVideoBackend(uri, entry.resolvedVolume(defaultVolume));
                 backend.setForcedQuality(VideoPlaybackScreen.resolveForcedQuality(ActiveConfigResolver.effectiveVideoQuality(Minecraft.getInstance())));
                 backend.setVolumeMultiplier(0f);
-                backend.setStartAt(entry.resolvedStartAt());
+                if (syncPoint != null) {
+                    backend.setSyncPoint(syncPoint);
+                } else {
+                    backend.setStartAt(entry.resolvedStartAt());
+                }
                 idleTicks = 0;
                 try {
                     backend.init();
@@ -99,7 +108,7 @@ public final class SilentVideoPreparation {
                 DebugLog.client(DebugLog.Area.PLAYLIST, "Preparing entry {} ('{}') with nothing on screen.", index, entry.source());
                 return null;
             }
-            if (index == 0) {
+            if (index == firstIndex) {
                 if (downloadPending.test(entry.source()) && ++downloadTicks < downloadTimeoutTicks) {
                     return Result.WAITING;
                 }
@@ -115,6 +124,7 @@ public final class SilentVideoPreparation {
     private Result nextEntry(String reason) {
         ConditionalVideos.LOGGER.warn("Playlist entry '{}' was discarded during its silent preparation: {}.", entry.source(), reason);
         cancel();
+        syncPoint = null;
         index++;
         return index < playlist.size() ? Result.WAITING : Result.FAILED;
     }

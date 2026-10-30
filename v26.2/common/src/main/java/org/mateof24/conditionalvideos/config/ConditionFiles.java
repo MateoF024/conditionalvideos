@@ -39,8 +39,9 @@ import static org.mateof24.conditionalvideos.config.ConditionalVideosConfig.SIMP
 
 // One folder of per-condition files: conditions/ (client and singleplayer) or server-conditions/
 // (dedicated server). It builds the in-memory config from the files, re-reads them only when one is
-// added, removed or modified, and keeps the problems found so they can be announced. The only write is
-// creating a missing file for a custom condition registered through the API.
+// added, removed or modified, and keeps the problems found so they can be announced. It only writes to create
+// a missing file for a custom condition registered through the API, and to add the options a file does not
+// show yet: what is already written there is never changed, and a file that cannot be read is left alone.
 public final class ConditionFiles {
     public static final String CLIENT_FOLDER = "conditions";
     public static final String SERVER_FOLDER = "server-conditions";
@@ -57,6 +58,7 @@ public final class ConditionFiles {
     private ConditionalVideosConfig config = new ConditionalVideosConfig();
     private List<ConfigNotice> notices = List.of();
     private Set<String> owned = Set.of();
+    private Map<String, String> ownerLabels = Map.of();
     private TreeMap<String, String> scanned = new TreeMap<>();
     private String fingerprint;
     private long nextCheckMillis;
@@ -109,10 +111,43 @@ public final class ConditionFiles {
         return notices;
     }
 
+    // Every condition that has a file: its bare name or type/key as the folder spells it.
+    public synchronized Set<String> ownedConditions() {
+        refresh();
+        return owned;
+    }
+
     // Grows every time the files are read again after a change.
     public synchronized int generation() {
         refresh();
         return generation;
+    }
+
+    // Changes one condition's file through a temporary sibling. Whatever the edit does not touch stays as it
+    // was written. False when no file holds that condition; a file that cannot be read is left alone.
+    public synchronized boolean edit(String id, Edit edit) throws IOException, ConditionEdits.Refused {
+        nextCheckMillis = 0L;
+        refresh();
+        String label = ownerLabels.get(id);
+        if (label == null) {
+            return false;
+        }
+        Path file = directory.resolve(label.substring(folder.length() + 1));
+        JsonElement element = JsonParser.parseString(readText(file));
+        if (!element.isJsonObject()) {
+            throw new IOException("'" + label + "' does not contain a JSON object");
+        }
+        int slash = id.indexOf('/');
+        String type = slash < 0 ? id : id.substring(0, slash);
+        JsonObject object = ConditionalVideosConfig.LEGACY_SHAPED.contains(type) ? ConditionalVideosConfig.convertLegacy(element.getAsJsonObject()) : element.getAsJsonObject();
+        edit.apply(object);
+        writeAtomically(file, object);
+        nextCheckMillis = 0L;
+        return true;
+    }
+
+    public interface Edit {
+        void apply(JsonObject condition) throws ConditionEdits.Refused;
     }
 
     public synchronized void invalidate() {
@@ -218,6 +253,7 @@ public final class ConditionFiles {
         List<ConfigNotice> found = new ArrayList<>();
         Map<String, String> owners = new HashMap<>();
         int files = 0;
+        int rewritten = 0;
         for (String relative : entries.keySet()) {
             int slash = relative.indexOf('/');
             String top = slash < 0 ? relative : relative.substring(0, slash);
@@ -264,12 +300,22 @@ public final class ConditionFiles {
                 continue;
             }
             if (element != null) {
-                next.accept(type, key, element, label, found);
+                if (showOptions(type, relative, element)) {
+                    rewritten++;
+                }
+                JsonElement shown = element.isJsonObject() ? ConditionDefaults.complete(type, element.getAsJsonObject()) : element;
+                next.accept(type, key, shown, label, found);
             }
+        }
+        if (rewritten > 0) {
+            scanned = scan();
+            fingerprint = scanned.toString();
+            DebugLog.side(DebugLog.Area.CONFIG, "Wrote the options missing from {} file(s) in '{}'; what they had stays as it was.", rewritten, folder);
         }
         config = next;
         notices = List.copyOf(found);
         owned = Set.copyOf(owners.keySet());
+        ownerLabels = Map.copyOf(owners);
         generation++;
 
         StringBuilder signature = new StringBuilder();
@@ -288,6 +334,29 @@ public final class ConditionFiles {
             DebugLog.side(DebugLog.Area.CONFIG, "Read '{}': {} file(s), {} playable condition(s), {} problem(s) ({} ms).",
                     directory, files, ConditionRegistry.listPlayableKeys(next).size(), notices.size(),
                     System.currentTimeMillis() - startMillis);
+        }
+    }
+
+    // Adds to the file the options it does not show yet. It gives up if the file changed since it was read, because
+    // that is the user saving it, and a file that cannot be written just keeps working as it is.
+    private boolean showOptions(String type, String relative, JsonElement element) {
+        if (!element.isJsonObject()) {
+            return false;
+        }
+        JsonObject completed = ConditionDefaults.complete(type, element.getAsJsonObject());
+        if (completed == element) {
+            return false;
+        }
+        Path file = directory.resolve(relative);
+        try {
+            if (!JsonParser.parseString(readText(file)).equals(element)) {
+                return false;
+            }
+            writeAtomically(file, completed);
+            return true;
+        } catch (IOException | RuntimeException exception) {
+            ConditionalVideos.LOGGER.warn("Could not add the missing options to '{}/{}': {}", folder, relative, ConfigNotice.reason(exception));
+            return false;
         }
     }
 

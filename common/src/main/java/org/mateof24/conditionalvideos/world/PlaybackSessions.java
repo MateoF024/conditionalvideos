@@ -44,6 +44,8 @@ import java.util.UUID;
 public final class PlaybackSessions {
     public enum Phase { LOADING, STARTED, ENDED, ALIVE, DELAYED }
 
+    private static final long ORDER_ANSWER_MILLIS = 2000L;
+
     private static final long SIGNAL_TIMEOUT_MILLIS = 30_000L;
     private static final long FIRST_JOIN_WINDOW_MILLIS = 5 * 60_000L;
     private static final long RECENT_EVENT_MILLIS = 60_000L;
@@ -88,7 +90,32 @@ public final class PlaybackSessions {
 
     // Every play order the server sends allows one session for that condition.
     public static void recordOrder(ServerPlayer player, String key) {
-        events(player.getUUID()).orders.merge(key, 1, Integer::sum);
+        PlayerEvents events = events(player.getUUID());
+        events.orders.merge(key, 1, Integer::sum);
+        events.orderedAt = System.currentTimeMillis();
+    }
+
+    // In a video, getting one ready, or just ordered one that has not answered yet.
+    public static boolean isBusy(ServerPlayer player) {
+        UUID id = player.getUUID();
+        if (SESSIONS.containsKey(id)) {
+            return true;
+        }
+        PlayerEvents events = EVENTS.get(id);
+        return events != null && (!events.waitingSince.isEmpty() || System.currentTimeMillis() - events.orderedAt < ORDER_ANSWER_MILLIS);
+    }
+
+    // Someone else watching this condition right now, if anyone.
+    public static ServerPlayer otherWatcher(MinecraftServer server, String key, UUID except) {
+        for (Map.Entry<UUID, Session> entry : SESSIONS.entrySet()) {
+            if (!entry.getKey().equals(except) && entry.getValue().key.equals(key)) {
+                ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
+                if (player != null) {
+                    return player;
+                }
+            }
+        }
+        return null;
     }
 
     // natural is the client's word that its own detection triggered the playback; server orders are known here.
@@ -114,6 +141,7 @@ public final class PlaybackSessions {
                     end(player, id, "the playlist ended", null);
                 }
                 events(id).waitingSince.remove(key);
+                events(id).orderedAt = 0L;
                 finishInProgress(player, key);
             }
             case LOADING, STARTED -> {
@@ -130,6 +158,7 @@ public final class PlaybackSessions {
                     begin(player, key);
                 }
                 events(id).waitingSince.remove(key);
+                events(id).orderedAt = 0L;
             }
         }
     }
@@ -187,6 +216,26 @@ public final class PlaybackSessions {
                 data.markWatched(player.getUUID(), player.getScoreboardName(), List.of(key));
                 DebugLog.server(DebugLog.Area.WORLD, "{} was interrupted during '{}'; it stays watched.", player.getScoreboardName(), key);
             }
+        }
+    }
+
+    // Lets a condition that was reset pass the once-per-connection checks again (all of them with a null key).
+    public static void forgetAccepted(ServerPlayer player, String key) {
+        PlayerEvents events = EVENTS.get(player.getUUID());
+        if (events == null) {
+            return;
+        }
+        events.started.removeIf(started -> key == null || started.equals(key));
+        if (key == null || key.equals(ConditionRegistry.KEY_FIRST_JOIN)) {
+            events.firstJoinAccepted = false;
+        }
+        if (key == null) {
+            events.advancementsAccepted.clear();
+            events.dimensionAccepted = null;
+        } else if (key.startsWith(ConditionRegistry.TYPE_ADVANCEMENT + "/")) {
+            events.advancementsAccepted.remove(key.substring(ConditionRegistry.TYPE_ADVANCEMENT.length() + 1));
+        } else if (key.equals(ConditionRegistry.TYPE_DIMENSION + "/" + events.dimensionAccepted)) {
+            events.dimensionAccepted = null;
         }
     }
 
@@ -454,6 +503,7 @@ public final class PlaybackSessions {
         EVENTS.clear();
         ServerConditionDispatcher.clearDelayed();
         WorldPositionConditions.reset();
+        PlaybackSync.reset();
         PlayerExclusions.reset();
         ticks = 0;
         WorldFreeze.reset(server);
@@ -502,6 +552,7 @@ public final class PlaybackSessions {
         private final Set<String> advancementsAccepted = new HashSet<>();
         private final Map<String, Long> dimensionsSeen = new HashMap<>();
         private final Map<String, Long> waitingSince = new HashMap<>();
+        private long orderedAt;
         private final Set<String> started = new HashSet<>();
         private final List<String> replays = new ArrayList<>();
         private boolean interruptedResolved;

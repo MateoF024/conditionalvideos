@@ -56,6 +56,25 @@ public final class ConditionalVideosWorldData extends SavedData {
         return added;
     }
 
+    // Removes one condition from a player's watched list, or all of them with a null key. Returns how many.
+    public int clearWatched(UUID player, String key) {
+        PlayerRecord record = players.get(player.toString());
+        if (record == null) {
+            return 0;
+        }
+        int before = record.watched.size();
+        if (key == null) {
+            record.watched.clear();
+        } else {
+            record.watched.remove(key);
+        }
+        int removed = before - record.watched.size();
+        if (removed > 0) {
+            setDirty();
+        }
+        return removed;
+    }
+
     // Natural playbacks in progress (waiting for their delay, loading or playing); what is left when the player
     // returns was interrupted.
     public Set<String> inProgress(UUID player) {

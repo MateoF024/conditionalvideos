@@ -11,6 +11,8 @@ import org.mateof24.conditionalvideos.debug.DebugLog;
 import org.mateof24.conditionalvideos.debug.ServerDebug;
 import org.mateof24.conditionalvideos.runtime.PlaybackControlClient;
 import org.mateof24.conditionalvideos.world.PlaybackSessions;
+import org.mateof24.conditionalvideos.world.PlaybackSync;
+import org.mateof24.conditionalvideos.world.PlayerExclusions;
 import org.mateof24.conditionalvideos.world.WatchedConditions;
 
 import java.util.ArrayList;
@@ -33,6 +35,12 @@ public final class PlaybackControlNetworking {
             ResourceLocation.fromNamespaceAndPath(ConditionalVideos.MOD_ID, "watched_list");
     private static final ResourceLocation EXCLUDED_LIST =
             ResourceLocation.fromNamespaceAndPath(ConditionalVideos.MOD_ID, "excluded_list");
+    private static final ResourceLocation CONTROL_PLAY_AT =
+            ResourceLocation.fromNamespaceAndPath(ConditionalVideos.MOD_ID, "control_play_at");
+    private static final ResourceLocation POSITION_REQUEST =
+            ResourceLocation.fromNamespaceAndPath(ConditionalVideos.MOD_ID, "position_request");
+    private static final ResourceLocation POSITION_REPORT =
+            ResourceLocation.fromNamespaceAndPath(ConditionalVideos.MOD_ID, "position_report");
     private static final ResourceLocation PLAYBACK_STATE =
             ResourceLocation.fromNamespaceAndPath(ConditionalVideos.MOD_ID, "playback_state");
 
@@ -54,6 +62,15 @@ public final class PlaybackControlNetworking {
             DebugLog.client(DebugLog.Area.NETWORK, "The server ordered to play '{}'.", conditionKey);
             PlaybackControlClient.play(conditionKey);
         });
+        s2cHandlers.put(CONTROL_PLAY_AT, data -> {
+            FriendlyByteBuf buf = NetworkHelper.fromBytes(data);
+            String conditionKey = buf.readUtf();
+            int entry = buf.readVarInt();
+            double seconds = buf.readDouble();
+            DebugLog.client(DebugLog.Area.NETWORK, "The server ordered to join '{}' at entry {}, {} s.", conditionKey, entry, seconds);
+            PlaybackControlClient.playAt(conditionKey, entry, seconds);
+        });
+        s2cHandlers.put(POSITION_REQUEST, data -> PlaybackControlClient.reportPosition(NetworkHelper.fromBytes(data).readUtf()));
         s2cHandlers.put(CONTROL_STOP, data -> {
             DebugLog.client(DebugLog.Area.NETWORK, "The server ordered to stop playback.");
             PlaybackControlClient.stop();
@@ -86,6 +103,14 @@ public final class PlaybackControlNetworking {
     }
 
     public static void registerC2SHandlers(Map<ResourceLocation, NetworkHelper.C2SPacketHandler> c2sHandlers) {
+        c2sHandlers.put(POSITION_REPORT, (data, player) -> {
+            FriendlyByteBuf buf = NetworkHelper.fromBytes(data);
+            String conditionKey = buf.readUtf();
+            boolean known = buf.readBoolean();
+            int entry = buf.readVarInt();
+            double seconds = buf.readDouble();
+            PlaybackSync.onPosition(player.getServer(), player, conditionKey, known, entry, seconds);
+        });
         c2sHandlers.put(PLAYBACK_STATE, (data, player) -> {
             FriendlyByteBuf buf = NetworkHelper.fromBytes(data);
             String conditionKey = buf.readUtf();
@@ -98,11 +123,40 @@ public final class PlaybackControlNetworking {
     }
 
     public static void sendPlay(ServerPlayer player, String conditionKey) {
+        PlayerExclusions.ensureDelivered(player, conditionKey);
         NetworkHelper.sendToPlayer(player, CONTROL_PLAY,
                 NetworkHelper.toBytes(buf -> buf.writeUtf(conditionKey)));
         PlaybackSessions.recordOrder(player, conditionKey);
         ServerDebug.countOrder(conditionKey);
         DebugLog.server(DebugLog.Area.NETWORK, "Sent a play order for '{}' to {}.", conditionKey, player.getScoreboardName());
+    }
+
+    public static void sendPlayAt(ServerPlayer player, String conditionKey, int entry, double seconds) {
+        PlayerExclusions.ensureDelivered(player, conditionKey);
+        NetworkHelper.sendToPlayer(player, CONTROL_PLAY_AT, NetworkHelper.toBytes(buf -> {
+            buf.writeUtf(conditionKey);
+            buf.writeVarInt(entry);
+            buf.writeDouble(seconds);
+        }));
+        PlaybackSessions.recordOrder(player, conditionKey);
+        ServerDebug.countOrder(conditionKey);
+        DebugLog.server(DebugLog.Area.NETWORK, "Sent an order to join '{}' at entry {}, {} s to {}.", conditionKey, entry, seconds, player.getScoreboardName());
+    }
+
+    public static void sendPositionRequest(ServerPlayer player, String conditionKey) {
+        NetworkHelper.sendToPlayer(player, POSITION_REQUEST, NetworkHelper.toBytes(buf -> buf.writeUtf(conditionKey)));
+    }
+
+    public static void sendPosition(String conditionKey, boolean known, int entry, double seconds) {
+        if (Minecraft.getInstance().getConnection() == null) {
+            return;
+        }
+        NetworkHelper.sendToServer(POSITION_REPORT, NetworkHelper.toBytes(buf -> {
+            buf.writeUtf(conditionKey);
+            buf.writeBoolean(known);
+            buf.writeVarInt(entry);
+            buf.writeDouble(seconds);
+        }));
     }
 
     public static void sendStop(ServerPlayer player) {

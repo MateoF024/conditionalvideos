@@ -13,6 +13,7 @@ import org.mateof24.conditionalvideos.network.ConfigSyncNetworking;
 import org.mateof24.conditionalvideos.network.PlaybackControlNetworking;
 
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
@@ -25,6 +26,8 @@ public final class PlayerExclusions {
     private static final int CHECK_INTERVAL_TICKS = 20;
 
     private static final Map<UUID, Set<String>> SENT = new HashMap<>();
+    // Conditions a player received despite being left out, because an order reached them anyway.
+    private static final Map<UUID, Set<ConditionConfig>> DELIVERED = new HashMap<>();
     private static ConditionalVideosConfig rulesConfig;
     private static Map<String, ConditionConfig> rules = Map.of();
     private static int ticks;
@@ -33,13 +36,40 @@ public final class PlayerExclusions {
     }
 
     public static void init() {
-        PlayerEvent.PLAYER_QUIT.register(player -> SENT.remove(player.getUUID()));
+        PlayerEvent.PLAYER_QUIT.register(player -> {
+            SENT.remove(player.getUUID());
+            DELIVERED.remove(player.getUUID());
+        });
         TickEvent.SERVER_POST.register(PlayerExclusions::onServerTick);
     }
 
     // Why this player is left out of the condition; null when they are not.
     public static String reason(ServerPlayer player, ConditionConfig condition) {
         return condition == null ? null : condition.exclusionReason(PlayerRoles.viewer(player));
+    }
+
+    // Who a player is for what they receive: their own exclusions, minus what an order already had to deliver.
+    public static ConditionalVideosConfig.Viewer deliveryViewer(ServerPlayer player) {
+        ConditionalVideosConfig.Viewer viewer = PlayerRoles.viewer(player);
+        Set<ConditionConfig> delivered = DELIVERED.get(player.getUUID());
+        return delivered == null ? viewer : new ConditionalVideosConfig.Viewer(viewer.name(), viewer.team(), viewer.operator(), Set.copyOf(delivered));
+    }
+
+    // An order can reach someone left out of the condition, whose dedicated-server client has neither it nor its
+    // videos: they get them first. It still does not fire for them by itself, the excluded list keeps it out.
+    public static void ensureDelivered(ServerPlayer player, String key) {
+        MinecraftServer server = player.level().getServer();
+        if (server == null || !server.isDedicatedServer()) {
+            return;
+        }
+        ConditionConfig condition = ConditionRegistry.resolve(ServerConditionDispatcher.activeConfig(server), key);
+        if (condition == null || condition.exclusionReason(deliveryViewer(player)) == null) {
+            return;
+        }
+        DELIVERED.computeIfAbsent(player.getUUID(), id -> new HashSet<>()).add(condition);
+        DebugLog.server(DebugLog.Area.CONFIG, "Delivering '{}' to {}, who is left out of it, for an order.", key, player.getScoreboardName());
+        ConfigSyncNetworking.sendServerConfig(player);
+        ConfigSyncNetworking.sendVideoManifest(player);
     }
 
     // Goes out before the watched list, which is what lets the client start deciding.
@@ -118,6 +148,7 @@ public final class PlayerExclusions {
 
     public static void reset() {
         SENT.clear();
+        DELIVERED.clear();
         rulesConfig = null;
         rules = Map.of();
         ticks = 0;

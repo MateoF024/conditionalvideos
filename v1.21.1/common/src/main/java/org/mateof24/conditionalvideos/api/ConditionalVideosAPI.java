@@ -118,7 +118,7 @@ public final class ConditionalVideosAPI {
     }
 
     /**
-     * Plays a condition for a player regardless of its session gating (mirrors the {@code play} command).
+     * Plays a condition for a player right away, whatever its file says about delay, exclusions or being watched.
      *
      * @return {@code true} if an order was sent (condition resolved and has at least one video)
      */
@@ -142,6 +142,22 @@ public final class ConditionalVideosAPI {
         DebugLog.server(DebugLog.Area.API, "forcePlayOnServer('{}', {}) -> order sent.", key, player.getScoreboardName());
         PlaybackControlNetworking.sendPlay(player, key);
         return true;
+    }
+
+    /**
+     * Plays a condition for a player as its file says, changing what the options set for this one playback.
+     * {@link PlayOptions#FILE} behaves like {@link #triggerOnServer(ServerPlayer, String)}.
+     *
+     * @return {@code true} if an order was sent or is waiting for the condition's delay
+     */
+    public static boolean playOnServer(ServerPlayer player, String conditionKey, PlayOptions options) {
+        if (player == null || conditionKey == null || conditionKey.isBlank() || options == null) {
+            return false;
+        }
+        ServerDebug.countApiCall();
+        boolean sent = ServerConditionDispatcher.play(player, conditionKey.trim(), options).started();
+        DebugLog.server(DebugLog.Area.API, "playOnServer('{}', {}, {}) -> {}.", conditionKey.trim(), player.getScoreboardName(), options, sent ? "order sent" : "not sent");
+        return sent;
     }
 
     public static void stopOnServer(ServerPlayer player) {

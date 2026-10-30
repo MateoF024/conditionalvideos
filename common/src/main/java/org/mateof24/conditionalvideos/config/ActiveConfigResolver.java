@@ -125,6 +125,7 @@ public final class ActiveConfigResolver {
     }
 
     public static void setWatchedFromServer(Collection<String> conditionKeys) {
+        WATCHED.clear();
         WATCHED.addAll(conditionKeys);
         watchedFromServer = true;
     }

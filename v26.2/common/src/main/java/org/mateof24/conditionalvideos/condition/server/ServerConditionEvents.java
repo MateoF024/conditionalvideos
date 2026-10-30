@@ -16,6 +16,7 @@ import org.mateof24.conditionalvideos.condition.shared.ConditionRegistry;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig.ScoreboardConditionConfig;
 import org.mateof24.conditionalvideos.debug.DebugLog;
+import org.mateof24.conditionalvideos.world.PlaybackSync;
 import org.mateof24.conditionalvideos.world.WatchedConditions;
 
 import java.util.HashMap;
@@ -46,6 +47,7 @@ public final class ServerConditionEvents {
         });
         TickEvent.SERVER_POST.register(ServerConditionEvents::onServerTick);
         WorldPositionConditions.init();
+        PlaybackSync.init();
     }
 
     private static void onItemObtained(Player player, ItemStack stack) {
