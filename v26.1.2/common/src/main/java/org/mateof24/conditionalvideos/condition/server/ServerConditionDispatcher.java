@@ -10,6 +10,7 @@ import org.mateof24.conditionalvideos.debug.DebugLog;
 import org.mateof24.conditionalvideos.network.PlaybackControlNetworking;
 import org.mateof24.conditionalvideos.world.ConditionalVideosWorldData;
 import org.mateof24.conditionalvideos.world.PlaybackSessions;
+import org.mateof24.conditionalvideos.world.PlayerExclusions;
 import org.mateof24.conditionalvideos.world.WatchedConditions;
 
 import java.util.HashMap;
@@ -36,6 +37,11 @@ public final class ServerConditionDispatcher {
         }
         ConditionConfig conditionConfig = ConditionRegistry.resolve(activeConfig(server), conditionKey);
         if (conditionConfig == null) {
+            return false;
+        }
+        String excluded = PlayerExclusions.reason(player, conditionConfig);
+        if (excluded != null) {
+            DebugLog.server(DebugLog.Area.CONDITION, "'{}' does not fire for {}: {}.", conditionKey, player.getScoreboardName(), excluded);
             return false;
         }
         if (conditionConfig.resolvedPlaylist().isEmpty()) {
@@ -96,7 +102,9 @@ public final class ServerConditionDispatcher {
                 if (player != null) {
                     DebugLog.server(DebugLog.Area.SCHEDULE, "The delay of '{}' for {} ran out.", key, player.getScoreboardName());
                     PlaybackSessions.clearInProgress(player, key);
-                    PlaybackControlNetworking.sendPlay(player, key);
+                    if (PlayerExclusions.reason(player, ConditionRegistry.resolve(activeConfig(server), key)) == null) {
+                        PlaybackControlNetworking.sendPlay(player, key);
+                    }
                 }
             }
             if (delayed.isEmpty()) {

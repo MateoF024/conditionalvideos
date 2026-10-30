@@ -95,7 +95,8 @@ public final class ConditionalVideosConfig {
             scoreboard.put(key, new ScoreboardConditionConfig(score.repeatableInSameSession(),
                     score.playlistLoop() == null ? Boolean.FALSE : score.playlistLoop(), playable(score.videos()),
                     score.value(), score.comparator(), score.protectPlayer(), score.freezeWorld(),
-                    score.conditionDelay(), score.replayOnReconnect(), score.disableLoadingScreen()));
+                    score.conditionDelay(), score.replayOnReconnect(), score.disableLoadingScreen(),
+                    score.excludePlayers(), score.excludeTeams(), score.excludeOps()));
             return true;
         }
         ConditionConfig condition = (ConditionConfig) parsed;
@@ -104,7 +105,8 @@ public final class ConditionalVideosConfig {
         ConditionConfig normalised = new ConditionConfig(condition.repeatableInSameSession(),
                 condition.playlistLoop() == null ? Boolean.FALSE : condition.playlistLoop(), playable(condition.videos()),
                 condition.protectPlayer(), condition.freezeWorld() == null && "firstJoin".equals(type) ? Boolean.TRUE : condition.freezeWorld(),
-                condition.conditionDelay(), condition.replayOnReconnect(), condition.disableLoadingScreen());
+                condition.conditionDelay(), condition.replayOnReconnect(), condition.disableLoadingScreen(),
+                condition.excludePlayers(), condition.excludeTeams(), condition.excludeOps());
         switch (type) {
             case "firstJoin" -> firstJoin = normalised;
             case "playerDeath" -> playerDeath = normalised;
@@ -294,23 +296,34 @@ public final class ConditionalVideosConfig {
         return result;
     }
 
-    // Aggregated JSON sent to clients: one object with every condition, the shape older versions read.
     public String toJson() {
+        return toJsonFor(null);
+    }
+
+    // Aggregated JSON sent to clients: one object with every condition, the shape older versions read. What
+    // this player is left out of reads as absent, and the exclusion rules themselves stay on the server.
+    public String toJsonFor(Viewer viewer) {
         JsonObject root = new JsonObject();
         root.addProperty("configVersion", CURRENT_CONFIG_VERSION);
-        root.add("firstJoin", GSON.toJsonTree(firstJoin));
-        root.add("playerDeath", conditionTree(playerDeath));
-        root.add("entityKilled", conditionMapTree(entityKilled));
-        root.add("deathByEntity", conditionMapTree(deathByEntity));
-        root.add("advancementCompleted", conditionMapTree(advancementCompleted));
-        root.add("dimensionChanged", conditionMapTree(dimensionChanged));
-        root.add("totemUsed", conditionTree(totemUsed));
-        root.add("bedSleep", conditionTree(bedSleep));
-        root.add("itemObtained", conditionMapTree(itemObtained));
-        root.add("itemCrafted", conditionMapTree(itemCrafted));
-        root.add("recipeUnlocked", conditionMapTree(recipeUnlocked));
-        root.add("scoreboard", GSON.toJsonTree(scoreboard));
-        root.add("custom", conditionMapTree(custom));
+        root.add("firstJoin", leftOut(firstJoin, viewer) ? new JsonObject() : withoutRules(GSON.toJsonTree(firstJoin)));
+        root.add("playerDeath", conditionTree(playerDeath, viewer));
+        root.add("entityKilled", conditionMapTree(entityKilled, viewer));
+        root.add("deathByEntity", conditionMapTree(deathByEntity, viewer));
+        root.add("advancementCompleted", conditionMapTree(advancementCompleted, viewer));
+        root.add("dimensionChanged", conditionMapTree(dimensionChanged, viewer));
+        root.add("totemUsed", conditionTree(totemUsed, viewer));
+        root.add("bedSleep", conditionTree(bedSleep, viewer));
+        root.add("itemObtained", conditionMapTree(itemObtained, viewer));
+        root.add("itemCrafted", conditionMapTree(itemCrafted, viewer));
+        root.add("recipeUnlocked", conditionMapTree(recipeUnlocked, viewer));
+        JsonObject scores = new JsonObject();
+        for (Map.Entry<String, ScoreboardConditionConfig> entry : scoreboard.entrySet()) {
+            if (!leftOut(entry.getValue().toConditionConfig(), viewer)) {
+                scores.add(entry.getKey(), withoutRules(GSON.toJsonTree(entry.getValue())));
+            }
+        }
+        root.add("scoreboard", scores);
+        root.add("custom", conditionMapTree(custom, viewer));
         return GSON.toJson(root);
     }
 
@@ -348,18 +361,32 @@ public final class ConditionalVideosConfig {
         }
     }
 
-    private static JsonElement conditionTree(ConditionConfig config) {
-        if (isEmptyCondition(config)) {
+    private static JsonElement conditionTree(ConditionConfig config, Viewer viewer) {
+        if (isEmptyCondition(config) || leftOut(config, viewer)) {
             return new JsonObject();
         }
-        return GSON.toJsonTree(config);
+        return withoutRules(GSON.toJsonTree(config));
     }
 
-    private static JsonObject conditionMapTree(Map<String, ConditionConfig> map) {
+    private static JsonObject conditionMapTree(Map<String, ConditionConfig> map, Viewer viewer) {
         JsonObject object = new JsonObject();
         for (Map.Entry<String, ConditionConfig> entry : map.entrySet()) {
-            object.add(entry.getKey(), conditionTree(entry.getValue()));
+            if (!leftOut(entry.getValue(), viewer)) {
+                object.add(entry.getKey(), conditionTree(entry.getValue(), viewer));
+            }
         }
+        return object;
+    }
+
+    private static boolean leftOut(ConditionConfig config, Viewer viewer) {
+        return viewer != null && config != null && config.exclusionReason(viewer) != null;
+    }
+
+    private static JsonElement withoutRules(JsonElement tree) {
+        JsonObject object = tree.getAsJsonObject();
+        object.remove("excludePlayers");
+        object.remove("excludeTeams");
+        object.remove("excludeOps");
         return object;
     }
 
@@ -371,7 +398,7 @@ public final class ConditionalVideosConfig {
     }
 
     private static ConditionConfig emptyCondition() {
-        return new ConditionConfig(false, Boolean.FALSE, new ArrayList<>(), null, null, null, null, null);
+        return new ConditionConfig(false, Boolean.FALSE, new ArrayList<>(), null, null, null, null, null, null, null, null);
     }
 
     public ConditionConfig firstJoin() {
@@ -478,7 +505,10 @@ public final class ConditionalVideosConfig {
             Boolean freezeWorld,
             Float conditionDelay,
             Boolean replayOnReconnect,
-            Boolean disableLoadingScreen
+            Boolean disableLoadingScreen,
+            List<String> excludePlayers,
+            List<String> excludeTeams,
+            Boolean excludeOps
     ) {
         public boolean resolvedPlaylistLoop() {
             return playlistLoop != null && playlistLoop;
@@ -500,6 +530,25 @@ public final class ConditionalVideosConfig {
             return disableLoadingScreen != null && disableLoadingScreen;
         }
 
+        public boolean hasExclusions() {
+            return (excludeOps != null && excludeOps) || (excludePlayers != null && !excludePlayers.isEmpty()) || (excludeTeams != null && !excludeTeams.isEmpty());
+        }
+
+        // Why this viewer is left out; null when they are not. Names ignore case, teams are exact.
+        public String exclusionReason(Viewer viewer) {
+            if (excludePlayers != null) {
+                for (String name : excludePlayers) {
+                    if (name != null && name.trim().equalsIgnoreCase(viewer.name())) {
+                        return "excludePlayers lists " + name;
+                    }
+                }
+            }
+            if (excludeTeams != null && viewer.team() != null && excludeTeams.contains(viewer.team())) {
+                return "excludeTeams lists " + viewer.team();
+            }
+            return excludeOps != null && excludeOps && viewer.operator() ? "excludeOps and they are an operator" : null;
+        }
+
         public boolean resolvedProtectPlayer() {
             return protectPlayer == null || protectPlayer;
         }
@@ -507,6 +556,10 @@ public final class ConditionalVideosConfig {
         public boolean resolvedFreezeWorld() {
             return freezeWorld != null && freezeWorld;
         }
+    }
+
+    // Who a condition is being decided for.
+    public record Viewer(String name, String team, boolean operator) {
     }
 
     public record ScoreboardConditionConfig(
@@ -519,7 +572,10 @@ public final class ConditionalVideosConfig {
             Boolean freezeWorld,
             Float conditionDelay,
             Boolean replayOnReconnect,
-            Boolean disableLoadingScreen
+            Boolean disableLoadingScreen,
+            List<String> excludePlayers,
+            List<String> excludeTeams,
+            Boolean excludeOps
     ) {
         public boolean resolvedPlaylistLoop() {
             return playlistLoop != null && playlistLoop;
@@ -557,7 +613,8 @@ public final class ConditionalVideosConfig {
         }
 
         public ConditionConfig toConditionConfig() {
-            return new ConditionConfig(repeatableInSameSession, playlistLoop, videos, protectPlayer, freezeWorld, conditionDelay, replayOnReconnect, disableLoadingScreen);
+            return new ConditionConfig(repeatableInSameSession, playlistLoop, videos, protectPlayer, freezeWorld, conditionDelay, replayOnReconnect, disableLoadingScreen,
+                    excludePlayers, excludeTeams, excludeOps);
         }
     }
 

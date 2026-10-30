@@ -18,6 +18,8 @@ import org.mateof24.conditionalvideos.condition.shared.ConditionRegistry;
 import org.mateof24.conditionalvideos.debug.DebugLog;
 import org.mateof24.conditionalvideos.debug.ServerDebug;
 import org.mateof24.conditionalvideos.video.path.VideoSourceResolver;
+import org.mateof24.conditionalvideos.world.PlayerExclusions;
+import org.mateof24.conditionalvideos.world.PlayerRoles;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -143,6 +145,7 @@ public final class ConfigSyncNetworking {
     // The watched list always goes first: a client that gets the conditions without it knows the server
     // keeps no world data (an older version) and falls back to remembering this connection only.
     private static void sendServerData(ServerPlayer player) {
+        PlayerExclusions.sendList(player);
         PlaybackControlNetworking.sendWatched(player);
         if (player.server.isDedicatedServer()) {
             sendServerConfig(player);
@@ -178,7 +181,7 @@ public final class ConfigSyncNetworking {
     }
 
     public static void sendServerConfig(ServerPlayer player) {
-        String json = serverData(player.server).config().toJson();
+        String json = serverData(player.server).config().toJsonFor(PlayerRoles.viewer(player));
         FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
         buffer.writeUtf(json, MAX_JSON_LENGTH);
         NetworkManager.sendToPlayer(player, SERVER_CONFIG_PACKET, buffer);
@@ -195,8 +198,21 @@ public final class ConfigSyncNetworking {
         }
     }
 
-    private static void sendVideoManifest(ServerPlayer player) {
-        List<VideoManifestEntry> entries = serverData(player.server).manifest();
+    // The files of the conditions this player can see; one shared with another condition stays.
+    private static List<VideoManifestEntry> visibleVideos(ServerPlayer player, ServerData data) {
+        Set<String> visible = new HashSet<>();
+        ConditionalVideosConfig.Viewer viewer = PlayerRoles.viewer(player);
+        for (String key : ConditionRegistry.listPlayableKeys(data.config())) {
+            ConditionalVideosConfig.ConditionConfig condition = ConditionRegistry.resolve(data.config(), key);
+            if (condition.exclusionReason(viewer) == null) {
+                condition.resolvedPlaylist().forEach(entry -> visible.add(entry.source()));
+            }
+        }
+        return data.manifest().stream().filter(entry -> visible.contains(entry.configuredPath())).toList();
+    }
+
+    public static void sendVideoManifest(ServerPlayer player) {
+        List<VideoManifestEntry> entries = visibleVideos(player, serverData(player.server));
         DebugLog.server(DebugLog.Area.NETWORK, "Sending the video manifest to {}: {} file(s).", player.getScoreboardName(), entries.size());
         FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
         buffer.writeVarInt(entries.size());
@@ -410,7 +426,7 @@ public final class ConfigSyncNetworking {
     }
 
     private static void sendVideoFile(ServerPlayer player, String configuredPath) {
-        List<VideoManifestEntry> entries = serverData(player.server).manifest();
+        List<VideoManifestEntry> entries = visibleVideos(player, serverData(player.server));
         VideoManifestEntry targetEntry = entries.stream()
                 .filter(entry -> entry.configuredPath().equals(configuredPath))
                 .findFirst()

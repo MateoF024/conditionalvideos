@@ -35,6 +35,8 @@ public final class ActiveConfigResolver {
     // started since. A server that sends no list (an older version) leaves it per connection.
     private static final Set<String> WATCHED = new HashSet<>();
     private static boolean watchedFromServer;
+    // Conditions the server left this player out of. Mainly for a host, who reads their own files.
+    private static final Set<String> EXCLUDED = new HashSet<>();
 
     private ActiveConfigResolver() {
     }
@@ -107,6 +109,15 @@ public final class ActiveConfigResolver {
         ConditionFiles.client().invalidate();
     }
 
+    public static boolean isExcluded(String conditionKey) {
+        return EXCLUDED.contains(conditionKey);
+    }
+
+    public static void setExcludedFromServer(Collection<String> conditionKeys) {
+        EXCLUDED.clear();
+        EXCLUDED.addAll(conditionKeys);
+    }
+
     public static boolean hasWatched(String conditionKey) {
         return WATCHED.contains(conditionKey);
     }
@@ -146,6 +157,7 @@ public final class ActiveConfigResolver {
         manifestProcessed = true;
         remoteCommonConfig = null;
         WATCHED.clear();
+        EXCLUDED.clear();
         watchedFromServer = false;
     }
 

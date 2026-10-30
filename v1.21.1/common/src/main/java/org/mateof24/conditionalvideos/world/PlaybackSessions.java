@@ -174,7 +174,7 @@ public final class PlaybackSessions {
         for (String key : List.copyOf(data.inProgress(player.getUUID()))) {
             data.setInProgress(player.getUUID(), player.getScoreboardName(), key, false);
             ConditionConfig condition = ConditionRegistry.resolve(ServerConditionDispatcher.activeConfig(server), key);
-            if (condition == null || condition.resolvedPlaylist().isEmpty()) {
+            if (condition == null || condition.resolvedPlaylist().isEmpty() || PlayerExclusions.reason(player, condition) != null) {
                 continue;
             }
             if (condition.resolvedReplayOnReconnect()) {
@@ -272,6 +272,10 @@ public final class PlaybackSessions {
                 events.orders.put(key, orders - 1);
             }
             return null;
+        }
+        String excluded = PlayerExclusions.reason(player, condition);
+        if (excluded != null) {
+            return "the player is left out of it: " + excluded;
         }
         if (PlayerRoles.isHost(server, player)) {
             return null;
@@ -447,6 +451,7 @@ public final class PlaybackSessions {
         SESSIONS.clear();
         EVENTS.clear();
         ServerConditionDispatcher.clearDelayed();
+        PlayerExclusions.reset();
         ticks = 0;
         WorldFreeze.reset(server);
     }

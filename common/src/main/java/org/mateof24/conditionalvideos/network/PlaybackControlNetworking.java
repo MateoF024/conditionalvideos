@@ -18,6 +18,7 @@ import org.mateof24.conditionalvideos.world.PlaybackSessions;
 import org.mateof24.conditionalvideos.world.WatchedConditions;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 
 public final class PlaybackControlNetworking {
@@ -29,6 +30,8 @@ public final class PlaybackControlNetworking {
             new ResourceLocation(ConditionalVideos.MOD_ID, "control_pause");
     private static final ResourceLocation WATCHED_LIST_PACKET =
             new ResourceLocation(ConditionalVideos.MOD_ID, "watched_list");
+    private static final ResourceLocation EXCLUDED_LIST_PACKET =
+            new ResourceLocation(ConditionalVideos.MOD_ID, "excluded_list");
     private static final ResourceLocation PLAYBACK_STATE_PACKET =
             new ResourceLocation(ConditionalVideos.MOD_ID, "playback_state");
 
@@ -62,6 +65,13 @@ public final class PlaybackControlNetworking {
                         DebugLog.client(DebugLog.Area.NETWORK, "The server ordered to toggle pause.");
                         PlaybackControlClient.togglePause();
                     }));
+            NetworkManager.registerReceiver(NetworkManager.s2c(), EXCLUDED_LIST_PACKET, (buffer, context) -> {
+                List<String> keys = readKeys(buffer);
+                context.queue(() -> {
+                    DebugLog.client(DebugLog.Area.NETWORK, "The server says this player is left out of {} condition(s): {}.", keys.size(), keys);
+                    ActiveConfigResolver.setExcludedFromServer(keys);
+                });
+            });
             NetworkManager.registerReceiver(NetworkManager.s2c(), WATCHED_LIST_PACKET, (buffer, context) -> {
                 List<String> keys = readKeys(buffer);
                 context.queue(() -> {
@@ -101,6 +111,13 @@ public final class PlaybackControlNetworking {
     public static void sendPause(ServerPlayer player) {
         NetworkManager.sendToPlayer(player, CONTROL_PAUSE_PACKET, new FriendlyByteBuf(Unpooled.buffer()));
         DebugLog.server(DebugLog.Area.NETWORK, "Sent a pause toggle to {}.", player.getScoreboardName());
+    }
+
+    public static void sendExcluded(ServerPlayer player, Collection<String> keys) {
+        FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+        buffer.writeVarInt(keys.size());
+        keys.forEach(buffer::writeUtf);
+        NetworkManager.sendToPlayer(player, EXCLUDED_LIST_PACKET, buffer);
     }
 
     public static void sendWatched(ServerPlayer player) {

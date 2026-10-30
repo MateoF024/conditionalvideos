@@ -238,6 +238,11 @@ public final class ConditionVideoPlayer {
             return false;
         }
 
+        if (!force && ActiveConfigResolver.isExcluded(conditionId)) {
+            DebugLog.client(DebugLog.Area.CONDITION, "{} ('{}') does not play: the server left this player out of it.", logName, conditionId);
+            return false;
+        }
+
         int delayTicks = conditionConfig.resolvedDelayTicks();
         if (!delayDone && delayTicks > 0) {
             if (DELAYED.containsKey(conditionId)) {

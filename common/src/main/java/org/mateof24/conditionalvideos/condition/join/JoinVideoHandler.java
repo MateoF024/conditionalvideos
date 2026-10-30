@@ -23,6 +23,11 @@ public final class JoinVideoHandler {
             return true;
         }
 
+        if (ActiveConfigResolver.isExcluded(CONDITION_ID)) {
+            DebugLog.client(DebugLog.Area.JOIN, "The server left this player out of firstJoin; nothing to play on join.");
+            return true;
+        }
+
         DebugLog.client(DebugLog.Area.JOIN, "firstJoin matched: {} playlist entr(ies); requesting playback.",
                 firstJoin.resolvedPlaylist().size());
         ConfigSyncNetworking.notifyFirstJoinVideoState(true);
