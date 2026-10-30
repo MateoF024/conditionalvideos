@@ -55,11 +55,11 @@ public final class PlayerExclusions {
         return delivered == null ? viewer : new ConditionalVideosConfig.Viewer(viewer.name(), viewer.team(), viewer.operator(), Set.copyOf(delivered));
     }
 
-    // An order can reach someone left out of the condition, whose dedicated-server client has neither it nor its
-    // videos: they get them first. It still does not fire for them by itself, the excluded list keeps it out.
+    // An order can reach someone left out of the condition, whose client received neither it nor its videos: they
+    // get them first. A host has them in their own files. It still does not fire for them by itself, the excluded list keeps it out.
     public static void ensureDelivered(ServerPlayer player, String key) {
         MinecraftServer server = player.level().getServer();
-        if (server == null || !server.isDedicatedServer()) {
+        if (server == null || PlayerRoles.isHost(server, player)) {
             return;
         }
         ConditionConfig condition = ConditionRegistry.resolve(ServerConditionDispatcher.activeConfig(server), key);
@@ -97,7 +97,7 @@ public final class PlayerExclusions {
             DebugLog.server(DebugLog.Area.CONFIG, "The exclusions of {} changed: {} -> {}.", player.getScoreboardName(), sent, keys);
             boolean regained = !keys.containsAll(sent);
             sendList(player);
-            if (server.isDedicatedServer()) {
+            if (!PlayerRoles.isHost(server, player)) {
                 ConfigSyncNetworking.sendServerConfig(player);
                 if (regained) {
                     ConfigSyncNetworking.sendVideoManifest(player);

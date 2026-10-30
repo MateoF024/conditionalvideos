@@ -19,6 +19,7 @@ import org.mateof24.conditionalvideos.debug.DebugLog;
 import org.mateof24.conditionalvideos.debug.ServerDebug;
 import org.mateof24.conditionalvideos.video.path.VideoSourceResolver;
 import org.mateof24.conditionalvideos.world.PlayerExclusions;
+import org.mateof24.conditionalvideos.world.PlayerRoles;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -146,12 +147,12 @@ public final class ConfigSyncNetworking {
     private static void sendServerData(ServerPlayer player) {
         PlayerExclusions.sendList(player);
         PlaybackControlNetworking.sendWatched(player);
-        if (player.server.isDedicatedServer()) {
+        if (!PlayerRoles.isHost(player.server, player)) {
             sendServerConfig(player);
             sendServerCommonConfig(player);
             sendVideoManifest(player);
         } else {
-            DebugLog.server(DebugLog.Area.NETWORK, "Not sending the configuration to {}: an integrated server (singleplayer/LAN) does not sync it.",
+            DebugLog.server(DebugLog.Area.NETWORK, "Not sending the configuration to {}: the host reads their own files.",
                     player.getScoreboardName());
         }
     }
@@ -179,21 +180,22 @@ public final class ConfigSyncNetworking {
         return data;
     }
 
-    // After a change made by command: whoever is connected gets it now. A host reads their own files.
+    // After a change made by command: whoever is connected gets it now, except a host, who reads their own files.
     public static void resendConditions(MinecraftServer server) {
         cachedServerData = null;
-        if (server.isDedicatedServer()) {
-            server.getPlayerList().getPlayers().forEach(ConfigSyncNetworking::sendServerConfig);
-        }
+        guests(server).forEach(ConfigSyncNetworking::sendServerConfig);
     }
 
     public static void resendCommonConfig(MinecraftServer server) {
         cachedServerData = null;
-        if (server.isDedicatedServer()) {
-            server.getPlayerList().getPlayers().forEach(ConfigSyncNetworking::sendServerCommonConfig);
-        } else {
+        guests(server).forEach(ConfigSyncNetworking::sendServerCommonConfig);
+        if (!server.isDedicatedServer()) {
             ActiveConfigResolver.reloadLocalCommonConfig();
         }
+    }
+
+    private static List<ServerPlayer> guests(MinecraftServer server) {
+        return server.getPlayerList().getPlayers().stream().filter(player -> !PlayerRoles.isHost(server, player)).toList();
     }
 
     public static void sendServerConfig(ServerPlayer player) {
