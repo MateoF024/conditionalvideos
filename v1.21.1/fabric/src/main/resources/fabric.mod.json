@@ -10,7 +10,7 @@
   "contact": {
     "homepage": "https://github.com/MateoF024/conditionalvideos"
   },
-  "license": "All-Rights-Reserved",
+  "license": "LicenseRef-ConditionalVideos (see LICENSE-cv.txt)",
   "icon": "assets/conditionalvideos/icon.png",
   "environment": "*",
   "entrypoints": {

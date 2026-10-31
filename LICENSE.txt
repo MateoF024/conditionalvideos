@@ -1,0 +1,147 @@
+ConditionalVideos License
+Version 1.0 — 2026-10-31
+
+Copyright (c) 2026 MateoF024
+All rights reserved.
+
+The source code of this mod is public so anyone can read it, but this is not an
+open-source license. All rights not expressly granted below are reserved by the
+copyright holder.
+
+
+-------------------------------------------------------------------------------
+SUMMARY (not part of the license; the terms below are what count)
+
+  YES  Use it, play with it, put it on any server that is free to join.
+  YES  Put it in any free modpack, public or private, without asking first.
+  YES  Keep donations that unlock nothing, and platform rewards.
+  YES  Modify your own copy, as long as you keep that copy to yourself.
+  YES  Write an addon or a compatibility patch for it.
+
+  ASK  Charge for anything that uses it: a modpack, server access, early access
+       or commissions.
+
+  NO   Re-upload it anywhere on its own, outside a modpack.
+  NO   Distribute a modified version, a port or a translation of its code.
+  NO   Reuse its code, assets or translations in another project.
+  NO   Put its download behind a paywall or a link shortener.
+  NO   Use it to train AI models.
+
+  Modpack authors: this section, plus section 2(c), is the permission you need.
+-------------------------------------------------------------------------------
+
+
+1. DEFINITIONS
+
+   "The Mod" means the ConditionalVideos software, in source or compiled form,
+   together with its assets, translations and documentation.
+
+   "Official Release" means a build of The Mod published by the copyright holder
+   on its CurseForge or Modrinth page.
+
+   "Modpack" means a curated collection of Minecraft mods distributed for use as
+   a single configured installation.
+
+
+2. PERMITTED USE
+
+   You may:
+
+   a) Download, install and use The Mod free of charge, including on a public
+      or private server. Voluntary donations that unlock nothing, and platform
+      reward programs such as those of CurseForge and Modrinth, are allowed.
+
+   b) Modify your own copy of The Mod for your own use, and use that modified
+      copy privately or on your own server, provided you do not distribute it.
+
+   c) Include an unmodified Official Release of The Mod in any free Modpack,
+      public or private, without asking permission. If the Modpack is public,
+      credit The Mod by name and link to one of its official pages. This also
+      covers releases published before this license.
+
+   d) Write a separate mod, addon, patch or datapack that depends on, extends or
+      interoperates with The Mod, and distribute that work under any license you
+      choose, provided it does not include The Mod or any part of it. Calling
+      The Mod's code, and depending on its behaviour, is not itself a derivative
+      work for the purposes of this license.
+
+   e) Decompile, inspect or study The Mod for personal study, for debugging, or
+      to make a separate work compatible with it.
+
+   f) Reference The Mod by name, link to its official pages, and show it in
+      videos, screenshots, reviews and other coverage, monetised or not.
+
+
+3. RESTRICTIONS
+
+   You may not:
+
+   a) Distribute a modified version of The Mod, or a work derived from it, in
+      any form. This includes a port to another game version, loader or client,
+      and a translation of its code into another programming language, whether
+      made by hand or with AI tools.
+
+   b) Distribute The Mod on its own, on any download site, mirror, repository or
+      file host. This includes re-uploading an unmodified Official Release.
+      Links to The Mod must point to an official page.
+
+   c) Extract, reuse or redistribute The Mod's source code, assets or
+      translations in another project. This does not restrict 2(d).
+
+   d) Remove or alter this license, the copyright notice, or the authorship
+      information in The Mod or its metadata.
+
+   e) Place an Official Release behind a paywall, a link shortener, an ad gate,
+      or any other scheme that monetises access to the download itself.
+
+   f) Charge for The Mod, or for access to anything that uses it, whether on its
+      own or as part of something else, without permission (see section 6). This
+      includes a paid Modpack, paid server access, paid early access and
+      commissions.
+
+   g) Use The Mod, or any part of it, to train machine learning or artificial
+      intelligence models, or as part of a dataset for doing so.
+
+
+4. CONTRIBUTIONS
+
+   By submitting a contribution to this project, you grant the copyright holder
+   a perpetual, worldwide, irrevocable, royalty-free right to use, modify,
+   sublicense and distribute that contribution as part of The Mod, under this
+   license or any later license the copyright holder chooses. You keep your own
+   copyright in your contribution.
+
+
+5. MINECRAFT AND DEPENDENCIES
+
+   The Mod is not an official Minecraft product. It is not approved by or
+   associated with Mojang or Microsoft, and nothing here permits what their
+   terms forbid.
+
+   WATERMeDIA and any other dependency have their own licenses. This license
+   grants no rights over them, and their terms also apply to any Modpack or
+   server that uses The Mod. Permission to charge under section 6 does not
+   replace theirs.
+
+
+6. PERMISSION BEYOND THIS LICENSE
+
+   Anything not permitted above may still be allowed with the written permission
+   of the copyright holder. To ask: https://github.com/MateoF024/conditionalvideos/issues
+
+
+7. VERSIONS OF THIS LICENSE
+
+   The copyright holder may publish revised versions of this license. Each
+   Official Release is governed by the version distributed with it, and a later
+   version does not take away what a published release already allowed.
+
+
+8. NO WARRANTY
+
+   THE MOD IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+   COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+   IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+   CONNECTION WITH THE MOD OR THE USE OR OTHER DEALINGS IN THE MOD.

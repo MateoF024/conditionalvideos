@@ -56,6 +56,13 @@ subprojects {
         it.options.release = javaRelease
     }
 
+    // The terms travel with the jar, named after the mod so they cannot collide with another license in a modpack.
+    tasks.named('jar', Jar).configure {
+        from(rootProject.file('LICENSE.txt')) {
+            rename { 'LICENSE-cv.txt' }
+        }
+    }
+
     afterEvaluate {
         tasks.withType(AbstractArchiveTask).configureEach {
             if (project.name != 'common'
