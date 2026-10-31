@@ -47,13 +47,60 @@ final class ConditionDefaults {
         return options;
     }
 
+    private static JsonObject room() {
+        JsonObject room = new JsonObject();
+        room.addProperty("enabled", false);
+        room.addProperty("requiredPlayers", 0);
+        room.add("requiredPlayerNames", new JsonArray());
+        room.add("requiredTeams", new JsonArray());
+        room.addProperty("allowLeave", false);
+        room.addProperty("allowChat", false);
+        room.addProperty("startMode", ConditionalVideosConfig.ROOM_START_AUTO);
+        room.addProperty("background", "#000000");
+        room.add("title", JsonNull.INSTANCE);
+        room.addProperty("titlePosition", ConditionalVideosConfig.ROOM_DEFAULT_POSITION);
+        room.addProperty("titleAlignment", ConditionalVideosConfig.ROOM_DEFAULT_ALIGNMENT);
+        room.addProperty("titleScale", 1.0);
+        room.add("description", JsonNull.INSTANCE);
+        room.addProperty("descriptionPosition", ConditionalVideosConfig.ROOM_DEFAULT_POSITION);
+        room.addProperty("descriptionAlignment", ConditionalVideosConfig.ROOM_DEFAULT_ALIGNMENT);
+        room.addProperty("descriptionScale", 1.0);
+        room.addProperty("counter", WaitingRoomText.DEFAULT_COUNTER);
+        room.addProperty("counterPosition", ConditionalVideosConfig.ROOM_DEFAULT_POSITION);
+        room.addProperty("counterAlignment", ConditionalVideosConfig.ROOM_DEFAULT_ALIGNMENT);
+        room.addProperty("counterScale", 1.0);
+        return room;
+    }
+
+    // A waitingRoom already written keeps its values and gains only what it lacks, in the same order as the rest.
+    private static JsonElement completedRoom(JsonObject file) {
+        JsonObject defaults = room();
+        JsonElement written = file.get("waitingRoom");
+        if (written == null) {
+            return defaults;
+        }
+        if (!written.isJsonObject() || written.getAsJsonObject().keySet().containsAll(defaults.keySet())) {
+            return written;
+        }
+        JsonObject completed = new JsonObject();
+        defaults.entrySet().forEach(option -> completed.add(option.getKey(), written.getAsJsonObject().has(option.getKey()) ? written.getAsJsonObject().get(option.getKey()) : option.getValue()));
+        written.getAsJsonObject().entrySet().forEach(member -> {
+            if (!completed.has(member.getKey())) {
+                completed.add(member.getKey(), member.getValue());
+            }
+        });
+        return completed;
+    }
+
     // The same object when nothing is missing, so a complete file is left exactly as it is. Otherwise the options
     // go first, each with what the file had or its default, and then the rest in its own order. A 1.1.x file has its
     // video in "video", and an empty "videos" beside it would hide it.
     static JsonObject complete(String type, JsonObject file) {
         Map<String, JsonElement> options = of(type);
         boolean noVideos = !file.has("videos") && !file.has("video");
-        if (!noVideos && file.keySet().containsAll(options.keySet())) {
+        JsonElement room = "firstJoin".equals(type) ? completedRoom(file) : null;
+        boolean roomMissing = room != null && room != file.get("waitingRoom");
+        if (!noVideos && !roomMissing && file.keySet().containsAll(options.keySet())) {
             return file;
         }
         JsonObject completed = new JsonObject();
@@ -61,6 +108,9 @@ final class ConditionDefaults {
             completed.add("id", file.get("id"));
         }
         options.forEach((name, value) -> completed.add(name, file.has(name) ? file.get(name) : value));
+        if (room != null) {
+            completed.add("waitingRoom", room);
+        }
         for (Map.Entry<String, JsonElement> member : file.entrySet()) {
             if (!completed.has(member.getKey())) {
                 completed.add(member.getKey(), member.getValue());

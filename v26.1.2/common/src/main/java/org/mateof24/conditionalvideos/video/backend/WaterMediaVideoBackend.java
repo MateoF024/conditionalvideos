@@ -28,6 +28,8 @@ import org.watermedia.api.media.GFXEngine;
 import org.watermedia.api.media.MRL;
 import org.watermedia.api.media.MediaAPI;
 import org.watermedia.api.media.MediaPlayer;
+import org.watermedia.api.media.Sync;
+import org.watermedia.api.media.TxMediaPlayer;
 import org.watermedia.api.media.SFXEngine;
 import org.watermedia.api.util.MediaQuality;
 import org.watermedia.api.util.MediaType;
@@ -59,6 +61,7 @@ public final class WaterMediaVideoBackend {
     private boolean startAtPending;
     private boolean resumeAfterStartAt;
     private long syncNanos;
+    private Sync pendingSync;
 
     private MRL mrl;
     private MediaPlayer player;
@@ -175,6 +178,51 @@ public final class WaterMediaVideoBackend {
         startAtMillis = Math.round(point.seconds() * 1000d);
         startAtPending = true;
         syncNanos = point.receivedNanos();
+    }
+
+    // Hands the clock to the server's session: from here WaterMedia keeps this player on it.
+    public void applySync(Sync sync) {
+        holdAtZero = false;
+        startAtPending = false;
+        resumeAfterStartAt = false;
+        pendingSync = sync;
+        applyPendingSync();
+    }
+
+    private void applyPendingSync() {
+        if (pendingSync == null || player == null || closed || !playerStarted) {
+            return;
+        }
+        try {
+            player.sync(pendingSync);
+        } catch (Throwable throwable) {
+            DebugLog.client(DebugLog.Area.PLAYBACK, "sync() failed for '{}': {}", source, throwable.toString());
+        }
+        pendingSync = null;
+    }
+
+    public boolean isPlayerCreated() {
+        return player != null && playerStarted && !closed;
+    }
+
+    public boolean isImage() {
+        return player instanceof TxMediaPlayer;
+    }
+
+    public boolean isLive() {
+        try {
+            return player != null && !closed && player.live();
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    public long durationMillis() {
+        try {
+            return player == null || closed ? 0L : Math.max(0L, player.duration());
+        } catch (Throwable ignored) {
+            return 0L;
+        }
     }
 
     public double startOffsetSeconds() {
@@ -423,6 +471,7 @@ public final class WaterMediaVideoBackend {
             return;
         }
         reinforceQuality();
+        applyPendingSync();
         tickStartAt();
         enforceHoldAtZero();
     }

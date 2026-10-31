@@ -29,7 +29,7 @@ final class SetCommands {
     private static final String TEXT = "text";
     private static final String X = "x";
     private static final String Y = "y";
-    private static final List<String> CORNERS = List.of("topLeft", "topRight", "bottomLeft", "bottomRight");
+    private static final List<String> POSITIONS = List.of("topLeft", "topRight", "bottomLeft", "bottomRight", "center");
 
     private SetCommands() {
     }
@@ -78,13 +78,13 @@ final class SetCommands {
                                 video(context) + " " + StringArgumentType.getString(context, TEXT))))));
     }
 
-    // <video_index> <corner> or <video_index> <x> <y>
+    // <video_index> <position> or <video_index> <x> <y>
     private static LiteralArgumentBuilder<CommandSourceStack> position(Property property) {
         return condition(property, (node, key) -> {
             RequiredArgumentBuilder<CommandSourceStack, Integer> video = video();
-            for (String corner : CORNERS) {
-                video.then(Commands.literal(corner)
-                        .executes(context -> run(context, property, key.apply(context), video(context) + " " + corner)));
+            for (String position : POSITIONS) {
+                video.then(Commands.literal(position)
+                        .executes(context -> run(context, property, key.apply(context), video(context) + " " + position)));
             }
             video.then(Commands.argument(X, StringArgumentType.word())
                     .then(Commands.argument(Y, StringArgumentType.word())

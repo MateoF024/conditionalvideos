@@ -124,7 +124,8 @@ public final class ConditionFiles {
     }
 
     // Changes one condition's file through a temporary sibling. Whatever the edit does not touch stays as it
-    // was written. False when no file holds that condition; a file that cannot be read is left alone.
+    // was written, and an edit that changes nothing does not write. False when no file holds that condition; a
+    // file that cannot be read is left alone.
     public synchronized boolean edit(String id, Edit edit) throws IOException, ConditionEdits.Refused {
         nextCheckMillis = 0L;
         refresh();
@@ -140,8 +141,11 @@ public final class ConditionFiles {
         int slash = id.indexOf('/');
         String type = slash < 0 ? id : id.substring(0, slash);
         JsonObject object = ConditionalVideosConfig.LEGACY_SHAPED.contains(type) ? ConditionalVideosConfig.convertLegacy(element.getAsJsonObject()) : element.getAsJsonObject();
+        JsonObject before = object.deepCopy();
         edit.apply(object);
-        writeAtomically(file, object);
+        if (!object.equals(before)) {
+            writeAtomically(file, object);
+        }
         nextCheckMillis = 0L;
         return true;
     }

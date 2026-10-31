@@ -4,6 +4,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.toasts.ToastManager;
 import net.minecraft.client.gui.screens.Screen;
+import org.mateof24.conditionalvideos.runtime.WaitingRoomClient;
 import org.mateof24.conditionalvideos.video.VideoLoadingScreen;
 import org.mateof24.conditionalvideos.video.VideoPlaybackScreen;
 import org.spongepowered.asm.mixin.Mixin;
@@ -20,7 +21,7 @@ public abstract class ToastComponentMixin {
     @Inject(method = "render", at = @At("HEAD"), cancellable = true)
     private void conditionalvideos$suppressToastsDuringVideo(GuiGraphics guiGraphics, CallbackInfo ci) {
         Screen screen = Minecraft.getInstance().screen;
-        if (screen instanceof VideoPlaybackScreen || screen instanceof VideoLoadingScreen) {
+        if (WaitingRoomClient.isActive() || screen instanceof VideoPlaybackScreen || screen instanceof VideoLoadingScreen) {
             ci.cancel();
         }
     }

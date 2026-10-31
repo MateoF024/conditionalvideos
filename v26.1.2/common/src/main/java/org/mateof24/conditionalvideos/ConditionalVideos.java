@@ -14,6 +14,7 @@ import org.mateof24.conditionalvideos.debug.DebugLog;
 import org.mateof24.conditionalvideos.debug.ServerDebug;
 import org.mateof24.conditionalvideos.world.PlaybackSessions;
 import org.mateof24.conditionalvideos.world.PlayerExclusions;
+import org.mateof24.conditionalvideos.world.WaitingRoom;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,6 +38,7 @@ public final class ConditionalVideos {
         PlaybackSessions.init();
         PlayerExclusions.init();
         ConfigSyncNetworking.init();
+        WaitingRoom.init();
         ConditionalVideosCommands.register();
         ServerConditionEvents.init();
         ConditionalVideosAPI.init();

@@ -139,6 +139,11 @@ public final class SilentVideoPreparation {
         }
     }
 
+    // Stopped on its first picture because tick was told the game is paused.
+    public boolean isHeldReady() {
+        return heldForPause;
+    }
+
     public WaterMediaVideoBackend backend() {
         return backend;
     }

@@ -258,6 +258,26 @@ public final class PlaybackSessions {
                     player.getScoreboardName(), rejection);
             return;
         }
+        startSession(server, player, key, condition);
+    }
+
+    // Waiting room members are watching from the moment they enter, and the room vouches for them.
+    public static void enterRoom(ServerPlayer player, ConditionConfig condition) {
+        startSession(player.level().getServer(), player, ConditionRegistry.KEY_FIRST_JOIN, condition);
+    }
+
+    public static void leaveRoom(ServerPlayer player, String reason) {
+        end(player, player.getUUID(), reason, null);
+    }
+
+    public static void keepRoomAlive(UUID id) {
+        Session session = SESSIONS.get(id);
+        if (session != null) {
+            session.lastSignal = System.currentTimeMillis();
+        }
+    }
+
+    private static void startSession(MinecraftServer server, ServerPlayer player, String key, ConditionConfig condition) {
         if (SESSIONS.containsKey(player.getUUID())) {
             end(player, player.getUUID(), "replaced by '" + key + "'", null);
         }

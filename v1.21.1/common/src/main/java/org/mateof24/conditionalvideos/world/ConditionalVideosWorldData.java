@@ -28,6 +28,7 @@ public final class ConditionalVideosWorldData extends SavedData {
 
     private final Map<String, PlayerRecord> players = new LinkedHashMap<>();
     private boolean legacyImported;
+    private boolean roomConsumed;
 
     public static ConditionalVideosWorldData get(MinecraftServer server) {
         return server.overworld().getDataStorage().computeIfAbsent(
@@ -103,6 +104,16 @@ public final class ConditionalVideosWorldData extends SavedData {
         return players.size();
     }
 
+    // The waiting room of a firstJoin that does not repeat has already finished in this world.
+    public boolean roomConsumed() {
+        return roomConsumed;
+    }
+
+    public void setRoomConsumed() {
+        roomConsumed = true;
+        setDirty();
+    }
+
     public boolean legacyImported() {
         return legacyImported;
     }
@@ -137,6 +148,7 @@ public final class ConditionalVideosWorldData extends SavedData {
         });
         tag.put("players", playersTag);
         tag.putBoolean("legacyImported", legacyImported);
+        tag.putBoolean("roomConsumed", roomConsumed);
         return tag;
     }
 
@@ -163,6 +175,7 @@ public final class ConditionalVideosWorldData extends SavedData {
             data.players.put(uuid, record);
         }
         data.legacyImported = tag.getBoolean("legacyImported");
+        data.roomConsumed = tag.getBoolean("roomConsumed");
         return data;
     }
 

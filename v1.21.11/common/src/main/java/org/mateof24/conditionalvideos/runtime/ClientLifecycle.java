@@ -5,6 +5,10 @@ import org.mateof24.conditionalvideos.debug.ClientDebug;
 public final class ClientLifecycle {
     private static final ClientRuntime CLIENT_RUNTIME = new ClientRuntime();
 
+    static {
+        WaitingRoomClient.init();
+    }
+
     private ClientLifecycle() {
     }
 

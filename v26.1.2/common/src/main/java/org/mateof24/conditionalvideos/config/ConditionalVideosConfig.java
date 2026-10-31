@@ -27,6 +27,10 @@ public final class ConditionalVideosConfig {
     public static final String COMPARATOR_EQUAL = "equal";
     public static final String COMPARATOR_LESS = "less";
     public static final String COMPARATOR_GREATER = "greater";
+    public static final String ROOM_DEFAULT_POSITION = "center";
+    public static final String ROOM_DEFAULT_ALIGNMENT = "center";
+    public static final String ROOM_START_AUTO = "auto";
+    public static final String ROOM_START_OP = "op";
     public static final String TRIGGER_ENTER = "enter";
     public static final String TRIGGER_EXIT = "exit";
     public static final String COMPARATOR_LESS_OR_EQUAL = "lessOrEqual";
@@ -124,11 +128,15 @@ public final class ConditionalVideosConfig {
         ConditionConfig condition = (ConditionConfig) parsed;
         lint(condition.videos(), file, notices);
         lintDelay(condition.conditionDelay(), file, notices);
+        if ("firstJoin".equals(type)) {
+            lintRoom(condition.waitingRoom(), file, notices);
+        }
         ConditionConfig normalised = new ConditionConfig(resolvedRepeatable(type, condition.repeatableInSameSession()),
                 condition.playlistLoop() == null ? Boolean.FALSE : condition.playlistLoop(), playable(condition.videos()),
                 condition.protectPlayer(), condition.freezeWorld() == null && "firstJoin".equals(type) ? Boolean.TRUE : condition.freezeWorld(),
                 condition.conditionDelay(), condition.replayOnReconnect(), condition.disableLoadingScreen(),
-                condition.excludePlayers(), condition.excludeTeams(), condition.excludeOps());
+                condition.excludePlayers(), condition.excludeTeams(), condition.excludeOps(),
+                "firstJoin".equals(type) ? condition.waitingRoom() : null);
         switch (type) {
             case "firstJoin" -> firstJoin = normalised;
             case "playerDeath" -> playerDeath = normalised;
@@ -201,6 +209,12 @@ public final class ConditionalVideosConfig {
             if (!isValidPosition(video.videoDescriptionPosition())) {
                 notices.add(ConfigNotice.invalidOption(file, "videoDescriptionPosition", video.videoDescriptionPosition(), number, "bottomLeft"));
             }
+            if (!TextAlignment.isValid(video.videoTitleAlignment())) {
+                notices.add(ConfigNotice.invalidOption(file, "videoTitleAlignment", video.videoTitleAlignment(), number, "left"));
+            }
+            if (!TextAlignment.isValid(video.videoDescriptionAlignment())) {
+                notices.add(ConfigNotice.invalidOption(file, "videoDescriptionAlignment", video.videoDescriptionAlignment(), number, "left"));
+            }
             String transition = video.transition();
             if (transition != null && !transition.isBlank() && !transition.trim().equalsIgnoreCase(TRANSITION_CUT)
                     && !transition.trim().equalsIgnoreCase(TRANSITION_FADE)) {
@@ -224,6 +238,36 @@ public final class ConditionalVideosConfig {
             if (startsPastNext(video)) {
                 notices.add(ConfigNotice.startAfterNext(file, video.startAt(), number, video.nextAt()));
             }
+        }
+    }
+
+    private static void lintRoom(WaitingRoomConfig room, String file, List<ConfigNotice> notices) {
+        if (room == null) {
+            return;
+        }
+        lintRoomPosition("titlePosition", room.titlePosition(), ROOM_DEFAULT_POSITION, file, notices);
+        lintRoomPosition("descriptionPosition", room.descriptionPosition(), ROOM_DEFAULT_POSITION, file, notices);
+        lintRoomPosition("counterPosition", room.counterPosition(), ROOM_DEFAULT_POSITION, file, notices);
+        lintRoomAlignment("titleAlignment", room.titleAlignment(), file, notices);
+        lintRoomAlignment("descriptionAlignment", room.descriptionAlignment(), file, notices);
+        lintRoomAlignment("counterAlignment", room.counterAlignment(), file, notices);
+        if (room.startMode() != null && !room.startMode().isBlank() && !ROOM_START_AUTO.equalsIgnoreCase(room.startMode().trim()) && !ROOM_START_OP.equalsIgnoreCase(room.startMode().trim())) {
+            notices.add(ConfigNotice.invalidRoomOption(file, "startMode", room.startMode(), ROOM_START_AUTO));
+        }
+        if (room.backgroundIsColor() && parseColor(room.background()) == null) {
+            notices.add(ConfigNotice.invalidRoomOption(file, "background", room.background(), "#000000"));
+        }
+    }
+
+    private static void lintRoomAlignment(String name, String value, String file, List<ConfigNotice> notices) {
+        if (!TextAlignment.isValid(value)) {
+            notices.add(ConfigNotice.invalidRoomOption(file, name, value, ROOM_DEFAULT_ALIGNMENT));
+        }
+    }
+
+    private static void lintRoomPosition(String name, String value, String fallback, String file, List<ConfigNotice> notices) {
+        if (value != null && !value.isBlank() && TextPosition.parse(value) == null) {
+            notices.add(ConfigNotice.invalidRoomOption(file, name, value, fallback));
         }
     }
 
@@ -420,6 +464,10 @@ public final class ConditionalVideosConfig {
         object.remove("excludePlayers");
         object.remove("excludeTeams");
         object.remove("excludeOps");
+        if (object.has("waitingRoom") && object.get("waitingRoom").isJsonObject()) {
+            object.getAsJsonObject("waitingRoom").remove("requiredPlayerNames");
+            object.getAsJsonObject("waitingRoom").remove("requiredTeams");
+        }
         return object;
     }
 
@@ -428,7 +476,7 @@ public final class ConditionalVideosConfig {
     }
 
     private static ConditionConfig emptyCondition() {
-        return new ConditionConfig(false, Boolean.FALSE, new ArrayList<>(), null, null, null, null, null, null, null, null);
+        return new ConditionConfig(false, Boolean.FALSE, new ArrayList<>(), null, null, null, null, null, null, null, null, null);
     }
 
     public ConditionConfig firstJoin() {
@@ -542,8 +590,13 @@ public final class ConditionalVideosConfig {
             Boolean disableLoadingScreen,
             List<String> excludePlayers,
             List<String> excludeTeams,
-            Boolean excludeOps
+            Boolean excludeOps,
+            WaitingRoomConfig waitingRoom
     ) {
+        public WaitingRoomConfig resolvedWaitingRoom() {
+            return waitingRoom != null && waitingRoom.resolvedEnabled() ? waitingRoom : null;
+        }
+
         public boolean resolvedPlaylistLoop() {
             return playlistLoop != null && playlistLoop;
         }
@@ -596,6 +649,110 @@ public final class ConditionalVideosConfig {
 
         public boolean resolvedFreezeWorld() {
             return freezeWorld != null && freezeWorld;
+        }
+    }
+
+    // The firstJoin waiting room. Only firstJoin reads it, and what decides who enters stays on the server.
+    public record WaitingRoomConfig(
+            Boolean enabled,
+            Integer requiredPlayers,
+            List<String> requiredPlayerNames,
+            List<String> requiredTeams,
+            Boolean allowLeave,
+            Boolean allowChat,
+            String startMode,
+            String background,
+            String title,
+            String titlePosition,
+            String titleAlignment,
+            Float titleScale,
+            String description,
+            String descriptionPosition,
+            String descriptionAlignment,
+            Float descriptionScale,
+            String counter,
+            String counterPosition,
+            String counterAlignment,
+            Float counterScale
+    ) {
+        public boolean resolvedEnabled() {
+            return enabled != null && enabled;
+        }
+
+        public int resolvedRequiredPlayers() {
+            return requiredPlayers == null ? 0 : Math.max(0, requiredPlayers);
+        }
+
+        public List<String> resolvedPlayerNames() {
+            return requiredPlayerNames == null ? List.of() : requiredPlayerNames.stream().filter(name -> name != null && !name.isBlank()).toList();
+        }
+
+        public List<String> resolvedTeams() {
+            return requiredTeams == null ? List.of() : requiredTeams.stream().filter(team -> team != null && !team.isBlank()).toList();
+        }
+
+        public boolean resolvedAllowLeave() {
+            return allowLeave != null && allowLeave;
+        }
+
+        public boolean resolvedAllowChat() {
+            return allowChat != null && allowChat;
+        }
+
+        public boolean startsByOperator() {
+            return startMode != null && ROOM_START_OP.equalsIgnoreCase(startMode.trim());
+        }
+
+        // The background is one value: "#RRGGBB" is a color, anything else the path or URL of an image or GIF.
+        public boolean backgroundIsColor() {
+            return background != null && background.trim().startsWith("#");
+        }
+
+        // Null when there is nothing to load.
+        public String backgroundSource() {
+            return background == null || background.isBlank() || backgroundIsColor() ? null : background;
+        }
+
+        // Black without a valid color, and also behind what is loaded.
+        public int backgroundColor() {
+            Integer color = backgroundIsColor() ? parseColor(background) : null;
+            return 0xFF000000 | (color == null ? 0 : color);
+        }
+
+        public TextAlignment resolvedTitleAlignment() {
+            return TextAlignment.resolve(titleAlignment, TextAlignment.CENTER);
+        }
+
+        public TextAlignment resolvedDescriptionAlignment() {
+            return TextAlignment.resolve(descriptionAlignment, TextAlignment.CENTER);
+        }
+
+        public TextAlignment resolvedCounterAlignment() {
+            return TextAlignment.resolve(counterAlignment, TextAlignment.CENTER);
+        }
+
+        public String resolvedCounterPosition() {
+            return counterPosition == null || counterPosition.isBlank() ? ROOM_DEFAULT_POSITION : counterPosition;
+        }
+
+        public float resolvedCounterScale() {
+            return counterScale != null && counterScale > 0f ? counterScale : 1f;
+        }
+
+        public String resolvedTitlePosition() {
+            return titlePosition == null || titlePosition.isBlank() ? ROOM_DEFAULT_POSITION : titlePosition;
+        }
+
+        public float resolvedTitleScale() {
+            return titleScale != null && titleScale > 0f ? titleScale : 1f;
+        }
+
+        public String resolvedDescriptionPosition() {
+            return descriptionPosition == null || descriptionPosition.isBlank() ? ROOM_DEFAULT_POSITION : descriptionPosition;
+        }
+
+        public float resolvedDescriptionScale() {
+            return descriptionScale != null && descriptionScale > 0f ? descriptionScale : 1f;
         }
     }
 
@@ -658,7 +815,7 @@ public final class ConditionalVideosConfig {
 
         public ConditionConfig toConditionConfig() {
             return new ConditionConfig(repeatableInSameSession, playlistLoop, videos, protectPlayer, freezeWorld, conditionDelay, replayOnReconnect, disableLoadingScreen,
-                    excludePlayers, excludeTeams, excludeOps);
+                    excludePlayers, excludeTeams, excludeOps, null);
         }
     }
 
@@ -690,7 +847,7 @@ public final class ConditionalVideosConfig {
 
         public ConditionConfig toConditionConfig() {
             return new ConditionConfig(repeatableInSameSession, playlistLoop, videos, protectPlayer, freezeWorld, conditionDelay, replayOnReconnect, disableLoadingScreen,
-                    excludePlayers, excludeTeams, excludeOps);
+                    excludePlayers, excludeTeams, excludeOps, null);
         }
 
         public boolean firesOnEnter() {
@@ -741,8 +898,10 @@ public final class ConditionalVideosConfig {
             String colorBackground,
             String videoTitle,
             String videoTitlePosition,
+            String videoTitleAlignment,
             String videoDescription,
             String videoDescriptionPosition,
+            String videoDescriptionAlignment,
             Float titleTextScale,
             Float descriptionTextScale,
             Float textBoxOpacity,
@@ -752,7 +911,7 @@ public final class ConditionalVideosConfig {
             Float startAt
     ) {
         public VideoEntry(String source) {
-            this(source, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+            this(source, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
         }
 
         public boolean resolvedSkippable() {
@@ -780,6 +939,14 @@ public final class ConditionalVideosConfig {
 
         public String resolvedVideoTitlePosition() {
             return videoTitlePosition == null ? "bottomLeft" : videoTitlePosition;
+        }
+
+        public TextAlignment resolvedTitleAlignment() {
+            return TextAlignment.resolve(videoTitleAlignment, TextAlignment.LEFT);
+        }
+
+        public TextAlignment resolvedDescriptionAlignment() {
+            return TextAlignment.resolve(videoDescriptionAlignment, TextAlignment.LEFT);
         }
 
         public String resolvedVideoDescription() {

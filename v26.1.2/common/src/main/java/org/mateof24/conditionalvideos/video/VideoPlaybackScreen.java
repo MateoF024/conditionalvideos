@@ -15,11 +15,13 @@ import org.mateof24.conditionalvideos.config.ActiveConfigResolver;
 import org.mateof24.conditionalvideos.config.CommonConfig;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig.VideoEntry;
+import org.mateof24.conditionalvideos.config.TextAlignment;
 import org.mateof24.conditionalvideos.config.TextPosition;
 import org.mateof24.conditionalvideos.debug.DebugLog;
 import org.mateof24.conditionalvideos.runtime.ConditionalVideosKeybinds;
 import org.mateof24.conditionalvideos.video.backend.WaterMediaVideoBackend;
 import org.watermedia.api.media.MediaAPI;
+import org.watermedia.api.media.Sync;
 import org.watermedia.api.util.MediaQuality;
 
 import java.net.URI;
@@ -62,6 +64,9 @@ public final class VideoPlaybackScreen extends Screen {
     // disableLoadingScreen: while no video is really playing nothing is drawn at all, and the game shows through.
     private final boolean hideGaps;
     private boolean endedBeforeNext;
+    // In a waiting room session the server's clock decides which entry plays and where; nothing advances by itself.
+    private boolean roomFollower;
+    private int roomSerial = -1;
 
     private State state = State.PLAYING;
 
@@ -79,9 +84,11 @@ public final class VideoPlaybackScreen extends Screen {
 
     private Component currentTitle;
     private TextPosition currentTitlePosition;
+    private TextAlignment currentTitleAlignment;
     private float currentTitleScale;
     private Component currentDescription;
     private TextPosition currentDescriptionPosition;
+    private TextAlignment currentDescriptionAlignment;
     private float currentDescriptionScale;
     private float currentTextBoxOpacity;
     private boolean currentEnableBackground;
@@ -192,9 +199,11 @@ public final class VideoPlaybackScreen extends Screen {
     private void applyCurrentEntryVisuals() {
         currentTitle = LegacyFormatParser.parse(currentEntry.resolvedVideoTitle());
         currentTitlePosition = TextPosition.resolve(currentEntry.resolvedVideoTitlePosition());
+        currentTitleAlignment = currentEntry.resolvedTitleAlignment();
         currentTitleScale = currentEntry.resolvedTitleScale();
         currentDescription = LegacyFormatParser.parse(currentEntry.resolvedVideoDescription());
         currentDescriptionPosition = TextPosition.resolve(currentEntry.resolvedVideoDescriptionPosition());
+        currentDescriptionAlignment = currentEntry.resolvedDescriptionAlignment();
         currentDescriptionScale = currentEntry.resolvedDescriptionScale();
         currentTextBoxOpacity = currentEntry.resolvedTextBoxOpacity();
         currentEnableBackground = currentEntry.resolvedEnableBackground();
@@ -298,6 +307,9 @@ public final class VideoPlaybackScreen extends Screen {
     }
 
     private void advanceAfterFailure() {
+        if (roomFollower) {
+            return;
+        }
         firstFrameWaitTicks = 0;
         consecutiveFailures++;
         if (consecutiveFailures >= playlist.size()) {
@@ -331,6 +343,10 @@ public final class VideoPlaybackScreen extends Screen {
     }
 
     private void skipToNextEntry() {
+        if (roomFollower) {
+            close("skipped out of the synchronized session");
+            return;
+        }
         int target = computeSkipTargetIndex();
         if (target >= 0) {
             DebugLog.client(DebugLog.Area.PLAYLIST, "Skip tapped on entry {}; jumping to entry {}.", currentIndex, target);
@@ -416,6 +432,9 @@ public final class VideoPlaybackScreen extends Screen {
         }
         tickTrailingBackend();
 
+        if (roomFollower && currentBackend.hasError()) {
+            return;
+        }
         if (currentBackend.hasError()) {
             ConditionalVideos.LOGGER.warn("Playlist entry '{}' reported error; advancing.", currentEntry.source());
             advanceAfterFailure();
@@ -455,7 +474,13 @@ public final class VideoPlaybackScreen extends Screen {
         }
 
         switch (state) {
-            case PLAYING -> handlePlaying();
+            case PLAYING -> {
+                if (roomFollower) {
+                    tickRoomPreload();
+                } else {
+                    handlePlaying();
+                }
+            }
             case CROSSFADING -> handleCrossfading();
             case OUTGOING_FADE -> handleOutgoingFade();
             case CLOSED -> { }
@@ -880,9 +905,15 @@ public final class VideoPlaybackScreen extends Screen {
             return;
         }
 
-        TextBox title = hasTitle ? measureTextBox(currentTitle, currentTitlePosition, currentTitleScale) : null;
-        TextBox description = hasDescription ? measureTextBox(currentDescription, currentDescriptionPosition, currentDescriptionScale) : null;
+        TextBox title = hasTitle ? measureTextBox(currentTitle, currentTitlePosition, currentTitleScale, currentTitleAlignment) : null;
+        TextBox description = hasDescription ? measureTextBox(currentDescription, currentDescriptionPosition, currentDescriptionScale, currentDescriptionAlignment) : null;
         if (hasTitle && hasDescription) {
+            // Only an alignment the file asks for moves a box: without one, it stays against its corner.
+            float[] lefts = TextPosition.alignShared(new TextPosition[]{currentTitlePosition, currentDescriptionPosition},
+                    new TextAlignment[]{TextAlignment.parse(currentEntry.videoTitleAlignment()), TextAlignment.parse(currentEntry.videoDescriptionAlignment())},
+                    new float[]{title.x(), description.x()}, new int[]{title.width(), description.width()});
+            title = title.atLeft(lefts[0]);
+            description = description.atLeft(lefts[1]);
             float[] tops = TextPosition.separate(title.x(), title.y(), title.width(), title.height(),
                     description.x(), description.y(), description.width(), description.height(), TEXT_BOX_GAP);
             title = title.atTop(tops[0]);
@@ -898,7 +929,7 @@ public final class VideoPlaybackScreen extends Screen {
 
     // Lines only break where the text has a line break (\n in the JSON; \\n shows those two characters), and
     // the box is as wide as its longest line. The bottom corners stay above the skip hint.
-    private TextBox measureTextBox(Component text, TextPosition position, float scale) {
+    private TextBox measureTextBox(Component text, TextPosition position, float scale, TextAlignment alignment) {
         List<FormattedCharSequence> lines = font.split(text, Integer.MAX_VALUE);
         int longest = 0;
         for (FormattedCharSequence line : lines) {
@@ -908,7 +939,7 @@ public final class VideoPlaybackScreen extends Screen {
         int textHeight = lines.size() * (font.lineHeight + LINE_SPACING) - LINE_SPACING;
         int boxHeight = Math.round(textHeight * scale) + TEXT_BOX_PADDING * 2;
         double guiScale = minecraft.getWindow().getGuiScale();
-        return new TextBox(lines, scale, position.left(width, boxWidth, TEXT_BOX_MARGIN, guiScale),
+        return new TextBox(lines, longest, alignment, scale, position.left(width, boxWidth, TEXT_BOX_MARGIN, guiScale),
                 position.top(height, boxHeight, TEXT_BOX_MARGIN, height - 24 - TEXT_BOX_MARGIN, guiScale), boxWidth, boxHeight);
     }
 
@@ -918,11 +949,13 @@ public final class VideoPlaybackScreen extends Screen {
         pose.pushMatrix();
         pose.translate(box.x(), box.y());
         fillTextBox(guiGraphics, 0, 0, box.width(), box.height(), alpha);
-        drawScaledLines(guiGraphics, box.lines(), TEXT_BOX_PADDING, TEXT_BOX_PADDING, box.scale(), alpha);
+        drawScaledLines(guiGraphics, box, TEXT_BOX_PADDING, TEXT_BOX_PADDING, alpha);
         pose.popMatrix();
     }
 
-    private void drawScaledLines(GuiGraphicsExtractor guiGraphics, List<FormattedCharSequence> lines, int originX, int originY, float scale, int alpha) {
+    private void drawScaledLines(GuiGraphicsExtractor guiGraphics, TextBox box, int originX, int originY, int alpha) {
+        List<FormattedCharSequence> lines = box.lines();
+        float scale = box.scale();
         int textColor = (alpha << 24) | 0x00FFFFFF;
         int unscaledLineHeight = font.lineHeight + LINE_SPACING;
         Matrix3x2fStack pose = guiGraphics.pose();
@@ -930,7 +963,7 @@ public final class VideoPlaybackScreen extends Screen {
         pose.translate(originX, originY);
         pose.scale(scale, scale);
         for (int i = 0; i < lines.size(); i++) {
-            guiGraphics.text(font, lines.get(i), 0, i * unscaledLineHeight, textColor);
+            guiGraphics.text(font, lines.get(i), box.alignment().offset(box.longest(), font.width(lines.get(i))), i * unscaledLineHeight, textColor);
         }
         pose.popMatrix();
     }
@@ -1110,6 +1143,58 @@ public final class VideoPlaybackScreen extends Screen {
         return paused;
     }
 
+    public void followRoom(int entry) {
+        roomFollower = true;
+        DebugLog.client(DebugLog.Area.ROOM, "The video follows the server's session from entry {}.", entry);
+    }
+
+    // A new serial means the session moved to another entry, or looped this one.
+    public void applyRoomSnapshot(int serial, int entry, Sync sync) {
+        if (closed) {
+            return;
+        }
+        if (roomSerial >= 0 && serial != roomSerial) {
+            if (nextBackend == null || nextIndex != entry) {
+                if (nextBackend != null) {
+                    nextBackend.close();
+                    nextBackend = null;
+                }
+                startPreload(entry);
+            }
+            if (nextBackend != null) {
+                if (entry != currentIndex && state == State.PLAYING && isFadeTransition(entry)) {
+                    enterCrossfading();
+                } else {
+                    promoteNextEntry();
+                }
+            }
+        }
+        roomSerial = serial;
+        (state == State.CROSSFADING && nextBackend != null ? nextBackend : currentBackend).applySync(sync);
+    }
+
+    private void tickRoomPreload() {
+        if (!currentFirstFrameSeen || nextBackend != null) {
+            return;
+        }
+        int next = computeNextIndex();
+        if (next >= 0) {
+            startPreload(next);
+        }
+    }
+
+    public void closeForRoom() {
+        close("the waiting room session ended");
+    }
+
+    public boolean currentIsLive() {
+        return currentBackend.isLive();
+    }
+
+    public long currentDurationMillis() {
+        return currentBackend.durationMillis();
+    }
+
     public String conditionKey() {
         return conditionKey;
     }
@@ -1205,9 +1290,13 @@ public final class VideoPlaybackScreen extends Screen {
         return false;
     }
 
-    private record TextBox(List<FormattedCharSequence> lines, float scale, float x, float y, int width, int height) {
+    private record TextBox(List<FormattedCharSequence> lines, int longest, TextAlignment alignment, float scale, float x, float y, int width, int height) {
+        TextBox atLeft(float left) {
+            return new TextBox(lines, longest, alignment, scale, left, y, width, height);
+        }
+
         TextBox atTop(float top) {
-            return new TextBox(lines, scale, x, top, width, height);
+            return new TextBox(lines, longest, alignment, scale, x, top, width, height);
         }
     }
 

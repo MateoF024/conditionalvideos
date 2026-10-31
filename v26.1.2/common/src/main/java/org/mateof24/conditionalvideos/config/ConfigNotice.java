@@ -57,6 +57,10 @@ public record ConfigNotice(String key, String english, Object... args) {
                 file, field, value, video, fallback);
     }
 
+    static ConfigNotice invalidRoomOption(String file, String option, Object value, Object used) {
+        return new ConfigNotice("conditionalvideos.notice.invalid_room_option", "%s: invalid %s '%s' in waitingRoom; %s is used", file, option, value, used);
+    }
+
     static ConfigNotice invalidTrigger(String file, Object value) {
         return new ConfigNotice("conditionalvideos.notice.invalid_trigger", "%s: invalid trigger '%s'; enter is used", file, value);
     }

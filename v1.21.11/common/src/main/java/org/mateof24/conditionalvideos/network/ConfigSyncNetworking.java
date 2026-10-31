@@ -1,6 +1,7 @@
 package org.mateof24.conditionalvideos.network;
 
 import dev.architectury.event.events.common.PlayerEvent;
+import dev.architectury.event.events.common.TickEvent;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
@@ -55,6 +56,12 @@ public final class ConfigSyncNetworking {
     private static final long SERVER_DATA_TTL_MILLIS = 5000L;
     private static ServerData cachedServerData;
     private static long serverDataExpiryMillis;
+
+    private static final int LIVE_CHECK_TICKS = 20;
+    private static final Map<Path, FileHash> FILE_HASHES = new HashMap<>();
+    private static ConditionalVideosConfig liveConfig;
+    private static List<VideoManifestEntry> sentManifest;
+    private static int liveTicks;
 
     private static final ExecutorService ASYNC_IO =
             Executors.newSingleThreadExecutor(r -> {
@@ -140,6 +147,7 @@ public final class ConfigSyncNetworking {
         NetworkHelper.registerPackets(s2cHandlers, c2sHandlers);
 
         PlayerEvent.PLAYER_JOIN.register(ConfigSyncNetworking::sendServerData);
+        TickEvent.SERVER_POST.register(ConfigSyncNetworking::onServerTick);
     }
 
     public static void initClient() {
@@ -187,9 +195,38 @@ public final class ConfigSyncNetworking {
         return data;
     }
 
+    // Conditions edited in their files reach whoever is connected, except a host, who reads those files. Videos are
+    // only announced again when they changed, since a client then checks every copy it has.
+    private static void onServerTick(MinecraftServer server) {
+        if (++liveTicks < LIVE_CHECK_TICKS) {
+            return;
+        }
+        liveTicks = 0;
+        ConditionalVideosConfig config = ConditionFiles.active(server.isDedicatedServer()).config();
+        if (config == liveConfig) {
+            return;
+        }
+        boolean first = liveConfig == null;
+        liveConfig = config;
+        List<ServerPlayer> guests = guests(server);
+        if (first || guests.isEmpty()) {
+            return;
+        }
+        cachedServerData = null;
+        boolean videosChanged = !serverData(server).manifest().equals(sentManifest);
+        DebugLog.server(DebugLog.Area.CONFIG, "The conditions changed in their files; sending them to {} player(s){}.", guests.size(), videosChanged ? ", with their videos" : "");
+        for (ServerPlayer guest : guests) {
+            sendServerConfig(guest);
+            if (videosChanged) {
+                sendVideoManifest(guest);
+            }
+        }
+    }
+
     // After a change made by command: whoever is connected gets it now, except a host, who reads their own files.
     public static void resendConditions(MinecraftServer server) {
         cachedServerData = null;
+        liveConfig = ConditionFiles.active(server.isDedicatedServer()).config();
         guests(server).forEach(ConfigSyncNetworking::sendServerConfig);
     }
 
@@ -229,13 +266,18 @@ public final class ConfigSyncNetworking {
             ConditionalVideosConfig.ConditionConfig condition = ConditionRegistry.resolve(data.config(), key);
             if (condition.exclusionReason(viewer) == null) {
                 condition.resolvedPlaylist().forEach(entry -> visible.add(entry.source()));
+                if (condition.resolvedWaitingRoom() != null && condition.resolvedWaitingRoom().backgroundSource() != null) {
+                    visible.add(condition.resolvedWaitingRoom().backgroundSource());
+                }
             }
         }
         return data.manifest().stream().filter(entry -> visible.contains(entry.configuredPath())).toList();
     }
 
     public static void sendVideoManifest(ServerPlayer player) {
-        List<VideoManifestEntry> entries = visibleVideos(player, serverData(player.level().getServer()));
+        ServerData known = serverData(player.level().getServer());
+        sentManifest = known.manifest();
+        List<VideoManifestEntry> entries = visibleVideos(player, known);
         DebugLog.server(DebugLog.Area.NETWORK, "Sending the video manifest to {}: {} file(s).", player.getScoreboardName(), entries.size());
         byte[] data = NetworkHelper.toBytes(buf -> {
             buf.writeVarInt(entries.size());
@@ -263,6 +305,9 @@ public final class ConfigSyncNetworking {
     private static List<VideoManifestEntry> collectVideoEntries(ConditionalVideosConfig config, Path serverRoot) {
         List<VideoManifestEntry> entries = new ArrayList<>();
         addPlaylistEntries(entries, "join", config.firstJoin(), serverRoot);
+        if (config.firstJoin().resolvedWaitingRoom() != null) {
+            addVideoEntry(entries, "join", config.firstJoin().resolvedWaitingRoom().backgroundSource(), serverRoot);
+        }
         addPlaylistEntries(entries, "death", config.playerDeath(), serverRoot);
         config.entityKilled().forEach((key, value) -> addPlaylistEntries(entries, "kill_entity", value, serverRoot));
         config.deathByEntity().forEach((key, value) -> addPlaylistEntries(entries, "death_by_entity", value, serverRoot));
@@ -304,12 +349,27 @@ public final class ConfigSyncNetworking {
         }
         try {
             long size = Files.size(resolved);
-            String hash = sha256(resolved);
+            String hash = knownHash(resolved, size);
             String extension = fileExtension(resolved.getFileName().toString());
             entries.add(new VideoManifestEntry(configuredPath, conditionType, hash, size, extension));
         } catch (IOException exception) {
             ConditionalVideos.LOGGER.warn("Unable to hash configured video '{}'", configuredPath, exception);
         }
+    }
+
+    // Hashing a video takes long and this runs on the server thread: a file is only read again when it changed.
+    private static String knownHash(Path file, long size) throws IOException {
+        long modified = Files.getLastModifiedTime(file).toMillis();
+        FileHash known = FILE_HASHES.get(file);
+        if (known != null && known.size() == size && known.modified() == modified) {
+            return known.hash();
+        }
+        String hash = sha256(file);
+        FILE_HASHES.put(file, new FileHash(size, modified, hash));
+        return hash;
+    }
+
+    private record FileHash(long size, long modified, String hash) {
     }
 
     private static Path resolveConfigPath(Path root, String configuredPath) {

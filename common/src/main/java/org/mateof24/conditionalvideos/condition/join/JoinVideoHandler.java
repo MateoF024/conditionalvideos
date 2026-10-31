@@ -23,6 +23,12 @@ public final class JoinVideoHandler {
             return true;
         }
 
+        // The room is for those who connect to someone: a host, in singleplayer or about to open to LAN, just plays it.
+        if (firstJoin.resolvedWaitingRoom() != null && ActiveConfigResolver.isMultiplayerSession(minecraft)) {
+            DebugLog.client(DebugLog.Area.JOIN, "firstJoin has a waiting room; the server decides whether this player watches it.");
+            return true;
+        }
+
         if (ActiveConfigResolver.isExcluded(CONDITION_ID)) {
             DebugLog.client(DebugLog.Area.JOIN, "The server left this player out of firstJoin; nothing to play on join.");
             return true;

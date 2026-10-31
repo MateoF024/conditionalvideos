@@ -15,7 +15,9 @@ import org.mateof24.conditionalvideos.debug.DebugLog;
 import org.mateof24.conditionalvideos.debug.ServerDebug;
 import org.mateof24.conditionalvideos.runtime.PlaybackControlClient;
 import org.mateof24.conditionalvideos.world.PlaybackSessions;
+import org.mateof24.conditionalvideos.runtime.WaitingRoomClient;
 import org.mateof24.conditionalvideos.world.PlaybackSync;
+import org.mateof24.conditionalvideos.world.WaitingRoom;
 import org.mateof24.conditionalvideos.world.PlayerExclusions;
 import org.mateof24.conditionalvideos.world.WatchedConditions;
 
@@ -40,6 +42,18 @@ public final class PlaybackControlNetworking {
             new ResourceLocation(ConditionalVideos.MOD_ID, "position_request");
     private static final ResourceLocation POSITION_REPORT_PACKET =
             new ResourceLocation(ConditionalVideos.MOD_ID, "position_report");
+    private static final ResourceLocation ROOM_STATE_PACKET =
+            new ResourceLocation(ConditionalVideos.MOD_ID, "room_state");
+    private static final ResourceLocation ROOM_SNAPSHOT_PACKET =
+            new ResourceLocation(ConditionalVideos.MOD_ID, "room_snapshot");
+    private static final ResourceLocation ROOM_READY_PACKET =
+            new ResourceLocation(ConditionalVideos.MOD_ID, "room_ready");
+    private static final ResourceLocation ROOM_LEAVE_PACKET =
+            new ResourceLocation(ConditionalVideos.MOD_ID, "room_leave");
+    private static final ResourceLocation ROOM_START_PACKET =
+            new ResourceLocation(ConditionalVideos.MOD_ID, "room_start");
+    private static final ResourceLocation ROOM_DURATION_PACKET =
+            new ResourceLocation(ConditionalVideos.MOD_ID, "room_duration");
     private static final ResourceLocation PLAYBACK_STATE_PACKET =
             new ResourceLocation(ConditionalVideos.MOD_ID, "playback_state");
 
@@ -76,6 +90,28 @@ public final class PlaybackControlNetworking {
                 String conditionKey = buffer.readUtf();
                 context.queue(() -> PlaybackControlClient.reportPosition(conditionKey));
             });
+            NetworkManager.registerReceiver(NetworkManager.s2c(), ROOM_STATE_PACKET, (buffer, context) -> {
+                boolean inRoom = buffer.readBoolean();
+                int phase = buffer.readVarInt();
+                int current = buffer.readVarInt();
+                int required = buffer.readVarInt();
+                boolean operator = buffer.readBoolean();
+                List<String> missing = readKeys(buffer);
+                context.queue(() -> {
+                    if (phase >= 0 && phase < WaitingRoom.Phase.values().length) {
+                        WaitingRoomClient.onState(inRoom, WaitingRoom.Phase.values()[phase], current, required, operator, missing);
+                    }
+                });
+            });
+            NetworkManager.registerReceiver(NetworkManager.s2c(), ROOM_SNAPSHOT_PACKET, (buffer, context) -> {
+                int serial = buffer.readVarInt();
+                int entry = buffer.readVarInt();
+                boolean paused = buffer.readBoolean();
+                long time = buffer.readLong();
+                long duration = buffer.readLong();
+                boolean live = buffer.readBoolean();
+                context.queue(() -> WaitingRoomClient.onSnapshot(serial, entry, paused, time, duration, live));
+            });
             NetworkManager.registerReceiver(NetworkManager.s2c(), CONTROL_STOP_PACKET, (buffer, context) ->
                     context.queue(() -> {
                         DebugLog.client(DebugLog.Area.NETWORK, "The server ordered to stop playback.");
@@ -96,12 +132,38 @@ public final class PlaybackControlNetworking {
             NetworkManager.registerReceiver(NetworkManager.s2c(), WATCHED_LIST_PACKET, (buffer, context) -> {
                 List<String> keys = readKeys(buffer);
                 context.queue(() -> {
-                    DebugLog.client(DebugLog.Area.NETWORK, "The server says {} condition(s) were already watched in this world: {}.",
-                            keys.size(), keys);
+                    if (!keys.isEmpty()) {
+                        DebugLog.client(DebugLog.Area.NETWORK, "The server says these were already watched in this world: {}.", keys);
+                    }
                     ActiveConfigResolver.setWatchedFromServer(keys);
                 });
             });
         }
+        NetworkManager.registerReceiver(NetworkManager.c2s(), ROOM_READY_PACKET, (buffer, context) -> context.queue(() -> {
+            if (context.getPlayer() instanceof ServerPlayer player) {
+                WaitingRoom.onReady(player);
+            }
+        }));
+        NetworkManager.registerReceiver(NetworkManager.c2s(), ROOM_LEAVE_PACKET, (buffer, context) -> context.queue(() -> {
+            if (context.getPlayer() instanceof ServerPlayer player) {
+                WaitingRoom.onLeaveRequest(player);
+            }
+        }));
+        NetworkManager.registerReceiver(NetworkManager.c2s(), ROOM_START_PACKET, (buffer, context) -> context.queue(() -> {
+            if (context.getPlayer() instanceof ServerPlayer player) {
+                WaitingRoom.onStartRequest(player);
+            }
+        }));
+        NetworkManager.registerReceiver(NetworkManager.c2s(), ROOM_DURATION_PACKET, (buffer, context) -> {
+            int entry = buffer.readVarInt();
+            long millis = buffer.readLong();
+            boolean live = buffer.readBoolean();
+            context.queue(() -> {
+                if (context.getPlayer() instanceof ServerPlayer player) {
+                    WaitingRoom.onDuration(player, entry, millis, live);
+                }
+            });
+        });
         NetworkManager.registerReceiver(NetworkManager.c2s(), POSITION_REPORT_PACKET, (buffer, context) -> {
             String conditionKey = buffer.readUtf();
             boolean known = buffer.readBoolean();
@@ -147,6 +209,58 @@ public final class PlaybackControlNetworking {
         DebugLog.server(DebugLog.Area.NETWORK, "Sent an order to join '{}' at entry {}, {} s to {}.", conditionKey, entry, seconds, player.getScoreboardName());
     }
 
+    public static void sendRoomState(ServerPlayer player, boolean inRoom, WaitingRoom.Phase phase, int current, int required, boolean operator, List<String> missing) {
+        FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+        buffer.writeBoolean(inRoom);
+        buffer.writeVarInt(phase.ordinal());
+        buffer.writeVarInt(current);
+        buffer.writeVarInt(required);
+        buffer.writeBoolean(operator);
+        buffer.writeVarInt(missing.size());
+        missing.forEach(buffer::writeUtf);
+        NetworkManager.sendToPlayer(player, ROOM_STATE_PACKET, buffer);
+    }
+
+    public static void sendRoomSnapshot(ServerPlayer player, int serial, int entry, boolean paused, long time, long duration, boolean live) {
+        FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+        buffer.writeVarInt(serial);
+        buffer.writeVarInt(entry);
+        buffer.writeBoolean(paused);
+        buffer.writeLong(time);
+        buffer.writeLong(duration);
+        buffer.writeBoolean(live);
+        NetworkManager.sendToPlayer(player, ROOM_SNAPSHOT_PACKET, buffer);
+    }
+
+    public static void sendRoomReady() {
+        sendEmptyRoomPacket(ROOM_READY_PACKET);
+    }
+
+    public static void sendRoomLeave() {
+        sendEmptyRoomPacket(ROOM_LEAVE_PACKET);
+    }
+
+    public static void sendRoomStart() {
+        sendEmptyRoomPacket(ROOM_START_PACKET);
+    }
+
+    private static void sendEmptyRoomPacket(ResourceLocation id) {
+        if (Minecraft.getInstance().getConnection() != null) {
+            NetworkManager.sendToServer(id, new FriendlyByteBuf(Unpooled.buffer()));
+        }
+    }
+
+    public static void sendRoomDuration(int entry, long millis, boolean live) {
+        if (Minecraft.getInstance().getConnection() == null) {
+            return;
+        }
+        FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+        buffer.writeVarInt(entry);
+        buffer.writeLong(millis);
+        buffer.writeBoolean(live);
+        NetworkManager.sendToServer(ROOM_DURATION_PACKET, buffer);
+    }
+
     public static void sendPositionRequest(ServerPlayer player, String conditionKey) {
         FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
         buffer.writeUtf(conditionKey);
@@ -166,12 +280,18 @@ public final class PlaybackControlNetworking {
     }
 
     public static void sendStop(ServerPlayer player) {
+        if (WaitingRoom.handleStop(player)) {
+            return;
+        }
         ServerConditionDispatcher.cancelDelayed(player);
         NetworkManager.sendToPlayer(player, CONTROL_STOP_PACKET, new FriendlyByteBuf(Unpooled.buffer()));
         DebugLog.server(DebugLog.Area.NETWORK, "Sent a stop order to {}.", player.getScoreboardName());
     }
 
     public static void sendPause(ServerPlayer player) {
+        if (WaitingRoom.handlePause(player)) {
+            return;
+        }
         NetworkManager.sendToPlayer(player, CONTROL_PAUSE_PACKET, new FriendlyByteBuf(Unpooled.buffer()));
         DebugLog.server(DebugLog.Area.NETWORK, "Sent a pause toggle to {}.", player.getScoreboardName());
     }
@@ -189,8 +309,9 @@ public final class PlaybackControlNetworking {
         buffer.writeVarInt(keys.size());
         keys.forEach(buffer::writeUtf);
         NetworkManager.sendToPlayer(player, WATCHED_LIST_PACKET, buffer);
-        DebugLog.server(DebugLog.Area.WORLD, "Sent {} the {} condition(s) they already watched in this world.",
-                player.getScoreboardName(), keys.size());
+        if (!keys.isEmpty()) {
+            DebugLog.server(DebugLog.Area.WORLD, "{} already watched in this world: {}.", player.getScoreboardName(), keys);
+        }
     }
 
     // Reports a phase of this client's playback (loading screen, video, end) and keeps the local session in

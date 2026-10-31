@@ -7,6 +7,7 @@ import org.mateof24.conditionalvideos.config.ConditionalVideosConfig;
 import org.mateof24.conditionalvideos.config.ConditionalVideosConfig.VideoEntry;
 import org.mateof24.conditionalvideos.debug.DebugLog;
 import org.mateof24.conditionalvideos.network.PlaybackControlNetworking;
+import org.mateof24.conditionalvideos.runtime.WaitingRoomClient;
 import org.mateof24.conditionalvideos.world.PlaybackSessions;
 import org.mateof24.conditionalvideos.video.SilentVideoPreparation;
 import org.mateof24.conditionalvideos.video.SyncPoint;
@@ -80,7 +81,7 @@ public final class ConditionVideoPlayer {
 
     public static boolean isVideoActive(Minecraft minecraft) {
         return minecraft != null
-                && (preparing != null || minecraft.gui.screen() instanceof VideoPlaybackScreen
+                && (preparing != null || WaitingRoomClient.isActive() || minecraft.gui.screen() instanceof VideoPlaybackScreen
                 || minecraft.gui.screen() instanceof VideoLoadingScreen);
     }
 
@@ -421,7 +422,19 @@ public final class ConditionVideoPlayer {
         org.mateof24.conditionalvideos.runtime.PlaybackEvents.notifyStarted(conditionId);
     }
 
-    private static boolean isDownloadPending(Minecraft minecraft, String configuredPath) {
+    public static Function<VideoEntry, URI> sourceResolver(Minecraft minecraft, String logName) {
+        return entry -> resolveSource(minecraft, entry.source(), logName);
+    }
+
+    public static URI backgroundSource(Minecraft minecraft, String configuredPath) {
+        return configuredPath == null || configuredPath.isBlank() ? null : resolveSource(minecraft, configuredPath, "waiting room background");
+    }
+
+    public static int downloadTimeoutTicks() {
+        return LOADING_SCREEN_TIMEOUT_TICKS;
+    }
+
+    public static boolean isDownloadPending(Minecraft minecraft, String configuredPath) {
         if (configuredPath == null || configuredPath.isBlank()) {
             return false;
         }

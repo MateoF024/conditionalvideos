@@ -39,6 +39,7 @@ public final class ClientRuntime {
                 AdvancementVideoHandler.reset();
                 ActiveConfigResolver.invalidateLocalConfigCache();
                 ConditionVideoPlayer.clearQueue();
+                WaitingRoomClient.onDisconnected();
                 ConditionVideoPlayer.armFirstJoinGuard();
                 DebugLog.setClientSituation(DebugLog.CLIENT_MENU);
             }
@@ -71,6 +72,7 @@ public final class ClientRuntime {
         PlaybackControlNetworking.tickClientSession(ConditionVideoPlayer.isVideoActive(minecraft));
         ConditionVideoPlayer.tickDelays(minecraft);
         ConditionVideoPlayer.tickPreparation(minecraft);
+        WaitingRoomClient.tick(minecraft);
 
         if (!joinVideoHandled) {
             tickJoinFlow(minecraft);

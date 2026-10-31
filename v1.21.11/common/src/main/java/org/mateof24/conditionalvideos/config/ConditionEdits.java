@@ -1,5 +1,6 @@
 package org.mateof24.conditionalvideos.config;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
@@ -7,6 +8,10 @@ import org.mateof24.conditionalvideos.condition.shared.ConditionRegistry;
 
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.Locale;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 // What the set command changes in a condition's file. Everything else in the file stays as written, and any
@@ -21,8 +26,8 @@ public final class ConditionEdits {
         START_AT("startat", "startat <condition> <video_index> <seconds>"),
         TITLE("title", "title <condition> <video_index> [at_position <x> <y>] <text>"),
         DESCRIPTION("description", "description <condition> <video_index> [at_position <x> <y>] <text>"),
-        TITLE_POSITION("titleposition", "titleposition <condition> <video_index> <corner | x y>"),
-        DESCRIPTION_POSITION("descriptionposition", "descriptionposition <condition> <video_index> <corner | x y>");
+        TITLE_POSITION("titleposition", "titleposition <condition> <video_index> <position | x y>"),
+        DESCRIPTION_POSITION("descriptionposition", "descriptionposition <condition> <video_index> <position | x y>");
 
         public final String literal;
         public final String usage;
@@ -71,6 +76,83 @@ public final class ConditionEdits {
         };
         try {
             if (!files.edit(ConditionRegistry.fileKey(condition), edit)) {
+                throw new Refused("command.conditionalvideos.set.no_file", condition, files.folder());
+            }
+        } catch (IOException | RuntimeException exception) {
+            throw new Refused("command.conditionalvideos.set.write_failed", ConfigNotice.reason(exception));
+        }
+    }
+
+    // Puts names on the waiting room's list in firstJoin's file. Returns those that were not on it, in lowercase.
+    public static Set<String> addRoomPlayers(ConditionFiles files, Collection<String> names) throws Refused {
+        Set<String> changed = new HashSet<>();
+        editRoomList(files, list -> {
+            Set<String> written = writtenNames(list);
+            for (String name : names) {
+                if (written.add(name.toLowerCase(Locale.ROOT))) {
+                    list.add(name);
+                    changed.add(name.toLowerCase(Locale.ROOT));
+                }
+            }
+        });
+        return changed;
+    }
+
+    // Takes names off that list, whatever their case. Returns those that were on it, in lowercase.
+    public static Set<String> removeRoomPlayers(ConditionFiles files, Collection<String> names) throws Refused {
+        Set<String> wanted = new HashSet<>();
+        names.forEach(name -> wanted.add(name.toLowerCase(Locale.ROOT)));
+        Set<String> changed = new HashSet<>();
+        editRoomList(files, list -> {
+            for (int index = list.size() - 1; index >= 0; index--) {
+                JsonElement entry = list.get(index);
+                if (isText(entry) && wanted.contains(entry.getAsString().toLowerCase(Locale.ROOT))) {
+                    changed.add(entry.getAsString().toLowerCase(Locale.ROOT));
+                    list.remove(index);
+                }
+            }
+        });
+        return changed;
+    }
+
+    private static boolean isText(JsonElement element) {
+        return element.isJsonPrimitive() && element.getAsJsonPrimitive().isString();
+    }
+
+    private static Set<String> writtenNames(JsonArray list) {
+        Set<String> written = new HashSet<>();
+        for (JsonElement entry : list) {
+            if (isText(entry)) {
+                written.add(entry.getAsString().toLowerCase(Locale.ROOT));
+            }
+        }
+        return written;
+    }
+
+    private interface RoomListEdit {
+        void apply(JsonArray list);
+    }
+
+    // Something that is not a list is the user's to fix: it is refused and the file stays as it is.
+    private static void editRoomList(ConditionFiles files, RoomListEdit edit) throws Refused {
+        String condition = ConditionRegistry.KEY_FIRST_JOIN;
+        try {
+            boolean found = files.edit(ConditionRegistry.fileKey(condition), object -> {
+                JsonElement room = object.get("waitingRoom");
+                if (room == null || !room.isJsonObject()) {
+                    throw new Refused("command.conditionalvideos.waitingroom.invalid_list");
+                }
+                JsonElement list = room.getAsJsonObject().get("requiredPlayerNames");
+                if (list == null) {
+                    list = new JsonArray();
+                    room.getAsJsonObject().add("requiredPlayerNames", list);
+                }
+                if (!list.isJsonArray()) {
+                    throw new Refused("command.conditionalvideos.waitingroom.invalid_list");
+                }
+                edit.apply(list.getAsJsonArray());
+            });
+            if (!found) {
                 throw new Refused("command.conditionalvideos.set.no_file", condition, files.folder());
             }
         } catch (IOException | RuntimeException exception) {
