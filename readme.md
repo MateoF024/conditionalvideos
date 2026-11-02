@@ -1,6 +1,6 @@
 <div align="center">
 
-![conditional_videos.png](libs/conditional_videos.png)
+<img width="2048" height="184" alt="conditional_videos" src="https://github.com/user-attachments/assets/8f52ba57-996d-43a0-b8ed-e43e7ec889db" />
 
 Play custom videos when specific in-game events are detected — first joins, deaths, kills, advancements, item milestones, scoreboard thresholds, and more.
 
