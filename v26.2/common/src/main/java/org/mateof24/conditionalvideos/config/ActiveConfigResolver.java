@@ -25,8 +25,6 @@ public final class ActiveConfigResolver {
     private static RemoteConfigState remoteConfigState = RemoteConfigState.UNKNOWN;
     private static final Map<String, Path> remoteVideoPaths = new HashMap<>();
     private static final Set<String> manifestedRemoteVideoPaths = new HashSet<>();
-    private static volatile boolean manifestReceived = false;
-    private static volatile boolean manifestProcessed = true;
 
     private static CommonConfig localCommonConfig;
     private static CommonConfig remoteCommonConfig;
@@ -154,8 +152,6 @@ public final class ActiveConfigResolver {
         remoteConfigState = RemoteConfigState.UNKNOWN;
         remoteVideoPaths.clear();
         manifestedRemoteVideoPaths.clear();
-        manifestReceived = false;
-        manifestProcessed = true;
         remoteCommonConfig = null;
         WATCHED.clear();
         EXCLUDED.clear();
@@ -204,18 +200,5 @@ public final class ActiveConfigResolver {
             id += "_";
         }
         return id;
-    }
-
-    public static void onManifestReceived() {
-        manifestReceived = true;
-        manifestProcessed = false;
-    }
-
-    public static void onManifestProcessed() {
-        manifestProcessed = true;
-    }
-
-    public static boolean isManifestPending() {
-        return manifestReceived && !manifestProcessed;
     }
 }

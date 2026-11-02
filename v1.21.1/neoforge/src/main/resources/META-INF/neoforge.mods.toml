@@ -9,7 +9,7 @@ version = "${version}"
 displayName = "Conditional Videos"
 authors = "MateoF24"
 description = '''
-Client-side mod that plays configurable videos for gameplay events such as first join, deaths, kills, advancements, and dimension changes.
+Plays configurable videos for gameplay events such as first join, deaths, kills, advancements, and dimension changes.
 '''
 logoFile = "icon.png"
 

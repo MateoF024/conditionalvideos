@@ -90,11 +90,11 @@ public final class ConditionalVideosAPI {
     // ---------------------------------------------------------------------
 
     /**
-     * Triggers a condition for a player, honoring its "first time / repeatable" gating.
+     * Triggers a condition for a player, following its file: exclusions, delay and repeatable.
      *
      * @param conditionKey a config key such as {@code firstJoin}, {@code itemObtained/minecraft:diamond}
      *                     or {@code custom/my_event}
-     * @return {@code true} if an order was sent (condition resolved, has videos, and passed the session gate)
+     * @return {@code true} if an order was sent or is waiting for the condition's delay
      */
     public static boolean triggerOnServer(ServerPlayer player, String conditionKey) {
         if (player == null || conditionKey == null || conditionKey.isBlank()) {

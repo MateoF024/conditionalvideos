@@ -49,7 +49,6 @@
   "command.conditionalvideos.set.invalid_position": "«%s» no es una posición válida: usa una esquina o <x> <y>.",
   "command.conditionalvideos.set.start_after_next": "startAt %s no quedaría antes del nextAt %s de ese vídeo.",
   "command.conditionalvideos.set.write_failed": "No se ha podido cambiar el archivo y ha quedado como estaba: %s",
-  "key.categories.conditionalvideos": "Vídeos condicionales",
   "key.conditionalvideos.skip": "Saltar vídeo",
   "conditionalvideos.notice.header": "[ConditionalVideos] %s problema(s) en las condiciones (detalles en el registro del juego):",
   "conditionalvideos.notice.more": "... y %s más",

@@ -18,7 +18,6 @@ public final class VideoLoadingScreen extends Screen {
     private final int videoCount;
 
     private int elapsedTicks;
-    private boolean transitioned;
     private boolean settled;
 
     public VideoLoadingScreen(BooleanSupplier readyCheck, Runnable onReady, Runnable onTimeout, int timeoutTicks, int videoCount) {
@@ -49,7 +48,6 @@ public final class VideoLoadingScreen extends Screen {
 
         if (readyCheck.getAsBoolean()) {
             settled = true;
-            transitioned = true;
             DebugLog.client(DebugLog.Area.TRANSFER, "Loading screen: the video was ready after {} s.", elapsedTicks / 20);
             // Bridge audio mute through the swap so SoundManagerMixin keeps cancelling sounds
             // during the one-tick gap between removed() and VideoPlaybackScreen.init().
@@ -101,9 +99,5 @@ public final class VideoLoadingScreen extends Screen {
     public void onClose() {
         VideoAudioState.setLoadingActive(false);
         super.onClose();
-    }
-
-    public boolean hasTransitioned() {
-        return transitioned;
     }
 }

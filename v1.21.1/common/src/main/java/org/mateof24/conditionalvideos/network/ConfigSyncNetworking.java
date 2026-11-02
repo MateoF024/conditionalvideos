@@ -100,11 +100,7 @@ public final class ConfigSyncNetworking {
                         buf.readVarLong(), buf.readUtf()));
             }
             DebugLog.client(DebugLog.Area.NETWORK, "Received the server's video manifest: {} file(s).", count);
-            ActiveConfigResolver.onManifestReceived();
-            ASYNC_IO.execute(() -> {
-                onClientManifest(manifest);
-                ActiveConfigResolver.onManifestProcessed();
-            });
+            ASYNC_IO.execute(() -> onClientManifest(manifest));
         });
 
         s2cHandlers.put(SERVER_VIDEO_START_PACKET, data -> {

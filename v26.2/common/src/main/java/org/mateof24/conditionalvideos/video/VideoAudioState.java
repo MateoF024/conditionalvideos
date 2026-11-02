@@ -16,28 +16,16 @@ public final class VideoAudioState {
         logChange(wasMuted);
     }
 
-    public static boolean allowGameSounds() {
-        return allowGameSounds;
-    }
-
     public static void setVideoPlaying(boolean playing) {
         boolean wasMuted = shouldMuteAudio();
         videoPlaying = playing;
         logChange(wasMuted);
     }
 
-    public static boolean isVideoPlaying() {
-        return videoPlaying;
-    }
-
     public static void setLoadingActive(boolean active) {
         boolean wasMuted = shouldMuteAudio();
         loadingActive = active;
         logChange(wasMuted);
-    }
-
-    public static boolean isLoadingActive() {
-        return loadingActive;
     }
 
     public static boolean shouldMuteAudio() {

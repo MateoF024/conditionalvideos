@@ -49,7 +49,6 @@
   "command.conditionalvideos.set.invalid_position": "'%s' is not a valid position: use a corner or <x> <y>.",
   "command.conditionalvideos.set.start_after_next": "startAt %s would not be before that video's nextAt %s.",
   "command.conditionalvideos.set.write_failed": "The file could not be changed and was left as it was: %s",
-  "key.categories.conditionalvideos": "Conditional Videos",
   "key.conditionalvideos.skip": "Skip video",
   "conditionalvideos.notice.header": "[ConditionalVideos] %s problem(s) in the conditions (details in the game log):",
   "conditionalvideos.notice.more": "... and %s more",

@@ -237,10 +237,6 @@ public final class CommonConfig {
         return Math.max(0f, Math.min(1f, defaultVolume));
     }
 
-    public boolean isAutoQuality() {
-        return QUALITY_AUTO.equalsIgnoreCase(videoQuality());
-    }
-
     // What the server dictates to its clients; blockMatureContent and debugLogging stay per installation.
     public String toAuthoritativeJson() {
         JsonObject root = new JsonObject();

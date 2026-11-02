@@ -51,10 +51,6 @@ public final class DebugLog {
         clientSituation = situation;
     }
 
-    public static String clientSituation() {
-        return clientSituation;
-    }
-
     public static void setServer(MinecraftServer value) {
         server = value;
     }

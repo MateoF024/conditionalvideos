@@ -28,10 +28,6 @@ public record PlayOptions(Float delaySeconds, Set<String> excludePlayers, Set<St
         excludeTeams = excludeTeams == null ? Set.of() : Set.copyOf(excludeTeams);
     }
 
-    public PlayOptions withForced(boolean value) {
-        return new PlayOptions(delaySeconds, excludePlayers, excludeTeams, excludeOps, value, ignoreWatched, once, sync);
-    }
-
     public int delayTicks(ConditionConfig condition) {
         if (delaySeconds == null) {
             return condition.resolvedDelayTicks();
