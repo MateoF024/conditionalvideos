@@ -1,5 +1,52 @@
 # Changelog
 
+> **BREAKING CHANGES** are changes that break an existing instance compared to the previous version: after updating, something stops working as it did until you adapt it.
+
+## 1.6.0
+
+### Added
+- **Waiting room for `firstJoin`.** Players wait behind a color, image or GIF, then watch the video together. Choose how many players, which names or teams are needed, and whether it starts by itself or when an operator says so.
+- **`worldPosition` condition.** Plays a video when a player enters or leaves an area.
+- **LAN support.** Guests now receive the host's conditions, options and video files, as on a dedicated server.
+- **Player protection (`protectPlayer`, on by default).** During any video the player takes no damage or hunger, picks up nothing and can't be pushed. Their game mode doesn't change.
+- **World freeze (`freezeWorld`, on by default for `firstJoin` only).** The world stops while every connected player is watching.
+- **Exclusions.** `excludePlayers`, `excludeTeams` and `excludeOps` per condition.
+- **More playback options.** `conditionDelay`, `replayOnReconnect` and `disableLoadingScreen` per condition, and `startAt` per video.
+- **`defaultVolume`** in `conditionalvideos-common.json`, for videos without their own volume.
+- **More text placement.** Titles and descriptions accept `center` or exact `X/Y` pixels, and can be aligned with `videoTitleAlignment` and `videoDescriptionAlignment`.
+- **New commands.** `reset` clears what a player has watched, `set` edits a value and applies it right away, and `waitingroom` controls the room.
+- **`play` options.** `delay`, `exclude`, `excludeteam`, `excludeops`, `once` and `sync` change a single run without touching the file.
+- **API:** `playOnServer` and `PlayOptions`.
+- **Config problems are reported** in the log and in the chat of whoever can fix them.
+- **Condition files edited by hand apply right away**, also for connected players.
+
+### Changed
+- **BREAKING: WATERMeDIA `3.0.0` and Native Binaries `3.0.0` are now required.** Older versions, including the `3.0.0.x` betas, are no longer compatible.
+  - API `3.0.0.23` → `3.0.0`
+  - Native Binaries `3.0.0.6` → `3.0.0`
+- **BREAKING: each condition now has its own file.** `conditionalvideos.json` and `conditionalvideos-server.json` are replaced by the `conditions/` and `server-conditions/` folders in `config/conditionalvideos/`. They migrate on the first launch and the originals stay as `.bak`, but modpacks or scripts that ship or edit the old files must move to the new ones.
+- **BREAKING: commands name a condition with separate arguments.** `play @a entityKilled/minecraft:warden` is now `play @a entityKilled minecraft:warden`. Command blocks and functions need updating. API keys don't change.
+- **BREAKING: `repeatableInSameSession: false` now means once per player and world, also on servers,** where it used to play again on every connection. Singleplayer worlds keep what they already watched.
+- **BREAKING: `play` skips players who still have a video going** instead of queuing the new one for them.
+- **BREAKING: titles and descriptions no longer wrap on their own.** They only break at `\n`, so long single-line texts need it added. Text boxes now fit their text.
+- **`repeatableInSameSession` left out of a file now means `true`,** except on `firstJoin`. Migrated conditions keep playing as they did.
+- **`firstJoin` no longer puts the player in spectator mode.** Player protection replaces it.
+- **Videos now silence every sound category except Master,** so mods with their own audio that follow the sliders go quiet too. `allowGameSounds` still turns this off.
+- **`videoQuality` uses WATERMeDIA's quality names:** `LOWEST`, `LOWER`, `LOW`, `LOWISH`, `MEDIUM`, `HIGH`, `HIGHER`, `HIGHEST` and `ULTRA_8K`.
+- **The server also sets `videoLoadTimeoutSeconds` and `defaultVolume`** for its players.
+- **Clearer `debugLogging`.** Client and server each read their own option, every line says where it runs, and the log explains why a video plays or not.
+- **New license.** All Rights Reserved is replaced by the ConditionalVideos License: free for any server and any free modpack, while charging for anything that uses the mod requires permission.
+- Inherited the fixes and hardening of the updated WATERMeDIA stack.
+
+### Fixed
+- **Clients can no longer put themselves in spectator mode on a server.**
+- **A disconnect or a crash no longer leaves a player stuck in spectator,** and creative players no longer come back flying.
+- **Vulkan stalls and crashes while a video plays on 26.2.**
+- **`videoLoop` and playlists no longer wait up to 10 seconds between videos.** The next video now starts as soon as the current one ends.
+- **YouTube videos no longer lose part of their picture after a long pause.** A video paused for a while, including one waiting its turn in a loop or playlist, now resumes without skipping anything.
+- **The world no longer shows between videos** during skips and transitions.
+- **The mod no longer rewrites your config files.** `&` codes stay as written, and the common config only gets the options it lacks.
+
 ## 1.5.1
 
 ### Fixed
