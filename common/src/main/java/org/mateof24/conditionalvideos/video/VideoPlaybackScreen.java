@@ -19,8 +19,8 @@ import org.mateof24.conditionalvideos.config.TextPosition;
 import org.mateof24.conditionalvideos.debug.DebugLog;
 import org.mateof24.conditionalvideos.runtime.ConditionalVideosKeybinds;
 import org.mateof24.conditionalvideos.video.backend.WaterMediaVideoBackend;
-import org.watermedia.api.media.MediaAPI;
-import org.watermedia.api.media.Sync;
+import org.watermedia.api.player.PlayerAPI;
+import org.watermedia.api.player.MediaPlayer.PlayerState;
 import org.watermedia.api.util.MediaQuality;
 
 import java.net.URI;
@@ -186,7 +186,7 @@ public final class VideoPlaybackScreen extends Screen {
             return;
         }
         try {
-            MediaAPI.preload(uris.toArray(new URI[0]));
+            PlayerAPI.preload(uris.toArray(new URI[0]));
             if (uris.size() > 1) {
                 DebugLog.client(DebugLog.Area.SOURCE, "Asked WaterMedia to resolve the {} playlist sources ahead of time.", uris.size());
             }
@@ -1153,7 +1153,7 @@ public final class VideoPlaybackScreen extends Screen {
     }
 
     // A new serial means the session moved to another entry, or looped this one.
-    public void applyRoomSnapshot(int serial, int entry, Sync sync) {
+    public void applyRoomSnapshot(int serial, int entry, PlayerState sync) {
         if (closed) {
             return;
         }

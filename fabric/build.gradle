@@ -32,7 +32,10 @@ dependencies {
     common(project(path: ':common', configuration: 'namedElements')) { transitive false }
     shadowBundle project(path: ':common', configuration: 'transformProductionFabric')
 
-    modLocalRuntime files("${rootProject.projectDir}/libs/watermedia-${rootProject.watermedia_api_version}.jar")
+    def watermediaJar = "${rootProject.projectDir}/libs/watermedia-${rootProject.watermedia_api_version}.jar"
+    modLocalRuntime files(watermediaJar)
+    // Loom drops the jars nested in a development mod, so what WaterMedia bundles is added on its own.
+    modLocalRuntime files(zipTree(watermediaJar).matching { include 'META-INF/jarjar/*.jar' })
     def binariesJar = file("${rootProject.projectDir}/libs/watermedia_binaries-${rootProject.watermedia_binaries_version}.jar")
     if (binariesJar.exists()) {
         modLocalRuntime files(binariesJar)

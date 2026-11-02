@@ -24,8 +24,8 @@ import org.mateof24.conditionalvideos.video.WaitingRoomScreen;
 import org.mateof24.conditionalvideos.video.backend.WaterMediaVideoBackend;
 import org.mateof24.conditionalvideos.world.PlaybackSessions;
 import org.mateof24.conditionalvideos.world.WaitingRoom;
-import org.watermedia.api.media.MediaPlayer;
-import org.watermedia.api.media.Sync;
+import org.watermedia.api.player.MediaPlayer;
+import org.watermedia.api.player.MediaPlayer.PlayerState;
 
 import java.net.URI;
 import java.util.List;
@@ -285,8 +285,8 @@ public final class WaitingRoomClient {
         }
     }
 
-    private static Sync toSync(Snapshot snapshot) {
-        return new Sync(++revision, snapshot.paused() ? MediaPlayer.Status.PAUSED : MediaPlayer.Status.PLAYING,
+    private static PlayerState toSync(Snapshot snapshot) {
+        return new PlayerState(++revision, snapshot.paused() ? MediaPlayer.Status.PAUSED : MediaPlayer.Status.PLAYING,
                 Math.max(0L, snapshot.time()), Math.max(0L, snapshot.duration()), 1f, false, snapshot.live());
     }
 

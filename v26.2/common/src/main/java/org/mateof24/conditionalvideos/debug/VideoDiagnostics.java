@@ -4,8 +4,8 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import org.lwjgl.BufferUtils;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL30;
-import org.watermedia.api.media.GFXEngine;
-import org.watermedia.api.media.MediaPlayer;
+import org.watermedia.api.player.GFXEngine;
+import org.watermedia.api.player.MediaPlayer;
 
 import java.net.URI;
 import java.nio.ByteBuffer;

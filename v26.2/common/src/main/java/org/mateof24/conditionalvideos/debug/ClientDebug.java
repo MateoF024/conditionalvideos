@@ -105,9 +105,9 @@ public final class ClientDebug {
                     org.watermedia.WaterMedia.loaded(),
                     org.watermedia.WaterMedia.step(),
                     org.watermedia.WaterMedia.steps(),
-                    org.watermedia.api.media.MediaAPI.ffmpegLoaded(),
-                    org.watermedia.api.media.MediaAPI.ffmpegError(),
-                    org.watermedia.api.media.MediaAPI.vulkanDecode(),
+                    org.watermedia.api.codecs.CodecsAPI.ffmpegLoaded(),
+                    org.watermedia.api.codecs.CodecsAPI.ffmpegError(),
+                    org.watermedia.api.codecs.CodecsAPI.vulkanDecode(),
                     DebugLog.modVersion("watermedia_binaries"));
         } catch (Throwable t) {
             DebugLog.client(DebugLog.Area.ENV, "WaterMedia: <not loaded> ({})", t.toString());

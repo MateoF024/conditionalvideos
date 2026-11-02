@@ -29,14 +29,15 @@ import org.mateof24.conditionalvideos.debug.VideoDiagnostics;
 import org.mateof24.conditionalvideos.mixin.GpuDeviceAccessor;
 import org.mateof24.conditionalvideos.mixin.VulkanGpuTextureViewAccessor;
 import org.watermedia.WaterMediaConfig;
-import org.watermedia.api.media.GFXEngine;
-import org.watermedia.api.media.MRL;
-import org.watermedia.api.media.MediaAPI;
-import org.watermedia.api.media.MediaPlayer;
-import org.watermedia.api.media.Sync;
-import org.watermedia.api.media.TxMediaPlayer;
-import org.watermedia.api.media.SFXEngine;
-import org.watermedia.api.media.VKContext;
+import org.watermedia.api.codecs.CodecsAPI;
+import org.watermedia.api.player.GFXEngine;
+import org.watermedia.api.player.MRL;
+import org.watermedia.api.player.PlayerAPI;
+import org.watermedia.api.player.MediaPlayer;
+import org.watermedia.api.player.MediaPlayer.PlayerState;
+import org.watermedia.api.player.TxMediaPlayer;
+import org.watermedia.api.player.SFXEngine;
+import org.watermedia.api.player.VKContext;
 import org.watermedia.api.util.MediaQuality;
 import org.watermedia.api.util.MediaType;
 
@@ -67,7 +68,7 @@ public final class WaterMediaVideoBackend {
     private boolean startAtPending;
     private boolean resumeAfterStartAt;
     private long syncNanos;
-    private Sync pendingSync;
+    private PlayerState pendingSync;
 
     private MRL mrl;
     private MediaPlayer player;
@@ -188,7 +189,7 @@ public final class WaterMediaVideoBackend {
     }
 
     // Hands the clock to the server's session: from here WaterMedia keeps this player on it.
-    public void applySync(Sync sync) {
+    public void applySync(PlayerState sync) {
         holdAtZero = false;
         startAtPending = false;
         resumeAfterStartAt = false;
@@ -324,8 +325,8 @@ public final class WaterMediaVideoBackend {
                 return false;
             }
             ConditionalVideos.LOGGER.info("Using the Vulkan renderer for '{}' (experimental video support).", source);
-            gfx = MediaAPI.vkEngine(context);
-            sfx = MediaAPI.alEngine();
+            gfx = PlayerAPI.vkEngine(context);
+            sfx = PlayerAPI.alEngine();
             DebugLog.client(DebugLog.Area.BACKEND, "Created the Vulkan video and OpenAL audio engines for '{}'.", source);
             return true;
         } catch (Throwable throwable) {
@@ -364,8 +365,8 @@ public final class WaterMediaVideoBackend {
                 }
                 runIsolatedGl(task);
             });
-            gfx = MediaAPI.glEngine(renderThread, renderExecutor);
-            sfx = MediaAPI.alEngine();
+            gfx = PlayerAPI.glEngine(renderThread, renderExecutor);
+            sfx = PlayerAPI.alEngine();
             DebugLog.client(DebugLog.Area.BACKEND, "Created the OpenGL video and OpenAL audio engines for '{}'.", source);
             return true;
         } catch (Throwable throwable) {
@@ -490,7 +491,7 @@ public final class WaterMediaVideoBackend {
             return;
         }
         try {
-            mrl = MediaAPI.mrl(source);
+            mrl = PlayerAPI.mrl(source);
             if (mrl != null && mrl.status() == MRL.Status.EXPIRED) {
                 try {
                     mrl = mrl.reload();
@@ -504,7 +505,7 @@ public final class WaterMediaVideoBackend {
                 lastLoggedStatus = MRL.Status.FETCHING;
             }
         } catch (Throwable throwable) {
-            DebugLog.client(DebugLog.Area.SOURCE, "MediaAPI.mrl() not ready yet for '{}': {}", source, throwable.toString());
+            DebugLog.client(DebugLog.Area.SOURCE, "PlayerAPI.mrl() not ready yet for '{}': {}", source, throwable.toString());
         }
     }
 
@@ -655,7 +656,7 @@ public final class WaterMediaVideoBackend {
         if (mrl == null) {
             mrlWaitTicks++;
             if (mrlWaitTicks >= loadTimeoutTicks()) {
-                ConditionalVideos.LOGGER.warn("MediaAPI never produced an MRL for '{}' after {}s.", source, loadTimeoutTicks() / 20);
+                ConditionalVideos.LOGGER.warn("PlayerAPI never produced an MRL for '{}' after {}s.", source, loadTimeoutTicks() / 20);
                 errored = true;
                 cleanup();
                 return;
@@ -766,8 +767,8 @@ public final class WaterMediaVideoBackend {
     // already LOADED here, so a null player is a permanent failure (no backend or a construction crash).
     private void startSourcePlayer(MRL.Source preferred, int index) {
         player = index >= 0
-                ? MediaAPI.player(mrl, index, () -> gfx, () -> sfx)
-                : MediaAPI.player(mrl, () -> gfx, () -> sfx);
+                ? PlayerAPI.player(mrl, index, () -> gfx, () -> sfx)
+                : PlayerAPI.player(mrl, () -> gfx, () -> sfx);
         if (player == null) {
             ConditionalVideos.LOGGER.warn("WATERMeDIA could not create a player for '{}'; skipping it.", source);
             errored = true;
@@ -841,7 +842,7 @@ public final class WaterMediaVideoBackend {
 
     private static boolean ffmpegLoaded() {
         try {
-            return MediaAPI.ffmpegLoaded();
+            return CodecsAPI.ffmpegLoaded();
         } catch (Throwable ignored) {
             return false;
         }
@@ -849,7 +850,7 @@ public final class WaterMediaVideoBackend {
 
     private static boolean ffmpegErrored() {
         try {
-            return MediaAPI.ffmpegError();
+            return CodecsAPI.ffmpegError();
         } catch (Throwable ignored) {
             return false;
         }
