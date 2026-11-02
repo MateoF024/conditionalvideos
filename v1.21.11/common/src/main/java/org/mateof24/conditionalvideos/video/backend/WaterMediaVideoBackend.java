@@ -109,9 +109,11 @@ public final class WaterMediaVideoBackend {
         if (player == null || closed || errored || startAtPending) {
             return false;
         }
-        return playerStatus == MediaPlayer.Status.PLAYING
-                || playerStatus == MediaPlayer.Status.PAUSED
-                || playerStatus == MediaPlayer.Status.BUFFERING;
+        try {
+            return player.canPlay();
+        } catch (Throwable t) {
+            return false;
+        }
     }
 
     public boolean hasTextureValid() {
