@@ -53,6 +53,8 @@ public final class WaterMediaVideoBackend {
     private static final int MRL_RELOAD_SPACING_TICKS = 40;
     private static final int MAX_MRL_RELOAD_ATTEMPTS = 3;
     private static final long HOLD_AT_ZERO_THRESHOLD_MS = 100L;
+    // Past this, a paused network source has lost its connection and FFmpeg would skip a stream segment on resume.
+    private static final long LONG_HOLD_NANOS = 20_000_000_000L;
     private static final int QUALITY_SETTLE_TICKS = 40;
 
     private final URI source;
@@ -69,6 +71,7 @@ public final class WaterMediaVideoBackend {
     private boolean resumeAfterStartAt;
     private long syncNanos;
     private PlayerState pendingSync;
+    private long heldSinceNanos;
 
     private MRL mrl;
     private MediaPlayer player;
@@ -107,17 +110,15 @@ public final class WaterMediaVideoBackend {
         return renderedAnyFrame;
     }
 
-    public boolean isReadyToRender() {
-        if (player == null || closed) {
+    // The source is open and at its start point. A paused player holds no picture until it resumes, so its texture
+    // cannot tell this: the first frame arrives right after resuming.
+    public boolean isReadyToStart() {
+        if (player == null || closed || errored || startAtPending) {
             return false;
         }
-        try {
-            return player.texture() > 0 && (playerStatus == MediaPlayer.Status.PLAYING
-                    || playerStatus == MediaPlayer.Status.PAUSED
-                    || playerStatus == MediaPlayer.Status.BUFFERING);
-        } catch (Throwable t) {
-            return false;
-        }
+        return playerStatus == MediaPlayer.Status.PLAYING
+                || playerStatus == MediaPlayer.Status.PAUSED
+                || playerStatus == MediaPlayer.Status.BUFFERING;
     }
 
     public boolean hasTextureValid() {
@@ -202,6 +203,9 @@ public final class WaterMediaVideoBackend {
             return;
         }
         try {
+            if (takeLongHold()) {
+                reopenAfterHold(pendingSync.time());
+            }
             player.sync(pendingSync);
         } catch (Throwable throwable) {
             DebugLog.client(DebugLog.Area.PLAYBACK, "sync() failed for '{}': {}", source, throwable.toString());
@@ -255,21 +259,17 @@ public final class WaterMediaVideoBackend {
             resumeAfterStartAt = true;
             return;
         }
+        boolean longHold = takeLongHold();
         boolean needsSeek = true;
         try {
             long ms = player.time();
-            if (ms >= startAtMillis && ms < startAtMillis + 100L) {
+            if (!longHold && ms >= startAtMillis && ms < startAtMillis + 100L) {
                 needsSeek = false;
             }
         } catch (Throwable ignored) {
         }
         if (needsSeek) {
-            try {
-                if (player.canSeek()) {
-                    player.seek(startAtMillis);
-                }
-            } catch (Throwable ignored) {
-            }
+            reopenAfterHold(startAtMillis);
         }
         try {
             player.resume();
@@ -282,10 +282,31 @@ public final class WaterMediaVideoBackend {
         }
     }
 
+    // True once when a network source stayed paused long enough to lose its connection.
+    private boolean takeLongHold() {
+        long since = heldSinceNanos;
+        heldSinceNanos = 0L;
+        String scheme = source.getScheme();
+        return since != 0L && System.nanoTime() - since >= LONG_HOLD_NANOS && !isImage()
+                && ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme));
+    }
+
+    // A seek reopens the source, so nothing is lost when it resumes.
+    private void reopenAfterHold(long millis) {
+        try {
+            if (player.canSeek() && player.seek(millis)) {
+                DebugLog.client(DebugLog.Area.PLAYBACK, "Sought '{}' to {} ms before it plays.", source, millis);
+            }
+        } catch (Throwable throwable) {
+            DebugLog.client(DebugLog.Area.PLAYBACK, "Could not seek '{}' before it plays: {}", source, throwable.toString());
+        }
+    }
+
     public void pause() {
         if (player == null || closed) {
             return;
         }
+        heldSinceNanos = System.nanoTime();
         try {
             player.pause();
         } catch (Throwable t) {
@@ -298,6 +319,9 @@ public final class WaterMediaVideoBackend {
             return;
         }
         try {
+            if (takeLongHold()) {
+                reopenAfterHold(player.time());
+            }
             player.resume();
         } catch (Throwable t) {
             DebugLog.client(DebugLog.Area.PLAYBACK, "resume() failed for '{}': {}", source, t.toString());
@@ -790,6 +814,9 @@ public final class WaterMediaVideoBackend {
         boolean willStartPaused = holdRequested || startAtPending;
         resumeAfterStartAt = startAtPending && !holdRequested;
         if (willStartPaused) {
+            if (holdRequested) {
+                heldSinceNanos = System.nanoTime();
+            }
             try {
                 player.startPaused();
             } catch (Throwable t) {

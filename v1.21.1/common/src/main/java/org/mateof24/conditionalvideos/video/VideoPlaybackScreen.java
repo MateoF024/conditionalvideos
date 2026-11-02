@@ -48,7 +48,6 @@ public final class VideoPlaybackScreen extends Screen {
     private static final int FULLSCREEN_KEYCODE = 300;
     private static final int CURSOR_HIDE_DELAY_TICKS = 100;
     private static final int LOOP_PRELOAD_LEAD_TICKS = 20 * 20;
-    private static final int PRE_RESUME_LEAD_TICKS = 5;
     private static final int TRAILING_MAX_TICKS = 40;
     static final double TRAILING_RELEASE_POSITION_SECONDS = 0.04;
 
@@ -104,7 +103,6 @@ public final class VideoPlaybackScreen extends Screen {
 
     private WaterMediaVideoBackend trailingBackend;
     private int trailingBackendTicks;
-    private WaterMediaVideoBackend preResumedBackend;
 
     private int crossfadeTicks;
 
@@ -513,15 +511,6 @@ public final class VideoPlaybackScreen extends Screen {
             ensureSkipPreload();
         }
 
-        if (hasNext && !isFade && nextBackend != null && preResumedBackend != nextBackend
-                && endTick > 0 && currentEntryTicks >= endTick - PRE_RESUME_LEAD_TICKS
-                && nextBackend.hasTextureValid()) {
-            nextBackend.resumePlayback();
-            nextBackend.setVolumeMultiplier(0f);
-            preResumedBackend = nextBackend;
-            DebugLog.client(DebugLog.Area.PLAYLIST, "Started entry {} muted {} ticks early for a gapless cut.", nextIndex, PRE_RESUME_LEAD_TICKS);
-        }
-
         if (!hasNext) {
             boolean naturallyEnded = currentBackend.hasFinished();
             boolean cueReached = endTick > 0 && currentEntryTicks >= endTick;
@@ -551,7 +540,7 @@ public final class VideoPlaybackScreen extends Screen {
         }
 
         if (!isFade) {
-            if (nextBackend != null && nextBackend.hasTextureValid()) {
+            if (nextBackend != null && nextBackend.isReadyToStart()) {
                 promoteNextEntry();
                 return;
             }
@@ -571,7 +560,7 @@ public final class VideoPlaybackScreen extends Screen {
             return;
         }
 
-        if (nextBackend != null && nextBackend.isReadyToRender()) {
+        if (nextBackend != null && nextBackend.isReadyToStart()) {
             if (endedBeforeNext) {
                 promoteNextEntry();
             } else {
@@ -731,11 +720,9 @@ public final class VideoPlaybackScreen extends Screen {
         DebugLog.client(DebugLog.Area.PLAYLIST, "Switching entry {} -> {} ('{}'){}{}.", currentIndex, nextIndex,
                 nextEntry == null ? "<unresolved>" : nextEntry.source(),
                 loopSwap ? ", a new loop with a fresh player" : "", fromCrossfade ? " after the crossfade" : "");
-        boolean wasPreResumed = preResumedBackend == nextBackend;
-        if (!wasPreResumed && !fromCrossfade) {
+        if (!fromCrossfade) {
             nextBackend.resumePlayback();
         }
-        preResumedBackend = null;
 
         coverTransition(nextEntry);
         currentBackend = nextBackend;
